@@ -1,0 +1,32 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: production
+    service: ai-hrms
+
+rule_files: []
+
+scrape_configs:
+  # NestJS backend — Prometheus metrics at /api/v1/health/metrics
+  # Protected by bearer token configured via PROMETHEUS_TOKEN env var.
+  - job_name: ai-hrms-backend
+    scrape_interval: 10s
+    metrics_path: /api/v1/health/metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:3001   # dev: backend on host
+          # - backend:3001              # prod: backend service name in docker network
+    # Uncomment to enable bearer token auth:
+    # authorization:
+    #   credentials: ${PROMETHEUS_TOKEN}
+
+  # Prometheus self-monitoring
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Redis exporter (add redis-exporter service to scrape redis metrics)
+  # - job_name: redis
+  #   static_configs:
+  #     - targets: ['redis-exporter:9121']

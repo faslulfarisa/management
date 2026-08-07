@@ -1,0 +1,52 @@
+.ai-hrms-phone-input.PhoneInput {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  height: 2.5rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  background: hsl(var(--background));
+  padding: 0 0.75rem;
+}
+
+.ai-hrms-phone-input.PhoneInput:focus-within {
+  outline: none;
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.3);
+}
+
+.ai-hrms-phone-input .PhoneInputCountry {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-right: 0;
+}
+
+.ai-hrms-phone-input .PhoneInputCountryIcon {
+  width: 1.25rem;
+  height: 1rem;
+  box-shadow: none;
+}
+
+.ai-hrms-phone-input .PhoneInputCountrySelectArrow {
+  opacity: 0.6;
+}
+
+.ai-hrms-phone-input .PhoneInputInput {
+  flex: 1;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 0.875rem;
+  color: hsl(var(--foreground));
+}
+
+.ai-hrms-phone-input .PhoneInputInput::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.ai-hrms-phone-input.PhoneInput--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

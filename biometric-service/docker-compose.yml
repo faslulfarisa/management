@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    container_name: biometric-api
+    ports:
+      - "8100:8100"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://biometric_user:biometric_pass@postgres:5432/biometric_db
+      - SYNC_DATABASE_URL=postgresql://biometric_user:biometric_pass@postgres:5432/biometric_db
+      - REDIS_URL=redis://redis:6379/1
+      - HMS_BASE_URL=http://host.docker.internal:3001/api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8100 --reload"
+    volumes:
+      - .:/app
+
+  celery_worker:
+    build: .
+    container_name: biometric-celery-worker
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://biometric_user:biometric_pass@postgres:5432/biometric_db
+      - REDIS_URL=redis://redis:6379/1
+      - HMS_BASE_URL=http://host.docker.internal:3001/api
+    depends_on:
+      - redis
+      - postgres
+    command: celery -A app.tasks.celery_app worker --loglevel=info
+    volumes:
+      - .:/app
+
+  celery_beat:
+    build: .
+    container_name: biometric-celery-beat
+    environment:
+      - REDIS_URL=redis://redis:6379/1
+    depends_on:
+      - redis
+    command: celery -A app.tasks.celery_app beat --loglevel=info
+    volumes:
+      - .:/app
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: biometric-postgres
+    environment:
+      POSTGRES_USER: biometric_user
+      POSTGRES_PASSWORD: biometric_pass
+      POSTGRES_DB: biometric_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U biometric_user -d biometric_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: biometric-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:

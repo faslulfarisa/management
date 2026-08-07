@@ -1,0 +1,498 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus datasource scraping the Ai-HRMS backend /metrics endpoint",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana",    "id": "grafana",    "name": "Grafana",    "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "panel", "id": "stat",       "name": "Stat",       "version": "" },
+    { "type": "panel", "id": "timeseries", "name": "Time series","version": "" },
+    { "type": "panel", "id": "piechart",   "name": "Pie chart",  "version": "" },
+    { "type": "panel", "id": "bargauge",   "name": "Bar gauge",  "version": "" }
+  ],
+  "annotations": { "list": [] },
+  "description": "Ai-HRMS biometric attendance — sync pipeline, device health, terminal health, queue health, verify method & source distribution",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+
+    { "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1, "title": "Attendance Overview", "type": "row" },
+
+    {
+      "id": 2, "type": "stat", "title": "Punches / Second",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "sum(rate(hms_punches_total[5m]))",
+        "legendFormat": "punches/s",
+        "refId": "A"
+      }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 10 },
+            { "color": "red",    "value": 50 }
+          ]}
+        }
+      }
+    },
+
+    {
+      "id": 3, "type": "stat", "title": "Duplicate Rate",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "100 * sum(rate(hms_duplicate_punches_total[5m])) / (sum(rate(hms_punches_total[5m])) + sum(rate(hms_duplicate_punches_total[5m])) + 1e-9)",
+        "legendFormat": "dup %",
+        "refId": "A"
+      }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green",  "value": null },
+            { "color": "yellow", "value": 5 },
+            { "color": "red",    "value": 15 }
+          ]}
+        }
+      }
+    },
+
+    {
+      "id": 4, "type": "stat", "title": "Ingestion p95 (ms)",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum(rate(hms_punch_ingestion_duration_ms_bucket[5m])) by (le))",
+        "legendFormat": "p95 ms",
+        "refId": "A"
+      }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green",  "value": null },
+            { "color": "yellow", "value": 500 },
+            { "color": "red",    "value": 2000 }
+          ]}
+        }
+      }
+    },
+
+    {
+      "id": 5, "type": "stat", "title": "DLQ Jobs",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "hms_dlq_total", "legendFormat": "DLQ", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red",   "value": 1 }
+          ]}
+        }
+      }
+    },
+
+    {
+      "id": 6, "type": "timeseries", "title": "Punch Throughput by Provider",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "sum by (provider) (rate(hms_punches_total[5m]))",
+        "legendFormat": "{{provider}}",
+        "refId": "A"
+      }],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "lineWidth": 2 } } }
+    },
+
+    {
+      "id": 7, "type": "piechart", "title": "Verify Method (24 h)",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "sum by (method) (increase(hms_verify_method_total[24h]))",
+        "legendFormat": "{{method}}",
+        "refId": "A"
+      }],
+      "options": { "pieType": "donut", "legend": { "displayMode": "list", "placement": "right" }, "tooltip": { "mode": "single" } }
+    },
+
+    {
+      "id": 8, "type": "piechart", "title": "Attendance Source (24 h)",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "sum by (source) (increase(hms_attendance_source_total[24h]))",
+        "legendFormat": "{{source}}",
+        "refId": "A"
+      }],
+      "options": { "pieType": "donut", "legend": { "displayMode": "list", "placement": "right" }, "tooltip": { "mode": "single" } }
+    },
+
+    { "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "id": 10, "title": "Sync Pipeline", "type": "row" },
+
+    {
+      "id": 11, "type": "timeseries", "title": "Sync Lag (seconds)",
+      "description": "Time between now and the last successfully synced cursor.  Rising values = provider is falling behind.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "hms_sync_lag_seconds",
+        "legendFormat": "{{provider}} / {{cursor_type}}",
+        "refId": "A"
+      }],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 2 },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green",  "value": null },
+            { "color": "yellow", "value": 300 },
+            { "color": "red",    "value": 900 }
+          ]}
+        }
+      }
+    },
+
+    {
+      "id": 12, "type": "timeseries", "title": "Sync Records Rate",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "sum by (provider, cursor_type) (rate(hms_sync_records_fetched_total[5m]))",
+          "legendFormat": "fetched {{provider}}/{{cursor_type}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (provider, cursor_type) (rate(hms_sync_records_synced_total[5m]))",
+          "legendFormat": "synced {{provider}}/{{cursor_type}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (provider, cursor_type) (rate(hms_sync_records_failed_total[5m]))",
+          "legendFormat": "failed {{provider}}/{{cursor_type}}",
+          "refId": "C"
+        }
+      ],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2 } } }
+    },
+
+    {
+      "id": 13, "type": "bargauge", "title": "Sync Run Outcomes (last 1 h)",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "sum by (provider, cursor_type, status) (increase(hms_sync_runs_total[1h]))",
+        "legendFormat": "{{provider}} {{cursor_type}} {{status}}",
+        "refId": "A"
+      }],
+      "options": { "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": { "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null }
+          ]}
+        },
+        "overrides": [
+          { "matcher": { "id": "byFrameRefID", "options": "A" },
+            "properties": [{ "id": "displayName", "value": "${__series.name}" }]
+          }
+        ]
+      }
+    },
+
+    {
+      "id": 14, "type": "timeseries", "title": "Sync Cursor Duration p50/p95/p99",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (provider, cursor_type, le) (rate(hms_sync_cursor_duration_ms_bucket[5m])))",
+          "legendFormat": "p50 {{provider}}/{{cursor_type}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (provider, cursor_type, le) (rate(hms_sync_cursor_duration_ms_bucket[5m])))",
+          "legendFormat": "p95 {{provider}}/{{cursor_type}}",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (provider, cursor_type, le) (rate(hms_sync_cursor_duration_ms_bucket[5m])))",
+          "legendFormat": "p99 {{provider}}/{{cursor_type}}",
+          "refId": "C"
+        }
+      ],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "lineWidth": 2 } } }
+    },
+
+    { "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+      "id": 20, "title": "Device Health", "type": "row" },
+
+    {
+      "id": 21, "type": "bargauge", "title": "Online Devices by Provider",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "hms_devices_online", "legendFormat": "{{provider}}", "refId": "A" }],
+      "options": { "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red",    "value": null },
+            { "color": "yellow", "value": 1 },
+            { "color": "green",  "value": 3 }
+          ]}
+        }
+      }
+    },
+
+    {
+      "id": 22, "type": "piechart", "title": "Online Devices by Hardware Type",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "sum by (hardware_type) (hms_devices_by_hardware_type{status=\"online\"})",
+        "legendFormat": "{{hardware_type}}",
+        "refId": "A"
+      }],
+      "options": { "pieType": "donut", "legend": { "displayMode": "list", "placement": "right" }, "tooltip": { "mode": "single" } }
+    },
+
+    {
+      "id": 23, "type": "timeseries", "title": "Device Last-Seen Age (oldest online device)",
+      "description": "Rising above 15 min indicates a device has stopped syncing but hasn't been swept offline yet.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "hms_device_last_seen_age_seconds",
+        "legendFormat": "{{provider}}",
+        "refId": "A"
+      }],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "lineWidth": 2 },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green",  "value": null },
+            { "color": "yellow", "value": 600 },
+            { "color": "red",    "value": 900 }
+          ]}
+        }
+      }
+    },
+
+    {
+      "id": 24, "type": "timeseries", "title": "Circuit Breaker Opens",
+      "gridPos": { "h": 5, "w": 12, "x": 0, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "sum by (provider, transport) (increase(hms_circuit_breaker_open_total[5m]))",
+        "legendFormat": "{{provider}} / {{transport}}",
+        "refId": "A"
+      }],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineWidth": 2 },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red",   "value": 1 }
+          ]}
+        }
+      }
+    },
+
+    {
+      "id": 25, "type": "bargauge", "title": "Devices by Provider × Hardware Type",
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "sum by (provider, hardware_type, status) (hms_devices_by_hardware_type)",
+        "legendFormat": "{{provider}} {{hardware_type}} {{status}}",
+        "refId": "A"
+      }],
+      "options": { "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 } }
+    },
+
+    { "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
+      "id": 30, "title": "Terminal Health", "type": "row" },
+
+    {
+      "id": 31, "type": "bargauge", "title": "Terminals by Type & Status",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "sum by (device_type, status) (hms_terminals_total)",
+        "legendFormat": "{{device_type}} {{status}}",
+        "refId": "A"
+      }],
+      "options": { "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null }
+          ]}
+        }
+      }
+    },
+
+    {
+      "id": 32, "type": "timeseries", "title": "Terminal Punches Rate",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "sum by (device_type) (rate(hms_terminal_punches_total[5m]))",
+        "legendFormat": "{{device_type}}",
+        "refId": "A"
+      }],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "lineWidth": 2 } } }
+    },
+
+    {
+      "id": 33, "type": "timeseries", "title": "Terminal Auth Failures",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "sum by (reason) (rate(hms_terminal_auth_failures_total[5m]))",
+        "legendFormat": "{{reason}}",
+        "refId": "A"
+      }],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 2 },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red",   "value": 0.1 }
+          ]}
+        }
+      }
+    },
+
+    { "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 51 },
+      "id": 40, "title": "Queue Health", "type": "row" },
+
+    {
+      "id": 41, "type": "timeseries", "title": "Punch-Ingestion Queue Depth",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "hms_queue_depth",
+        "legendFormat": "{{state}}",
+        "refId": "A"
+      }],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineWidth": 2 },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green",  "value": null },
+            { "color": "yellow", "value": 500 },
+            { "color": "red",    "value": 2000 }
+          ]}
+        }
+      }
+    },
+
+    {
+      "id": 42, "type": "timeseries", "title": "Biometric-Sync Queue Depth",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "hms_sync_queue_depth",
+        "legendFormat": "{{state}}",
+        "refId": "A"
+      }],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineWidth": 2 },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green",  "value": null },
+            { "color": "yellow", "value": 100 },
+            { "color": "red",    "value": 2000 }
+          ]}
+        }
+      }
+    },
+
+    {
+      "id": 43, "type": "stat", "title": "Offline Buffer (Redis)",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 59 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "sum(hms_offline_buffer_size)", "legendFormat": "buffered", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": {
+        "defaults": { "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green",  "value": null },
+            { "color": "yellow", "value": 100 },
+            { "color": "red",    "value": 1000 }
+          ]}
+        }
+      }
+    },
+
+    {
+      "id": 44, "type": "timeseries", "title": "Offline Buffer by Provider",
+      "gridPos": { "h": 4, "w": 18, "x": 6, "y": 59 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{
+        "expr": "hms_offline_buffer_size",
+        "legendFormat": "{{provider}}",
+        "refId": "A"
+      }],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "right" } },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2 } } }
+    }
+
+  ],
+
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["biometrics", "ai-hrms", "attendance"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "type": "datasource",
+        "label": "Prometheus"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Ai-HRMS Biometric Attendance",
+  "uid": "hms-biometrics-v1",
+  "version": 1
+}

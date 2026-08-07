@@ -1,0 +1,30 @@
+'use client';
+
+import { useBiometricsSocket } from '@/hooks/use-biometrics-socket';
+import { DlqTable } from '@/components/biometrics/dlq/dlq-table';
+import { useQueueHealth } from '@/hooks/use-queue-health';
+
+export default function DlqPage() {
+  useBiometricsSocket();
+  const { queueHealth } = useQueueHealth();
+  const dlqCount = queueHealth?.failed ?? 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-800">Dead Letter Queue</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Failed punch ingestion jobs — inspect payload, retry, or permanently discard
+          </p>
+        </div>
+        {dlqCount > 0 && (
+          <span className="badge-offline px-3 py-1 rounded-full text-xs font-bold tabular-nums">
+            {dlqCount} failed
+          </span>
+        )}
+      </div>
+      <DlqTable />
+    </div>
+  );
+}

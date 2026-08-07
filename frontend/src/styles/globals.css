@@ -1,0 +1,209 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@layer base {
+  :root {
+    /* Brand palette – deep navy + amber gold */
+    --brand-50:  220 60% 97%;
+    --brand-100: 220 55% 92%;
+    --brand-200: 220 50% 83%;
+    --brand-300: 220 50% 70%;
+    --brand-400: 220 55% 57%;
+    --brand-500: 220 65% 46%;
+    --brand-600: 220 70% 38%;
+    --brand-700: 220 72% 30%;
+    --brand-800: 220 74% 22%;
+    --brand-900: 220 76% 15%;
+
+    --gold-400:  43 95% 60%;
+    --gold-500:  43 90% 50%;
+    --gold-600:  40 85% 42%;
+
+    /* Shadcn tokens mapped to brand */
+    --background: 220 20% 97%;
+    --foreground: 220 74% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 74% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 74% 14%;
+    --primary: 220 65% 46%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 20% 93%;
+    --secondary-foreground: 220 74% 22%;
+    --muted: 220 20% 94%;
+    --muted-foreground: 220 15% 50%;
+    --accent: 43 90% 50%;
+    --accent-foreground: 220 74% 14%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 20% 88%;
+    --input: 220 20% 88%;
+    --ring: 220 65% 46%;
+    --radius: 0.75rem;
+
+    /* Sidebar specific */
+    --sidebar-bg: 220 42% 13%;
+    --sidebar-hover: 220 40% 19%;
+    --sidebar-active: 220 65% 40%;
+    --sidebar-text: 220 20% 75%;
+    --sidebar-text-active: 0 0% 100%;
+    --sidebar-border: 220 35% 20%;
+
+    /* Header specific */
+    --header-bg: 0 0% 100%;
+    --header-border: 220 20% 90%;
+
+    /* Operations Portal — deep violet/teal, deliberately distinct from the
+       navy+gold HRMS sidebar so the two portals are never confused. */
+    --ops-sidebar-bg: 263 38% 11%;
+    --ops-sidebar-hover: 263 32% 17%;
+    --ops-sidebar-active: 262 70% 48%;
+    --ops-sidebar-text: 263 18% 72%;
+    --ops-sidebar-border: 263 28% 19%;
+    --ops-accent: 187 85% 42%;
+  }
+}
+
+@layer base {
+  * { @apply border-border; box-sizing: border-box; }
+  html { font-family: 'Inter', system-ui, sans-serif; }
+  body { @apply bg-background text-foreground antialiased; }
+
+  /* Custom scrollbar for the sidebar */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: hsl(var(--brand-700)); border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--brand-600)); }
+}
+
+@layer utilities {
+  .sidebar-bg      { background: hsl(var(--sidebar-bg)); }
+  .sidebar-hover   { background: hsl(var(--sidebar-hover)); }
+  .sidebar-active  { background: hsl(var(--sidebar-active)); }
+  .sidebar-text    { color: hsl(var(--sidebar-text)); }
+  .sidebar-border  { border-color: hsl(var(--sidebar-border)); }
+
+  .gold { color: hsl(var(--gold-500)); }
+  .gold-bg { background: hsl(var(--gold-500)); }
+
+  .ops-sidebar-bg      { background: hsl(var(--ops-sidebar-bg)); }
+  .ops-sidebar-hover   { background: hsl(var(--ops-sidebar-hover)); }
+  .ops-sidebar-active  { background: hsl(var(--ops-sidebar-active)); }
+  .ops-sidebar-text    { color: hsl(var(--ops-sidebar-text)); }
+  .ops-sidebar-border  { border-color: hsl(var(--ops-sidebar-border)); }
+  .ops-accent          { color: hsl(var(--ops-accent)); }
+  .ops-accent-bg       { background: hsl(var(--ops-accent)); }
+
+  /* ── Ops Console — light operational panel system ───────────────── */
+  .ops-panel {
+    background: #ffffff;
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
+  }
+  .ops-panel-sm {
+    background: #ffffff;
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.5rem;
+  }
+  .ops-surface {
+    background: hsl(var(--muted));
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.5rem;
+  }
+  .ops-surface-hover:hover {
+    background: hsl(var(--muted));
+  }
+
+  /* Status colors */
+  .status-online  { color: #059669; } /* emerald-600 */
+  .status-warn    { color: #d97706; } /* amber-600   */
+  .status-offline { color: #dc2626; } /* red-600     */
+  .status-idle    { color: #64748b; } /* slate-500   */
+
+  .status-dot-online  { background: #10b981; box-shadow: 0 0 6px #10b981; }
+  .status-dot-warn    { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
+  .status-dot-offline { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
+  .status-dot-idle    { background: #94a3b8; }
+
+  /* Badge variants */
+  .badge-online  { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
+  .badge-warn    { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
+  .badge-offline { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+  .badge-blue    { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+  .badge-purple  { background: #f5f3ff; color: #7c3aed; border: 1px solid #ddd6fe; }
+
+  /* Live pulse animation */
+  @keyframes live-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+  }
+  .animate-live { animation: live-pulse 1.4s ease-in-out infinite; }
+
+  /* Ops table row flash on new data */
+  @keyframes row-flash {
+    0%   { background: rgba(59,130,246,0.15); }
+    100% { background: transparent; }
+  }
+  .animate-row-flash { animation: row-flash 0.8s ease-out forwards; }
+
+  /* Stat card glow variants */
+  .glow-emerald { box-shadow: 0 0 0 1px rgba(16,185,129,0.2), 0 4px 24px rgba(16,185,129,0.06); }
+  .glow-amber   { box-shadow: 0 0 0 1px rgba(245,158,11,0.2), 0 4px 24px rgba(245,158,11,0.06); }
+  .glow-red     { box-shadow: 0 0 0 1px rgba(239,68,68,0.2),  0 4px 24px rgba(239,68,68,0.06); }
+  .glow-blue    { box-shadow: 0 0 0 1px rgba(59,130,246,0.2), 0 4px 24px rgba(59,130,246,0.06); }
+
+  .glass {
+    background: rgba(255,255,255,0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  /* Stat card gradient variants */
+  .card-gradient-blue {
+    background: linear-gradient(135deg, hsl(220 65% 46%) 0%, hsl(230 70% 58%) 100%);
+  }
+  .card-gradient-amber {
+    background: linear-gradient(135deg, hsl(43 90% 50%) 0%, hsl(35 95% 55%) 100%);
+  }
+  .card-gradient-emerald {
+    background: linear-gradient(135deg, hsl(158 64% 42%) 0%, hsl(168 70% 50%) 100%);
+  }
+  .card-gradient-rose {
+    background: linear-gradient(135deg, hsl(340 80% 56%) 0%, hsl(350 85% 62%) 100%);
+  }
+  .card-gradient-purple {
+    background: linear-gradient(135deg, hsl(265 65% 50%) 0%, hsl(275 70% 60%) 100%);
+  }
+  .card-gradient-teal {
+    background: linear-gradient(135deg, hsl(185 65% 40%) 0%, hsl(195 70% 50%) 100%);
+  }
+  .card-gradient-indigo {
+    background: linear-gradient(135deg, hsl(245 70% 52%) 0%, hsl(258 75% 62%) 100%);
+  }
+  .card-gradient-red {
+    background: linear-gradient(135deg, hsl(0 72% 50%) 0%, hsl(10 80% 60%) 100%);
+  }
+  .card-gradient-orange {
+    background: linear-gradient(135deg, hsl(25 90% 55%) 0%, hsl(35 95% 62%) 100%);
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.4s ease forwards;
+  }
+  .animate-slide-up {
+    animation: slideUp 0.4s ease forwards;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+}

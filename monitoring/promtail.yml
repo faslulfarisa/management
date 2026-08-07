@@ -1,0 +1,38 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: ai-hrms-backend-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: ai-hrms-backend
+          environment: production
+          __path__: /var/log/ai-hrms/*.log
+    pipeline_stages:
+      # Parse NestJS JSON structured logs
+      - json:
+          expressions:
+            level: level
+            correlationId: correlationId
+            tenantId: tenantId
+            provider: provider
+            event: event
+            jobId: jobId
+      - labels:
+          level:
+          provider:
+          event:
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+          fallback_formats:
+            - RFC3339
