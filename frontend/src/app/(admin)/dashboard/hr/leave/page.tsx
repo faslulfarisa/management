@@ -7,6 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { X, Loader2, CalendarDays, Plus } from 'lucide-react';
 import { ApprovalReasonModal } from '@/components/approvals/approval-reason-modal';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import { ExportButton } from '@/components/export';
+import { ImportButton } from '@/components/import';
+import { PERMISSIONS } from '@/lib/permissions';
 
 /* ── Leave Request Drawer ─────────────────────────────────────────────── */
 function LeaveRequestDrawer({ leaveTypes, onClose, onSaved }: { leaveTypes: any[]; onClose: () => void; onSaved: () => void }) {
@@ -224,16 +227,49 @@ export default function LeavePage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Leave Requests</CardTitle>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="border border-border rounded-lg px-3 py-1.5 text-sm"
-            >
-              <option value="pending">Pending</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
-              <option value="all">All statuses</option>
-            </select>
+            <div className="flex items-center gap-2">
+              <ExportButton
+                config={{
+                  module: 'leave_requests',
+                  title: 'Leave Requests',
+                  permission: PERMISSIONS.LEAVE_EXPORT,
+                  columns: [
+                    { key: 'employee_code', header: 'Employee Code' },
+                    { key: 'employee_name', header: 'Employee Name' },
+                    { key: 'branch_name', header: 'Branch' },
+                    { key: 'department_name', header: 'Department' },
+                    { key: 'leave_type', header: 'Leave Type' },
+                    { key: 'start_date', header: 'Start Date', type: 'date' },
+                    { key: 'end_date', header: 'End Date', type: 'date' },
+                    { key: 'days', header: 'Days', type: 'number' },
+                    { key: 'status', header: 'Status' },
+                    { key: 'reason', header: 'Reason' },
+                  ],
+                  defaultColumns: ['employee_code', 'employee_name', 'branch_name', 'leave_type', 'start_date', 'end_date', 'days', 'status'],
+                  filenamePrefix: 'leave_requests',
+                }}
+                filters={{ status: statusFilter === 'all' ? undefined : statusFilter }}
+                currentPageData={requests}
+                totalRecords={requests.length > 0 ? undefined : 0}
+              />
+              <ImportButton
+                config={{
+                  module: 'leave_requests',
+                  title: 'Leave Requests',
+                  permission: PERMISSIONS.LEAVE_CREATE,
+                }}
+              />
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="border border-border rounded-lg px-3 py-1.5 text-sm"
+              >
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+                <option value="all">All statuses</option>
+              </select>
+            </div>
           </CardHeader>
           <CardContent>
             {loading ? (

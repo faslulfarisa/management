@@ -10,19 +10,19 @@ import { approvalsApi, ApprovalRequest } from '@/lib/approvals-api';
 import { RequestDetailSheet } from '@/components/employee/requests/request-detail-sheet';
 import { LeaveApplySheet } from '@/components/employee/leave/leave-apply-sheet';
 import { CorrectionRequestSheet } from '@/components/employee/attendance/correction-request-sheet';
-import { ShiftChangeSheet } from '@/components/employee/requests/shift-change-sheet';
 import { OvertimeSheet } from '@/components/employee/requests/overtime-sheet';
 import { ExpenseSheet } from '@/components/employee/requests/expense-sheet';
 import { FineAppealSheet } from '@/components/employee/requests/fine-appeal-sheet';
+import { ShiftOverrideSheet } from '@/components/employee/requests/shift-override-sheet';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-type SheetId = 'leave' | 'correction' | 'shift_change' | 'overtime' | 'expense' | 'fine_appeal';
+type SheetId = 'leave' | 'correction' | 'shift_override' | 'overtime' | 'expense' | 'fine_appeal';
 
 const newRequestOptions: { id: SheetId; label: string; Icon: React.ElementType; color: string; bg: string }[] = [
   { id: 'leave',        label: 'Leave Request',        Icon: Calendar,       color: 'text-primary',     bg: 'bg-primary/10'   },
   { id: 'correction',   label: 'Attendance Fix',        Icon: FilePen,        color: 'text-orange-600',  bg: 'bg-orange-100'   },
-  { id: 'shift_change', label: 'Shift Change',          Icon: ArrowLeftRight, color: 'text-purple-600',  bg: 'bg-purple-100'   },
+  { id: 'shift_override', label: 'Shift Override',      Icon: ArrowLeftRight, color: 'text-purple-600',  bg: 'bg-purple-100'   },
   { id: 'overtime',     label: 'Overtime Request',      Icon: Clock,          color: 'text-emerald-600', bg: 'bg-emerald-100'  },
   { id: 'expense',      label: 'Expense Claim',         Icon: Receipt,        color: 'text-amber-600',   bg: 'bg-amber-100'    },
   { id: 'fine_appeal',  label: 'Fine Appeal',           Icon: Shield,         color: 'text-red-600',     bg: 'bg-red-100'      },
@@ -42,6 +42,7 @@ const typeLabel: Record<string, string> = {
   leave_request:          'Leave',
   attendance_correction:  'Attendance Fix',
   shift_change:           'Shift Change',
+  shift_override:         'Shift Override',
   overtime:               'Overtime',
   expense:                'Expense',
   fine_appeal:            'Fine Appeal',
@@ -162,7 +163,7 @@ export function PortalRequests() {
       {/* Sheets */}
       <LeaveApplySheet         open={open === 'leave'}        onClose={() => setOpen(null)} />
       <CorrectionRequestSheet  open={open === 'correction'}   onClose={() => setOpen(null)} />
-      <ShiftChangeSheet        open={open === 'shift_change'} onClose={() => setOpen(null)} />
+      <ShiftOverrideSheet      open={open === 'shift_override'} onClose={() => setOpen(null)} />
       <OvertimeSheet           open={open === 'overtime'}     onClose={() => setOpen(null)} />
       <ExpenseSheet            open={open === 'expense'}      onClose={() => setOpen(null)} />
       <FineAppealSheet         open={open === 'fine_appeal'}  onClose={() => setOpen(null)} />

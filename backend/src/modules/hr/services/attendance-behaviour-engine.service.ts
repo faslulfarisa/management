@@ -307,7 +307,7 @@ export class AttendanceBehaviourEngineService {
   }
 
   /**
-   * Automation hook: when a payroll attendance summary is approved, refresh
+   * Refresh hook: when a payroll attendance summary is approved, refresh
    * any attendance behaviour snapshot for that employee whose review cycle
    * overlaps the approved period and isn't approved/locked/frozen yet.
    */

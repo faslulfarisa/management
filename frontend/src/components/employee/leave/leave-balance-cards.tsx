@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { employeeApi } from '@/lib/employee-api';
 import { SkeletonCard } from '@/components/employee/shared/skeleton-card';
 import { cn } from '@/lib/utils';
+import { Info } from 'lucide-react';
 
 const colors = [
   'from-primary/10 to-primary/5 border-primary/20',
@@ -30,7 +31,19 @@ export function LeaveBalanceCards() {
     );
   }
 
-  if (!balances?.length) return null;
+  if (!balances?.length) {
+    return (
+      <div className="rounded-2xl border border-dashed border-border bg-muted/30 px-4 py-6 text-center">
+        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-background text-muted-foreground">
+          <Info className="h-5 w-5" />
+        </div>
+        <p className="text-sm font-semibold text-foreground">No leave policy template assigned</p>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          Please contact HR to assign a leave policy template before applying for leave.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-2 gap-3">

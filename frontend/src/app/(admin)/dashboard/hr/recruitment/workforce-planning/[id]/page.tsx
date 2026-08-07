@@ -145,7 +145,7 @@ export default function WorkforcePlanDetailPage() {
 
           <Card>
             <CardContent className="p-5">
-              <h3 className="text-sm font-semibold text-foreground mb-3">Department / Position Breakdown</h3>
+              <h3 className="text-base font-bold text-foreground mb-3">Department / Position Breakdown</h3>
               {plan.breakdown.length === 0 ? (
                 <p className="text-xs text-muted-foreground">No breakdown rows.</p>
               ) : (
@@ -182,7 +182,7 @@ export default function WorkforcePlanDetailPage() {
           {plan.approval_status !== 'not_required' && (
             <Card>
               <CardContent className="p-5">
-                <h3 className="text-sm font-semibold text-foreground mb-3">Approval Timeline</h3>
+                <h3 className="text-base font-bold text-foreground mb-3">Approval Timeline</h3>
                 <ApprovalTimeline
                   request={{
                     approval_log: plan.approval_log,

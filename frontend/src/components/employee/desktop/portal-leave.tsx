@@ -75,7 +75,17 @@ export function PortalLeave() {
               );
             })}
           </div>
-        ) : null}
+        ) : (
+          <div className="rounded-xl border border-dashed border-gray-200 bg-white px-6 py-10 text-center shadow-sm">
+            <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-gray-50 text-gray-400">
+              <AlertCircle className="h-5 w-5" />
+            </div>
+            <p className="text-sm font-semibold text-gray-800">No leave policy template assigned</p>
+            <p className="mt-1 text-xs text-gray-500">
+              Please contact HR to assign a leave policy template before applying for leave.
+            </p>
+          </div>
+        )}
 
         {/* Leave history table */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">

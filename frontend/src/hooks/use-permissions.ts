@@ -29,7 +29,9 @@ export function usePermissionsSync() {
       return res.data.data;
     },
     enabled: _hydrated && !!accessToken,
-    staleTime: 60_000,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
 
   useEffect(() => {

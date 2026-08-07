@@ -224,7 +224,7 @@ export default function InvoiceDetailPage() {
 
         {/* Footer */}
         <div className="mt-8 pt-4 border-t border-border text-center">
-          <p className="text-xs text-muted-foreground">Thank you for your business • Ai-HRMS — AI Hotel Workforce Management</p>
+          <p className="text-xs text-muted-foreground">Thank you for your business • Ai-HRMS — AI Human Resource Management</p>
         </div>
       </div>
 

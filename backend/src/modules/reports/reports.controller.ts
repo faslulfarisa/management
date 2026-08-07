@@ -24,6 +24,7 @@ import { RecruitmentReportsService } from './services/recruitment-reports.servic
 import { ReportFilterDto } from './dto/report-filter.dto';
 import { SaveReportDto } from './dto/save-report.dto';
 import { DatabaseService } from '../../shared/database.service';
+import { CurrencyService } from '../../shared/currency.service';
 
 // Maps an `export/csv` `report_type` (e.g. `payroll/audit`) to the
 // permission required to export that category of report.
@@ -57,6 +58,7 @@ export class ReportsController {
     private readonly userHierarchyService: UserHierarchyService,
     private readonly authorizationService: AuthorizationService,
     private readonly auditLog: AuditLogService,
+    private readonly currencyService: CurrencyService,
   ) {}
 
   private tid(req: any): string { const u = req.user ?? req; return u.tenantId ?? u.tenant_id; }
@@ -71,10 +73,18 @@ export class ReportsController {
   }
 
   private async logExport(tenantId: string, userId: string, reportType: string, format: string, filters: any, rowCount: number) {
+    const currency = await this.currencyService.getTenantCurrencySnapshot(tenantId);
     await this.db.query(
-      `INSERT INTO report_export_logs (tenant_id, user_id, report_type, export_format, filters_applied, row_count)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [tenantId, userId, reportType, format, JSON.stringify(filters), rowCount],
+      `INSERT INTO report_export_logs (
+        tenant_id, user_id, report_type, export_format, filters_applied, row_count,
+        currency, currency_symbol, base_currency, exchange_rate_to_base, currency_snapshot
+      )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`,
+      [
+        tenantId, userId, reportType, format, JSON.stringify(filters), rowCount,
+        currency.currencyCode, currency.currencySymbol, currency.baseCurrency,
+        currency.exchangeRateToBase, JSON.stringify(currency.snapshot),
+      ],
     );
   }
 
@@ -677,6 +687,14 @@ export class ReportsController {
     return this.wrap(await this.shift.getOvernightShiftSummary(this.tid(req), filter));
   }
 
+  @Get('shift/overrides')
+  @RequirePermission(PERMISSIONS.REPORTS_ATTENDANCE)
+  @ApiOperation({ summary: 'Active shift overrides report' })
+  async shiftOverrides(@Req() req: any, @Query() filter: ReportFilterDto) {
+    await this.enforceBranchScope(req, filter);
+    return this.wrap(await this.shift.getShiftOverrides(this.tid(req), filter));
+  }
+
   /* ── Biometrics ──────────────────────────────────────────────────────────── */
 
   @Get('biometrics/device-activity')
@@ -918,6 +936,7 @@ export class ReportsController {
       'shift/changes':                () => this.shift.getShiftChanges(tenantId, { ...filters, limit: 500 }),
       'shift/overtime-shifts':        () => this.shift.getOvertimeShifts(tenantId, { ...filters, limit: 500 }),
       'shift/overnight':              () => this.shift.getOvernightShiftSummary(tenantId, { ...filters, limit: 500 }),
+      'shift/overrides':              () => this.shift.getShiftOverrides(tenantId, { ...filters, limit: 500 }),
       // Biometrics
       'biometrics/device-activity':   () => this.biometrics.getDeviceActivity(tenantId, { ...filters, limit: 500 }),
       'biometrics/verification-breakdown': () => this.biometrics.getVerificationBreakdown(tenantId, filters),

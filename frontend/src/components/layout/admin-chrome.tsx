@@ -34,7 +34,7 @@ export function AdminChrome({
 
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/40 z-10 md:hidden"
+          className="fixed inset-0 bg-black/40 z-20 md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}

@@ -1,6 +1,7 @@
 import { Injectable, ForbiddenException, NotFoundException, Logger } from '@nestjs/common';
 import { DatabaseService } from '../../../shared/database.service';
 import { BrandingEngineService } from '../../../shared/branding-engine.service';
+import { DEFAULT_CURRENCY } from '../../../shared/currency.constants';
 
 // ─── Snapshot shape (version-tagged, append-only) ────────────────────────────
 
@@ -46,6 +47,12 @@ export interface PayslipSnapshotData {
     payslip_number: string;
   };
 
+  currency: {
+    code: string;
+    symbol: string;
+    exchange_rate: string | null;
+  };
+
   earnings: Array<{ label: string; amount: number }>;
   deductions: Array<{ label: string; amount: number }>;
   fines: Array<{
@@ -70,6 +77,10 @@ export interface PayslipSnapshotData {
     half_day_count: number;
     overtime_hours: number;
   } | null;
+  pay_basis?: string | null;
+  rate?: number | null;
+  worked_units?: number | null;
+  calculation_method?: string | null;
 }
 
 // ─── Enriched detail shape returned to callers ───────────────────────────────
@@ -87,6 +98,7 @@ export interface EnrichedPayslipDetail {
   employee: PayslipSnapshotData['employee'];
   company: PayslipSnapshotData['company'];
   period: PayslipSnapshotData['period'];
+  currency: PayslipSnapshotData['currency'];
   earnings: PayslipSnapshotData['earnings'];
   deductions: PayslipSnapshotData['deductions'];
   fines: PayslipSnapshotData['fines'];
@@ -103,6 +115,10 @@ export interface EnrichedPayslipDetail {
     payment_date: string | null;
     paid_at: string | null;
   } | null;
+  pay_basis: string | null;
+  rate: number | null;
+  worked_units: number | null;
+  calculation_method: string | null;
 }
 
 // ─── Month names ──────────────────────────────────────────────────────────────
@@ -247,6 +263,12 @@ export class PayslipService {
         payslip_number: payslipNumber,
       },
 
+      currency: {
+        code: ps.currency || DEFAULT_CURRENCY.code,
+        symbol: ps.currency_symbol || DEFAULT_CURRENCY.symbol,
+        exchange_rate: ps.exchange_rate ?? null,
+      },
+
       earnings,
       deductions,
       fines,
@@ -267,6 +289,10 @@ export class PayslipService {
             overtime_hours: parseFloat(attRows[0].overtime_hours || '0'),
           }
         : null,
+      pay_basis: ps.pay_basis || 'monthly_salary',
+      rate: ps.rate ? parseFloat(ps.rate) : null,
+      worked_units: ps.worked_units ? parseFloat(ps.worked_units) : null,
+      calculation_method: ps.calculation_method || 'Monthly Salary',
     };
 
     // Write snapshot — IS NULL guard prevents overwrite (idempotent at SQL level)
@@ -317,11 +343,16 @@ export class PayslipService {
     let employee: PayslipSnapshotData['employee'];
     let company: PayslipSnapshotData['company'];
     let period: PayslipSnapshotData['period'];
+    let currency: PayslipSnapshotData['currency'];
     let earnings: PayslipSnapshotData['earnings'];
     let deductions: PayslipSnapshotData['deductions'];
     let fines: PayslipSnapshotData['fines'];
     let totals: PayslipSnapshotData['totals'];
     let attendance: PayslipSnapshotData['attendance'];
+    let pay_basis: string | null = null;
+    let rate: number | null = null;
+    let worked_units: number | null = null;
+    let calculation_method: string | null = null;
 
     if (ps.snapshot_data) {
       // Fast path: use frozen snapshot
@@ -329,11 +360,16 @@ export class PayslipService {
       employee   = snap.employee;
       company    = snap.company;
       period     = snap.period;
+      currency   = snap.currency || { code: DEFAULT_CURRENCY.code, symbol: DEFAULT_CURRENCY.symbol, exchange_rate: null };
       earnings   = snap.earnings;
       deductions = snap.deductions;
       fines      = snap.fines;
       totals     = snap.totals;
       attendance = snap.attendance;
+      pay_basis  = snap.pay_basis || null;
+      rate       = snap.rate != null ? parseFloat(snap.rate as any) : null;
+      worked_units = snap.worked_units != null ? parseFloat(snap.worked_units as any) : null;
+      calculation_method = snap.calculation_method || null;
     } else {
       // Fallback path: build enriched view from live joins (draft payslips)
       const [empResult, attResult] = await Promise.all([
@@ -435,6 +471,11 @@ export class PayslipService {
         period_label: `${MONTH_NAMES[ps.month - 1]} ${ps.year}`,
         payslip_number: ps.payslip_number || '',
       };
+      currency = {
+        code: ps.currency || DEFAULT_CURRENCY.code,
+        symbol: ps.currency_symbol || DEFAULT_CURRENCY.symbol,
+        exchange_rate: ps.exchange_rate ?? null,
+      };
       attendance = attResult.rows.length
         ? {
             total_working_days: parseInt(attResult.rows[0].total_working_days, 10),
@@ -445,6 +486,10 @@ export class PayslipService {
             overtime_hours: parseFloat(attResult.rows[0].overtime_hours || '0'),
           }
         : null;
+      pay_basis  = ps.pay_basis || null;
+      rate       = ps.rate != null ? parseFloat(ps.rate as any) : null;
+      worked_units = ps.worked_units != null ? parseFloat(ps.worked_units as any) : null;
+      calculation_method = ps.calculation_method || null;
     }
 
     // Payment is always fetched live — it changes after snapshot is taken
@@ -480,10 +525,15 @@ export class PayslipService {
       paid_at: ps.paid_at ? new Date(ps.paid_at).toISOString() : null,
       remarks: ps.remarks || null,
       snapshot_data: ps.snapshot_data || null,
+      pay_basis,
+      rate,
+      worked_units,
+      calculation_method,
 
       employee,
       company,
       period,
+      currency,
       earnings,
       deductions,
       fines,

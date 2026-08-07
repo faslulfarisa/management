@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Body, Param, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Body, Param, Query, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { ActiveOrgGuard } from '../../auth/guards/active-org.guard';
 import { PermissionGuard } from '../../auth/guards/permission.guard';
@@ -7,7 +7,7 @@ import { PERMISSIONS } from '../../../shared/permissions.constants';
 import { AssetTypeService } from '../services/asset-type.service';
 import { AssetItemService } from '../services/asset-item.service';
 import { AssetAssignmentService } from '../services/asset-assignment.service';
-import { CreateAssetTypeDto, CreateAssetItemDto, AssignAssetDto, RecordAssetReturnDto } from '../dto/asset.dto';
+import { CreateAssetTypeDto, CreateAssetItemDto, AssignAssetDto, UpdateAssignmentDto, RecordAssetReturnDto } from '../dto/asset.dto';
 
 @UseGuards(JwtAuthGuard, ActiveOrgGuard, PermissionGuard)
 @Controller('assets')
@@ -49,6 +49,13 @@ export class AssetController {
     return { data: await this.assignmentService.assign(tenantId, body, req.user.sub) };
   }
 
+  @Get('assignments')
+  @RequirePermission(PERMISSIONS.ASSETS_VIEW)
+  async listAllAssignments(@Req() req: any, @Query() query: any) {
+    const tenantId = req.user.tenantId || req.user.tenant_id;
+    return { data: await this.assignmentService.listAll(tenantId, query) };
+  }
+
   @Get('assignments/employee/:employeeId')
   @RequirePermission(PERMISSIONS.ASSETS_VIEW)
   async listForEmployee(@Req() req: any, @Param('employeeId') employeeId: string) {
@@ -59,6 +66,20 @@ export class AssetController {
   @RequirePermission(PERMISSIONS.ASSETS_VIEW)
   async listForExit(@Req() req: any, @Param('exitRequestId') exitRequestId: string) {
     return { data: await this.assignmentService.listForExit(req.user.tenantId || req.user.tenant_id, exitRequestId) };
+  }
+
+  @Patch('assignments/:id')
+  @RequirePermission(PERMISSIONS.ASSETS_MANAGE)
+  async updateAssignment(@Req() req: any, @Param('id') id: string, @Body() body: UpdateAssignmentDto) {
+    const tenantId = req.user.tenantId || req.user.tenant_id;
+    return { data: await this.assignmentService.update(tenantId, id, body) };
+  }
+
+  @Delete('assignments/:id')
+  @RequirePermission(PERMISSIONS.ASSETS_MANAGE)
+  async deleteAssignment(@Req() req: any, @Param('id') id: string) {
+    const tenantId = req.user.tenantId || req.user.tenant_id;
+    return { data: await this.assignmentService.delete(tenantId, id) };
   }
 
   @Put('assignments/:id/return')

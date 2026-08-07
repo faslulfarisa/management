@@ -1,9 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../../../shared/database.service';
 import { EmailService } from '../../auth/email.service';
+import { NotificationEmitterService } from '../../notifications/services/notification-emitter.service';
 import {
   CreateCommunicationTemplateDto, SendCommunicationDto, UpdateCommunicationTemplateDto,
 } from '../dto/pipeline.dto';
+
+const COMMUNICATION_CHANNELS = ['email', 'sms', 'whatsapp', 'phone_note', 'internal_note'] as const;
+type CommunicationChannel = typeof COMMUNICATION_CHANNELS[number];
+type CommunicationStatus = 'sent' | 'failed' | 'logged';
 
 function renderTemplate(text: string, vars: Record<string, string>): string {
   return text.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, key) => vars[key] ?? '');
@@ -11,7 +16,11 @@ function renderTemplate(text: string, vars: Record<string, string>): string {
 
 @Injectable()
 export class CommunicationService {
-  constructor(private db: DatabaseService, private email: EmailService) {}
+  constructor(
+    private db: DatabaseService,
+    private email: EmailService,
+    private notifications: NotificationEmitterService,
+  ) {}
 
   // ── Templates ──────────────────────────────────────────────────────────
   async listTemplates(tenantId: string, includeInactive = false) {
@@ -62,9 +71,10 @@ export class CommunicationService {
     return rows;
   }
 
-  async send(applicationId: string, tenantId: string, sentById: string, dto: SendCommunicationDto) {
+  private async getApplicationContext(applicationId: string, tenantId: string) {
     const { rows: appRows } = await this.db.query(
-      `SELECT a.*, c.id AS candidate_id, c.email AS candidate_email, c.first_name, c.last_name, jp.title AS job_title
+      `SELECT a.*, c.id AS candidate_id, c.email AS candidate_email, c.phone AS candidate_phone,
+              c.first_name, c.last_name, jp.title AS job_title
        FROM applications a
        JOIN candidates c ON c.id = a.candidate_id
        JOIN job_postings jp ON jp.id = a.job_posting_id
@@ -72,8 +82,10 @@ export class CommunicationService {
       [applicationId, tenantId],
     );
     if (!appRows.length) throw new NotFoundException('Application not found');
-    const application = appRows[0];
+    return appRows[0];
+  }
 
+  private async renderCommunication(tenantId: string, dto: SendCommunicationDto, vars: Record<string, string>) {
     let subject = dto.subject;
     let body = dto.body;
     if (dto.template_id) {
@@ -87,25 +99,74 @@ export class CommunicationService {
     }
     if (!subject || !body) throw new BadRequestException('subject and body are required (or pick a template)');
 
-    const vars = { candidate_name: `${application.first_name} ${application.last_name}`, job_title: application.job_title, company_name: 'Ai-HRMS' };
-    const renderedSubject = renderTemplate(subject, vars);
-    const renderedBody = renderTemplate(body, vars);
+    return {
+      subject: renderTemplate(subject, vars),
+      body: renderTemplate(body, vars),
+    };
+  }
 
-    let status: 'sent' | 'failed' = 'sent';
+  private async notifyStakeholders(tenantId: string, applicationId: string, actorId: string, channel: CommunicationChannel, subject: string) {
+    const { rows } = await this.db.query(
+      `SELECT u.id
+       FROM applications a
+       JOIN vacancies v ON v.id = a.vacancy_id
+       JOIN users u ON u.employee_id IN (v.recruiter_id, v.hiring_manager_id)
+        AND u.tenant_id = a.tenant_id
+        AND u.deleted_at IS NULL
+       WHERE a.id = $1 AND a.tenant_id = $2 AND u.id <> $3`,
+      [applicationId, tenantId, actorId],
+    );
+    const userIds = rows.map((row: any) => row.id);
+    if (!userIds.length) return;
+
+    await this.notifications.emit(tenantId, {
+      userIds,
+      title: 'Candidate communication logged',
+      message: `${channel.replace(/_/g, ' ')}: ${subject}`,
+      type: 'info',
+      priority: 'low',
+      sourceModule: 'recruitment',
+      entityType: 'application',
+      entityId: applicationId,
+      actionUrl: `/dashboard/hr/recruitment/pipeline/${applicationId}`,
+    });
+  }
+
+  async send(applicationId: string, tenantId: string, sentById: string, dto: SendCommunicationDto) {
+    const channel = (dto.channel ?? 'email') as CommunicationChannel;
+    if (!COMMUNICATION_CHANNELS.includes(channel)) throw new BadRequestException('Unsupported communication channel');
+
+    const application = await this.getApplicationContext(applicationId, tenantId);
+    const vars = {
+      candidate_name: `${application.first_name} ${application.last_name}`,
+      job_title: application.job_title,
+      company_name: 'Ai-HRMS',
+    };
+    const rendered = await this.renderCommunication(tenantId, dto, vars);
+
+    let status: CommunicationStatus = channel === 'email' ? 'sent' : 'logged';
     let errorMessage: string | null = null;
-    try {
-      await this.email.sendGenericEmail(application.candidate_email, renderedSubject, renderedBody);
-    } catch (err: any) {
-      status = 'failed';
-      errorMessage = err?.message ?? 'Failed to send email';
+
+    if (channel === 'email') {
+      try {
+        await this.email.sendGenericEmail(application.candidate_email, rendered.subject, rendered.body);
+      } catch (err: any) {
+        status = 'failed';
+        errorMessage = err?.message ?? 'Failed to send email';
+      }
     }
 
     const { rows } = await this.db.query(
       `INSERT INTO candidate_communications (
          tenant_id, candidate_id, application_id, template_id, channel, subject, body, status, error_message, sent_by
-       ) VALUES ($1,$2,$3,$4,'email',$5,$6,$7,$8,$9) RETURNING *`,
-      [tenantId, application.candidate_id, applicationId, dto.template_id ?? null, renderedSubject, renderedBody, status, errorMessage, sentById],
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [tenantId, application.candidate_id, applicationId, dto.template_id ?? null, channel, rendered.subject, rendered.body, status, errorMessage, sentById],
     );
+
+    if (channel === 'internal_note' || channel === 'phone_note') {
+      this.notifyStakeholders(tenantId, applicationId, sentById, channel, rendered.subject).catch(() => undefined);
+    }
+
     return rows[0];
   }
 }

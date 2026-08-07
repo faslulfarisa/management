@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { EmployeeGuard } from '@/components/employee/layout/employee-guard';
 import { PortalLeave } from '@/components/employee/desktop/portal-leave';
-// ── Mobile imports (original) ──────────────────────────────────
 import { MobileHeader } from '@/components/employee/layout/mobile-header';
 import { LeaveBalanceCards } from '@/components/employee/leave/leave-balance-cards';
 import { LeaveHistoryList } from '@/components/employee/leave/leave-history-list';
@@ -14,12 +13,10 @@ import { Plus } from 'lucide-react';
 export default function LeavePage() {
   return (
     <EmployeeGuard>
-      {/* ── Mobile (unchanged original) ─────────────────────── */}
       <div className="md:hidden">
         <MobileLeaveContent />
       </div>
 
-      {/* ── Desktop (new professional portal) ───────────────── */}
       <div className="hidden md:block">
         <PortalLeave />
       </div>
@@ -31,26 +28,38 @@ function MobileLeaveContent() {
   const [applyOpen, setApplyOpen] = useState(false);
 
   return (
-    <div className="flex flex-col">
-      <MobileHeader
-        title="My Leave"
-        rightAction={
-          <Button size="sm" onClick={() => setApplyOpen(true)} className="h-8 gap-1.5 text-xs">
-            <Plus className="h-3.5 w-3.5" />
-            Apply
-          </Button>
-        }
-      />
-      <div className="px-4 pt-4 space-y-5 pb-6">
-        <div>
-          <p className="text-sm font-semibold text-foreground mb-3">Leave Balance</p>
+    <div className="relative flex min-h-[100dvh] flex-col overflow-x-hidden">
+      <MobileHeader title="My Leave" />
+
+      <div className="space-y-5 px-4 pb-28 pt-4">
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-foreground">Leave Balance</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">Available days by leave type</p>
+            </div>
+          </div>
           <LeaveBalanceCards />
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-foreground mb-3">Request History</p>
+        </section>
+
+        <section>
+          <div className="mb-3">
+            <p className="text-sm font-semibold text-foreground">Requests</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">Tap a card to view approval details</p>
+          </div>
           <LeaveHistoryList />
-        </div>
+        </section>
       </div>
+
+      <Button
+        type="button"
+        onClick={() => setApplyOpen(true)}
+        className="fixed bottom-20 right-4 z-40 h-14 rounded-full px-5 shadow-lg"
+      >
+        <Plus className="mr-2 h-5 w-5" />
+        Apply Leave
+      </Button>
+
       <LeaveApplySheet open={applyOpen} onClose={() => setApplyOpen(false)} />
     </div>
   );

@@ -1,5 +1,5 @@
 import {
-  IsEmail, IsString, IsNotEmpty, IsOptional, IsBoolean, IsIn, IsInt, Min,
+  IsEmail, IsString, IsNotEmpty, IsOptional, IsIn, IsInt, Min,
   MinLength, MaxLength, Matches, ValidateNested, IsUUID,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -46,18 +46,6 @@ export class RegistrationSessionDto {
   accessToken: string;
 }
 
-// Email-link verification only needs the link's own token — it's clicked
-// from an email client, possibly on a different device than the wizard
-// session that holds the access token.
-export class VerifyEmailDto {
-  @IsUUID()
-  registrationId: string;
-
-  @IsString()
-  @IsNotEmpty()
-  token: string;
-}
-
 export class VerifyMobileDto extends RegistrationSessionDto {
   @IsString()
   @Matches(/^\d{6}$/, { message: 'OTP must be exactly 6 digits' })
@@ -99,6 +87,10 @@ export class SubmitOrganizationDto extends RegistrationSessionDto {
   @IsOptional()
   @IsString()
   tradeName?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  companyCode: string;
 
   @IsIn(COMPANY_TYPES)
   companyType: string;
@@ -174,26 +166,6 @@ export class SubmitOrganizationDto extends RegistrationSessionDto {
   @IsOptional()
   @IsIn(COMPANY_SIZES)
   companySize?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  payrollRequirement?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  attendanceRequirement?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  biometricRequirement?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  recruitmentRequirement?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  performanceRequirement?: boolean;
 
   // Primary contact
   @IsString()

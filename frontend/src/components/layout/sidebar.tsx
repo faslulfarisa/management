@@ -9,16 +9,20 @@ import {
   LayoutDashboard, Building2, Users, CalendarDays, Banknote, FileText,
   Settings, Briefcase, GraduationCap, BarChart3, Bell, Shield, DollarSign,
   CreditCard, KeyRound, Receipt, IndianRupee, ChevronDown,
-  Fingerprint, Activity, AlertTriangle, GitPullRequest, MapPin, GitBranch,
+  Fingerprint, Activity, AlertTriangle, GitPullRequest, Layers, GitBranch,
   ArrowRightLeft, BarChart2, ListChecks, TrendingUp, CheckSquare, AlertCircle,
   X, Clock, ClipboardList, SlidersHorizontal, LayoutGrid, UserX,
-  ScrollText,
+  ScrollText, User, CalendarCheck, Inbox, UserCircle, Award, DoorOpen, ClipboardCheck,
+  Store, Landmark, Network, UserCog, UserPlus, CalendarClock, CalendarOff,
+  CalendarRange, PartyPopper, CalendarX, BookOpenText, PieChart, ShieldCheck,
+  History, Workflow, Monitor, Timer, Coffee, Coins, ListTodo, FileSpreadsheet, Percent
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import api from '@/lib/api';
 import { PERMISSIONS } from '@/lib/permissions';
 import { PendingApprovalsWidget } from '@/components/approvals/pending-approvals-widget';
 import { NotificationCenterWidget } from '@/components/notifications/notification-center-widget';
+import { useAdminSection } from '@/hooks/use-admin-section';
 
 const navGroups = [
   {
@@ -26,45 +30,49 @@ const navGroups = [
     items: [
       { label: 'Branches', href: '/dashboard/platform/branches', icon: GitBranch },
       { label: 'Departments', href: '/dashboard/platform/departments', icon: Building2 },
-      { label: 'Areas', href: '/dashboard/platform/areas', icon: MapPin },
-      { label: 'Positions', href: '/dashboard/platform/positions', icon: Briefcase },
+      { label: 'Areas', href: '/dashboard/platform/areas', icon: Layers },
+      { label: 'Positions', href: '/dashboard/platform/positions', icon: Network },
       { label: 'User Management', href: '/dashboard/platform/users', icon: Users },
-      { label: 'Approval Chains', href: '/dashboard/platform/approval-chains', icon: ListChecks },
+      { label: 'Approval Chains', href: '/dashboard/platform/approval-chains', icon: Workflow },
       { label: 'Audit Logs', href: '/dashboard/platform/audit-logs', icon: Shield },
     ],
   },
   {
     label: 'HR',
     items: [
-      { label: 'Employees', href: '/dashboard/hr/employees', icon: Users },
+      { label: 'Employees', href: '/dashboard/hr/employees', icon: UserCog },
       //{ label: 'Employee Transfers', href: '/dashboard/platform/transfers', icon: ArrowRightLeft },
-      { label: 'Recruitment', href: '/dashboard/hr/recruitment', icon: Briefcase },
-      { label: 'Attendance', href: '/dashboard/hr/attendance', icon: CalendarDays },
-      { label: 'Leave', href: '/dashboard/hr/leave', icon: CalendarDays },
+      { label: 'Recruitment', href: '/dashboard/hr/recruitment', icon: UserPlus },
+      { label: 'Attendance', href: '/dashboard/hr/attendance', icon: CalendarClock },
+      { label: 'Leave', href: '/dashboard/hr/leave', icon: CalendarOff },
       { label: 'Payroll', href: '/dashboard/hr/payroll', icon: Banknote },
       { label: 'Fines & Deductions', href: '/dashboard/hr/fines', icon: AlertCircle },
-      { label: 'Performance', href: '/dashboard/hr/performance', icon: BarChart3 },
-      { label: 'Compliance', href: '/dashboard/compliance', icon: Shield },
-      { label: 'Assets', href: '/dashboard/ops/assets', icon: Briefcase },
+      { label: 'Performance', href: '/dashboard/hr/performance', icon: TrendingUp },
+      { label: 'Tasks', href: '/dashboard/hr/tasks', icon: ClipboardCheck },
+      { label: 'Compliance', href: '/dashboard/compliance', icon: ShieldCheck },
+      { label: 'Assets', href: '/dashboard/ops/assets', icon: Monitor },
       { label: 'Exit Management', href: '/dashboard/hr/exit-management', icon: KeyRound },
     ],
   },
   {
     label: 'Templates',
     items: [
-      { label: 'Attendance Policy', href: '/dashboard/templates/attendance-policy', icon: Clock },
+      { label: 'Attendance Policy', href: '/dashboard/templates/attendance-policy', icon: Timer },
+      { label: 'Break Policy', href: '/dashboard/templates/break-policy', icon: Coffee },
       { label: 'Leave Policy', href: '/dashboard/templates/leave-policy', icon: ClipboardList },
       { label: 'Salary Structure', href: '/dashboard/templates/salary-structure', icon: IndianRupee },
       { label: 'Overtime Policy', href: '/dashboard/templates/overtime-policy', icon: SlidersHorizontal },
-      { label: 'Shift Templates', href: '/dashboard/templates/shifts', icon: CalendarDays },
+      { label: 'Shift Templates', href: '/dashboard/templates/shifts', icon: CalendarRange },
+      { label: 'Holiday Policy', href: '/dashboard/templates/holiday-policy', icon: PartyPopper },
     ],
   },
   {
     label: 'Schedules',
     items: [
       { label: 'Overview', href: '/dashboard/schedules/overview', icon: LayoutGrid },
-      { label: 'All Assignments', href: '/dashboard/schedules/assignments', icon: ListChecks },
+      { label: 'All Assignments', href: '/dashboard/schedules/assignments', icon: ListTodo },
       { label: 'Unassigned', href: '/dashboard/schedules/unassigned', icon: UserX },
+      { label: 'Shift Overrides', href: '/dashboard/hr/shifts/overrides', icon: CalendarX },
     ],
   },
   {
@@ -74,11 +82,11 @@ const navGroups = [
       { label: 'Expenses', href: '/dashboard/finance/expenses', icon: CreditCard },
       { label: 'Reimbursements', href: '/dashboard/finance/reimbursements', icon: Receipt },
       { label: 'Invoices', href: '/dashboard/finance/invoices', icon: FileText },
-      { label: 'Vendors', href: '/dashboard/finance/vendors', icon: Building2 },
-      { label: 'Vendor Bills', href: '/dashboard/finance/bills', icon: CreditCard },
-      { label: 'Cashbook', href: '/dashboard/finance/cashbook', icon: Banknote },
-      { label: 'Budgets', href: '/dashboard/finance/budgets', icon: BarChart3 },
-      { label: 'GST Dashboard', href: '/dashboard/finance/gst', icon: IndianRupee },
+      { label: 'Vendors', href: '/dashboard/finance/vendors', icon: Store },
+      { label: 'Vendor Bills', href: '/dashboard/finance/bills', icon: FileSpreadsheet },
+      { label: 'Cashbook', href: '/dashboard/finance/cashbook', icon: BookOpenText },
+      { label: 'Budgets', href: '/dashboard/finance/budgets', icon: PieChart },
+      { label: 'GST Dashboard', href: '/dashboard/finance/gst', icon: Percent },
     ],
   },
   {
@@ -101,16 +109,40 @@ const navGroups = [
     label: 'System',
     items: [
       { label: 'Settings', href: '/dashboard/system/settings', icon: Settings },
-      { label: 'Company Profile', href: '/dashboard/settings/company-profile', icon: Building2 },
+      { label: 'Company Profile', href: '/dashboard/settings/company-profile', icon: Landmark },
     ],
   },
+];
+
+const HIDE_FINANCE_SECTION = true;
+
+/**
+ * My Space navigation items — personal employee activities.
+ * Rendered in the sidebar when an admin/branch_admin user switches to
+ * the "My Space" operational context.
+ */
+const mySpaceNavItems = [
+  { label: 'Dashboard', href: '/home', icon: LayoutDashboard },
+  { label: 'My Attendance', href: '/attendance', icon: CalendarCheck },
+  { label: 'My Leave', href: '/leave', icon: CalendarOff },
+  { label: 'My Requests', href: '/requests', icon: Inbox },
+  { label: 'My Schedule', href: '/shifts', icon: Clock },
+  { label: 'My Performance', href: '/performance', icon: Award },
+  { label: 'My Payroll', href: '/payslips', icon: Banknote },
+  { label: 'My Documents', href: '/documents', icon: FileText },
+  { label: 'My Exit', href: '/exit', icon: DoorOpen },
+  { label: 'Notifications', href: '/notifications', icon: Bell },
+  { label: 'My Profile', href: '/profile', icon: UserCircle },
 ];
 
 const ITEM_PERMISSIONS: Record<string, string[]> = {
   '/dashboard/platform/branches': [PERMISSIONS.BRANCH_VIEW, PERMISSIONS.BRANCH_MANAGE],
   '/dashboard/platform/departments': [PERMISSIONS.BRANCH_VIEW, PERMISSIONS.BRANCH_MANAGE],
+  '/dashboard/platform/areas': [PERMISSIONS.BRANCH_VIEW, PERMISSIONS.BRANCH_MANAGE],
+  '/dashboard/platform/positions': [PERMISSIONS.PLATFORM_ROLES_VIEW],
   '/dashboard/platform/users': [PERMISSIONS.PLATFORM_USERS_VIEW],
   '/dashboard/platform/approval-chains': [PERMISSIONS.APPROVALS_VIEW, PERMISSIONS.APPROVALS_MANAGE],
+  '/dashboard/platform/audit-logs': [PERMISSIONS.AUDIT_LOGS_VIEW],
   '/dashboard/hr/employees': [PERMISSIONS.EMPLOYEES_VIEW],
   '/dashboard/hr/recruitment': [PERMISSIONS.RECRUITMENT_VIEW],
   '/dashboard/hr/attendance': [PERMISSIONS.ATTENDANCE_VIEW],
@@ -119,23 +151,44 @@ const ITEM_PERMISSIONS: Record<string, string[]> = {
   '/dashboard/hr/payroll': [PERMISSIONS.PAYROLL_VIEW],
   '/dashboard/hr/fines': [PERMISSIONS.EMPLOYEES_VIEW],
   '/dashboard/hr/performance': [PERMISSIONS.PERFORMANCE_VIEW],
+  '/dashboard/hr/tasks': [PERMISSIONS.TASKS_VIEW],
   '/dashboard/compliance': [PERMISSIONS.COMPLIANCE_VIEW],
   '/dashboard/ops/assets': [PERMISSIONS.ASSETS_VIEW],
   '/dashboard/hr/exit-management': [PERMISSIONS.EXIT_VIEW],
   '/dashboard/schedules/overview': [PERMISSIONS.SCHEDULES_VIEW],
   '/dashboard/schedules/assignments': [PERMISSIONS.SCHEDULES_VIEW],
   '/dashboard/schedules/unassigned': [PERMISSIONS.SCHEDULES_VIEW],
+  '/dashboard/hr/shifts/overrides': [PERMISSIONS.SHIFT_OVERRIDE_VIEW],
+  '/dashboard/templates/attendance-policy': [PERMISSIONS.PLATFORM_TEMPLATES_VIEW],
+  '/dashboard/templates/break-policy': [PERMISSIONS.PLATFORM_TEMPLATES_VIEW],
+  '/dashboard/templates/leave-policy': [PERMISSIONS.PLATFORM_TEMPLATES_VIEW],
+  '/dashboard/templates/salary-structure': [PERMISSIONS.PLATFORM_TEMPLATES_VIEW],
+  '/dashboard/templates/overtime-policy': [PERMISSIONS.PLATFORM_TEMPLATES_VIEW],
+  '/dashboard/templates/shifts': [PERMISSIONS.PLATFORM_TEMPLATES_VIEW],
+  '/dashboard/templates/holiday-policy': [PERMISSIONS.PLATFORM_TEMPLATES_VIEW],
+  '/dashboard/finance': [PERMISSIONS.FINANCE_INVOICES_VIEW, PERMISSIONS.FINANCE_BILLS_VIEW, PERMISSIONS.FINANCE_CASHBOOK_VIEW, PERMISSIONS.FINANCE_BUDGETS_VIEW],
+  '/dashboard/finance/expenses': [PERMISSIONS.FINANCE_BILLS_VIEW],
+  '/dashboard/finance/reimbursements': [PERMISSIONS.FINANCE_BILLS_VIEW],
+  '/dashboard/finance/invoices': [PERMISSIONS.FINANCE_INVOICES_VIEW],
+  '/dashboard/finance/vendors': [PERMISSIONS.FINANCE_VENDORS_MANAGE],
+  '/dashboard/finance/bills': [PERMISSIONS.FINANCE_BILLS_VIEW],
+  '/dashboard/finance/cashbook': [PERMISSIONS.FINANCE_CASHBOOK_VIEW],
+  '/dashboard/finance/budgets': [PERMISSIONS.FINANCE_BUDGETS_VIEW],
+  '/dashboard/finance/gst': [PERMISSIONS.GST_RETURNS_VIEW],
   '/dashboard/reports': [PERMISSIONS.REPORTS_VIEW],
   '/dashboard/biometrics/live-attendance': [PERMISSIONS.ATTENDANCE_VIEW],
   '/dashboard/biometrics/queue-health': [PERMISSIONS.ATTENDANCE_VIEW],
   '/dashboard/biometrics/dlq': [PERMISSIONS.ATTENDANCE_VIEW],
   '/dashboard/biometrics/corrections': [PERMISSIONS.ATTENDANCE_EDIT, PERMISSIONS.ATTENDANCE_APPROVE],
   '/dashboard/approvals': [PERMISSIONS.APPROVALS_VIEW],
-  '/dashboard/automation': [PERMISSIONS.NOTIFICATIONS_VIEW],
+  '/dashboard/notifications': [PERMISSIONS.NOTIFICATIONS_VIEW],
+  '/dashboard/system/settings': [PERMISSIONS.ORGANIZATION_PROFILE_VIEW, PERMISSIONS.ORGANIZATION_PROFILE_EDIT],
+  '/dashboard/settings/company-profile': [PERMISSIONS.ORGANIZATION_PROFILE_VIEW, PERMISSIONS.ORGANIZATION_PROFILE_EDIT],
 };
 
 function hasAnyPermission(granted: string[], required: string[]) {
-  if (!required.length || !granted.length) return true;
+  if (!required.length) return true;
+  if (!granted.length) return false;
   return required.some((permission) => granted.includes(permission));
 }
 
@@ -175,6 +228,8 @@ function NavGroup({
   // Filter items based on hierarchy rank (see frontend/src/lib/hierarchy.ts), then
   // apply any dynamic sidebar_access template restrictions on top.
   const visibleItems = group.items.filter(item => {
+    if (group.label === 'Finance' && HIDE_FINANCE_SECTION) return false;
+
     let visible: boolean;
 
     if (item.href === '/dashboard/compliance') {
@@ -296,11 +351,14 @@ function NavGroup({
 export function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) {
   const pathname = usePathname();
   const { tenants, selectedTenantId, userType, permissions } = useAuthStore();
+  const { isAdminDualContext, activeSection } = useAdminSection();
   const allHrefs = navGroups.flatMap(g => g.items.map(i => i.href));
   const normalizedPathname = pathname?.replace(/^\/branch-admin(?=\/|$)/, '/dashboard') ?? '';
   const portalBasePath = isBranchScopedAdmin(userType) || pathname?.startsWith('/branch-admin')
     ? '/branch-admin'
     : '/dashboard';
+
+  const isMySpace = isAdminDualContext && activeSection === 'my-space';
 
   const currentOrg = tenants.find(t => t.id === selectedTenantId);
 
@@ -318,7 +376,7 @@ export function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () =>
     }
   }, [selectedTenantId]);
 
-  const topLevelHrefs = ['/dashboard/approvals', '/dashboard/automation'];
+  const topLevelHrefs = ['/dashboard/approvals', '/dashboard/notifications'];
   const isDashboardActive = normalizedPathname === '/dashboard' || (
     normalizedPathname.startsWith('/dashboard') &&
     !allHrefs.some(h => normalizedPathname.startsWith(h)) &&
@@ -345,7 +403,7 @@ export function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () =>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-semibold sidebar-text opacity-50">V-1.7</span>
+          <span className="text-[10px] font-semibold sidebar-text opacity-50">V-2.9</span>
           {/* Mobile close button */}
           <button
             onClick={onClose}
@@ -377,96 +435,137 @@ export function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () =>
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-4 overflow-y-auto">
-        <div className="space-y-0.5">
-          <Link
-            href={portalBasePath}
-            className={cn(
-              'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150',
-              isDashboardActive
-                ? 'sidebar-active text-white shadow-lg shadow-black/20'
-                : 'sidebar-text hover:text-white hover:sidebar-hover'
-            )}
-          >
-            <span className={cn(
-              'flex items-center justify-center w-6 h-6 rounded-md transition-all',
-              isDashboardActive
-                ? 'bg-white/20'
-                : 'bg-white/5 hover:bg-white/10'
-            )}>
-              <LayoutDashboard className="w-3.5 h-3.5" />
-            </span>
-            <span className="truncate">Dashboard</span>
-          </Link>
-
-          {/* Approvals top-level link */}
-          {hasAnyPermission(permissions, ITEM_PERMISSIONS['/dashboard/approvals']) && (() => {
-            const isActive = normalizedPathname.startsWith('/dashboard/approvals');
-            return (
+        {isMySpace ? (
+          /* ── My Space Navigation ── */
+          <div className="space-y-1">
+            {/* Context badge */}
+            <div
+              className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg text-xs font-semibold text-white"
+              style={{ background: 'linear-gradient(135deg, hsl(265 65% 50%), hsl(220 65% 55%))' }}
+            >
+              <User className="w-3.5 h-3.5" />
+              My Space
+            </div>
+            {mySpaceNavItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = pathname === item.href || pathname?.startsWith(item.href + '/');
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150',
+                    isActive
+                      ? 'sidebar-active text-white shadow-lg shadow-black/20'
+                      : 'sidebar-text hover:text-white hover:sidebar-hover',
+                  )}
+                >
+                  <span className={cn(
+                    'flex items-center justify-center w-6 h-6 rounded-md transition-all',
+                    isActive ? 'bg-white/20' : 'bg-white/5 hover:bg-white/10',
+                  )}>
+                    <Icon className="w-3.5 h-3.5" />
+                  </span>
+                  <span className="truncate">{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        ) : (
+          /* ── Branch Management Navigation (existing) ── */
+          <>
+            <div className="space-y-0.5">
               <Link
-                href={toPortalHref('/dashboard/approvals', portalBasePath)}
+                href={portalBasePath}
                 className={cn(
                   'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150',
-                  isActive
+                  isDashboardActive
                     ? 'sidebar-active text-white shadow-lg shadow-black/20'
                     : 'sidebar-text hover:text-white hover:sidebar-hover'
                 )}
               >
                 <span className={cn(
                   'flex items-center justify-center w-6 h-6 rounded-md transition-all',
-                  isActive ? 'bg-white/20' : 'bg-white/5 hover:bg-white/10'
+                  isDashboardActive
+                    ? 'bg-white/20'
+                    : 'bg-white/5 hover:bg-white/10'
                 )}>
-                  <CheckSquare className="w-3.5 h-3.5" />
+                  <LayoutDashboard className="w-3.5 h-3.5" />
                 </span>
-                <span className="truncate">Approvals</span>
-                <PendingApprovalsWidget />
+                <span className="truncate">Dashboard</span>
               </Link>
-            );
-          })()}
 
-          {/* Notification Center top-level link */}
-          {hasAnyPermission(permissions, ITEM_PERMISSIONS['/dashboard/automation']) && (() => {
-            const isActive = normalizedPathname.startsWith('/dashboard/automation');
-            return (
-              <Link
-                href={toPortalHref('/dashboard/automation', portalBasePath)}
-                className={cn(
-                  'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150',
-                  isActive
-                    ? 'sidebar-active text-white shadow-lg shadow-black/20'
-                    : 'sidebar-text hover:text-white hover:sidebar-hover'
-                )}
-              >
-                <span className={cn(
-                  'flex items-center justify-center w-6 h-6 rounded-md transition-all',
-                  isActive ? 'bg-white/20' : 'bg-white/5 hover:bg-white/10'
-                )}>
-                  <Bell className="w-3.5 h-3.5" />
-                </span>
-                <span className="truncate">Notification Center</span>
-                <NotificationCenterWidget />
-              </Link>
-            );
-          })()}
-        </div>
+              {/* Approvals top-level link */}
+              {hasAnyPermission(permissions, ITEM_PERMISSIONS['/dashboard/approvals']) && (() => {
+                const isActive = normalizedPathname.startsWith('/dashboard/approvals');
+                return (
+                  <Link
+                    href={toPortalHref('/dashboard/approvals', portalBasePath)}
+                    className={cn(
+                      'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150',
+                      isActive
+                        ? 'sidebar-active text-white shadow-lg shadow-black/20'
+                        : 'sidebar-text hover:text-white hover:sidebar-hover'
+                    )}
+                  >
+                    <span className={cn(
+                      'flex items-center justify-center w-6 h-6 rounded-md transition-all',
+                      isActive ? 'bg-white/20' : 'bg-white/5 hover:bg-white/10'
+                    )}>
+                      <CheckSquare className="w-3.5 h-3.5" />
+                    </span>
+                    <span className="truncate">Approvals</span>
+                    <PendingApprovalsWidget />
+                  </Link>
+                );
+              })()}
 
-        {navGroups.map((group) => (
-          <NavGroup
-            key={group.label}
-            group={group}
-            pathname={normalizedPathname}
-            allHrefs={allHrefs}
-            userType={userType}
-            accessConfig={accessConfig}
-            permissions={permissions}
-            portalBasePath={portalBasePath}
-          />
-        ))}
+              {/* Notification Center top-level link */}
+              {hasAnyPermission(permissions, ITEM_PERMISSIONS['/dashboard/notifications']) && (() => {
+                const isActive = normalizedPathname.startsWith('/dashboard/notifications');
+                return (
+                  <Link
+                    href={toPortalHref('/dashboard/notifications', portalBasePath)}
+                    className={cn(
+                      'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150',
+                      isActive
+                        ? 'sidebar-active text-white shadow-lg shadow-black/20'
+                        : 'sidebar-text hover:text-white hover:sidebar-hover'
+                    )}
+                  >
+                    <span className={cn(
+                      'flex items-center justify-center w-6 h-6 rounded-md transition-all',
+                      isActive ? 'bg-white/20' : 'bg-white/5 hover:bg-white/10'
+                    )}>
+                      <Bell className="w-3.5 h-3.5" />
+                    </span>
+                    <span className="truncate">Notification Center</span>
+                    <NotificationCenterWidget />
+                  </Link>
+                );
+              })()}
+            </div>
+
+            {navGroups.map((group) => (
+              <NavGroup
+                key={group.label}
+                group={group}
+                pathname={normalizedPathname}
+                allHrefs={allHrefs}
+                userType={userType}
+                accessConfig={accessConfig}
+                permissions={permissions}
+                portalBasePath={portalBasePath}
+              />
+            ))}
+          </>
+        )}
       </nav>
 
       {/* Bottom brand badge */}
       <div className="px-5 py-4 border-t sidebar-border shrink-0">
         <p className="text-[10px] sidebar-text opacity-40 text-center">
-          AI Hotel Workforce Management
+          AI Human Resource Management
         </p>
       </div>
     </aside>

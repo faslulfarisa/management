@@ -13,6 +13,7 @@ export interface NotificationItem {
   priority: NotificationPriority;
   source_module: string | null;
   action_url: string | null;
+  action_type?: string | null;
   entity_type: string | null;
   entity_id: string | null;
   branch_id: string | null;

@@ -3,6 +3,7 @@ import { DatabaseService } from '../../../shared/database.service';
 import { EmployeeService } from '../../hr/services/employee.service';
 import { AuditLogService } from '../../platform/services/audit-log.service';
 import { NotificationEmitterService } from '../../notifications/services/notification-emitter.service';
+import { TemplateService } from '../../platform/services/template.service';
 import { ConvertToEmployeeDto } from '../dto/employee-conversion.dto';
 
 /**
@@ -17,6 +18,7 @@ export class EmployeeConversionService {
     private employeeService: EmployeeService,
     private auditLog: AuditLogService,
     private notifications: NotificationEmitterService,
+    private templateService: TemplateService,
   ) {}
 
   private async gatherConversionData(applicationId: string, tenantId: string) {
@@ -38,8 +40,8 @@ export class EmployeeConversionService {
          LEFT JOIN departments d ON d.id = v.department_id
          LEFT JOIN positions p ON p.id = v.position_id
          LEFT JOIN employment_types et ON et.id = v.employment_type_id
-         WHERE v.id = $1`,
-        [application.vacancy_id],
+         WHERE v.id = $1 AND v.tenant_id = $2 AND v.deleted_at IS NULL`,
+        [application.vacancy_id, tenantId],
       );
       vacancy = rows[0] ?? null;
     }
@@ -68,6 +70,7 @@ export class EmployeeConversionService {
       already_converted: !!application.converted_employee_id,
       employee_id: application.converted_employee_id,
       application_status: application.status,
+      preboarding_status: preboarding?.status ?? null,
       prefill: {
         first_name: application.first_name,
         last_name: application.last_name,
@@ -102,6 +105,9 @@ export class EmployeeConversionService {
     }
     if (application.status !== 'hired') {
       throw new BadRequestException(`Cannot convert an application with status '${application.status}' — it must be 'hired' first`);
+    }
+    if (!preboarding || preboarding.status !== 'completed') {
+      throw new BadRequestException('Preboarding must be complete before converting this candidate to an employee');
     }
 
     const dateOfJoining = overrides.date_of_joining ?? preboarding?.joining_date ?? offer?.joining_date;
@@ -139,6 +145,8 @@ export class EmployeeConversionService {
     };
 
     const employee = await this.employeeService.create(tenantId, actorId, data);
+    const documents = await this.connectPreboardingDocuments(applicationId, tenantId, actorId, employee.id);
+    const connectedTemplates = await this.resolveEmployeeWorkflowTemplates(tenantId, employee.id);
 
     await this.db.query(
       'UPDATE applications SET converted_employee_id = $1, converted_at = now(), updated_at = now() WHERE id = $2 AND tenant_id = $3',
@@ -147,7 +155,13 @@ export class EmployeeConversionService {
 
     await this.auditLog.log({
       tenantId, userId: actorId, entityType: 'application', entityId: applicationId,
-      action: 'converted_to_employee', newValues: { employee_id: employee.id, employee_code: employee.employee_code },
+      action: 'converted_to_employee',
+      newValues: {
+        employee_id: employee.id,
+        employee_code: employee.employee_code,
+        connected_documents: documents.length,
+        connected_templates: connectedTemplates,
+      },
     });
 
     if (vacancy) {
@@ -164,7 +178,46 @@ export class EmployeeConversionService {
       }
     }
 
-    return employee;
+    return { ...employee, conversion_links: { documents, templates: connectedTemplates } };
+  }
+
+  private async connectPreboardingDocuments(applicationId: string, tenantId: string, actorId: string, employeeId: string) {
+    const { rows } = await this.db.query(
+      `SELECT document_type, name, file_url, file_size_bytes, mime_type
+       FROM documents
+       WHERE tenant_id = $1
+         AND entity_type = 'application'
+         AND entity_id = $2
+         AND deleted_at IS NULL`,
+      [tenantId, applicationId],
+    );
+
+    const connected: any[] = [];
+    for (const document of rows) {
+      const employeeDocument = await this.employeeService.addDocument(employeeId, tenantId, actorId, {
+        document_type: document.document_type || 'onboarding',
+        name: document.name,
+        file_url: document.file_url,
+        file_size_bytes: document.file_size_bytes,
+        mime_type: document.mime_type,
+      });
+      connected.push(employeeDocument);
+    }
+    return connected;
+  }
+
+  private async resolveEmployeeWorkflowTemplates(tenantId: string, employeeId: string) {
+    const templateTypes = ['salary_structure', 'leave_policy', 'holiday_policy', 'shift_template', 'training_plan'];
+    const entries = await Promise.all(templateTypes.map(async (type) => {
+      const template = await this.templateService.getResolved(tenantId, type, 'employee', employeeId);
+      return [type, template ? {
+        id: template.id,
+        name: template.name,
+        resolved_via: template.resolved_via ?? (template.is_default ? 'default' : null),
+      } : null];
+    }));
+
+    return Object.fromEntries(entries);
   }
 
   private async resolveUserIdForEmployee(tenantId: string, employeeId: string | null): Promise<string | null> {

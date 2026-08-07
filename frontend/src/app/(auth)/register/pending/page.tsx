@@ -12,8 +12,8 @@ const SUPPORT_EMAIL = 'support@ai-hrms.com';
 
 const STATUS_COPY: Record<string, { title: string; desc: string; icon: React.ElementType; tone: string }> = {
   pending_review: {
-    title: 'Organization Registration Submitted Successfully',
-    desc: 'Our onboarding team has been notified and will contact you shortly to activate your HRMS workspace.',
+    title: 'Your organization request has been submitted',
+    desc: 'Your request for organization registration is under review. Our onboarding team will contact you shortly to activate your HRMS workspace.',
     icon: CheckCircle2,
     tone: 'text-emerald-600 bg-emerald-100',
   },
@@ -83,7 +83,7 @@ function RegistrationPendingContent() {
           <AuthBrandMark variant="light" />
         </div>
 
-        <RegistrationProgress step={4} />
+        <RegistrationProgress step={3} />
 
         <div className="rounded-2xl border border-border bg-white p-8 shadow-sm text-center">
           <div className={`mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full ${copy.tone}`}>
@@ -121,8 +121,8 @@ function RegistrationPendingContent() {
           )}
 
           {status?.approval_status === 'approved' && (
-            <Link href="/login" className="mt-6 inline-block rounded-md bg-primary px-6 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90">
-              Sign In
+            <Link href="/admin-login" className="mt-6 inline-block rounded-md bg-primary px-6 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90">
+              Sign in to Admin Portal
             </Link>
           )}
 

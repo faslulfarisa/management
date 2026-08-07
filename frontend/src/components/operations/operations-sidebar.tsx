@@ -8,7 +8,7 @@ import { canOps, OPS_PERMISSIONS, type OpsPermission } from '@/lib/internal-role
 import {
   LayoutDashboard, Network, Hourglass, ShieldOff, Archive, FileQuestion,
   CreditCard, Receipt, BarChart3, History,
-  ChevronDown, X, UserCog, Gift, Database,
+  ChevronDown, X, UserCog, Gift, Database, SlidersHorizontal,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -16,11 +16,11 @@ interface NavItem {
   label: string;
   href: string;
   icon: typeof LayoutDashboard;
-  permission: OpsPermission;
+  permission: OpsPermission | OpsPermission[];
 }
 
 const organizationLinks: NavItem[] = [
-  { label: 'All Organizations', href: '/operations/organizations', icon: Network, permission: OPS_PERMISSIONS.ORGANIZATIONS_VIEW },
+  { label: 'Organizations', href: '/operations/organizations', icon: Network, permission: OPS_PERMISSIONS.ORGANIZATIONS_VIEW },
   { label: 'Pending Approvals', href: '/operations/organizations?stage=pending_approval', icon: Hourglass, permission: OPS_PERMISSIONS.ORGANIZATIONS_VIEW },
   { label: 'Suspended Organizations', href: '/operations/organizations?stage=suspended', icon: ShieldOff, permission: OPS_PERMISSIONS.ORGANIZATIONS_VIEW },
   { label: 'Archived Organizations', href: '/operations/organizations?stage=archived', icon: Archive, permission: OPS_PERMISSIONS.ORGANIZATIONS_VIEW },
@@ -28,8 +28,9 @@ const organizationLinks: NavItem[] = [
 
 const administrationLinks: NavItem[] = [
   { label: 'Organization Requests', href: '/operations/requests', icon: FileQuestion, permission: OPS_PERMISSIONS.ORGANIZATIONS_MANAGE_LIFECYCLE },
-  { label: 'Subscription Management', href: '/operations/subscriptions', icon: CreditCard, permission: OPS_PERMISSIONS.ORGANIZATIONS_MANAGE_LIFECYCLE },
-  { label: 'Billing & Plans', href: '/operations/billing', icon: Receipt, permission: OPS_PERMISSIONS.BILLING_MANAGE_PLANS },
+  { label: 'Subscription Management', href: '/operations/subscriptions', icon: CreditCard, permission: OPS_PERMISSIONS.BILLING_VIEW_SUBSCRIPTIONS },
+  { label: 'Organization Features', href: '/operations/organization-features', icon: SlidersHorizontal, permission: OPS_PERMISSIONS.ORGANIZATION_FEATURES_VIEW },
+  { label: 'Billing & Plans', href: '/operations/billing', icon: Receipt, permission: [OPS_PERMISSIONS.BILLING_MANAGE_PLANS, OPS_PERMISSIONS.BILLING_VIEW_SUBSCRIPTIONS] },
   { label: 'Staff Management', href: '/operations/staff', icon: UserCog, permission: OPS_PERMISSIONS.STAFF_MANAGE },
   { label: 'Signup Offers', href: '/operations/offers', icon: Gift, permission: OPS_PERMISSIONS.MARKETING_MANAGE_OFFERS },
   { label: 'Historical Imports', href: '/operations/historical-attendance-import', icon: Database, permission: OPS_PERMISSIONS.HISTORICAL_ATTENDANCE_IMPORT_MONITOR },
@@ -47,6 +48,11 @@ function isLinkActive(pathname: string, search: string, href: string) {
   return search === `?${hrefQuery}`;
 }
 
+function canViewNavItem(internalRole: string | null, permission: OpsPermission | OpsPermission[]) {
+  const permissions = Array.isArray(permission) ? permission : [permission];
+  return permissions.some((item) => canOps(internalRole, item));
+}
+
 function NavSection({ title, items, pathname, search, internalRole, onNavigate }: {
   title: string;
   items: NavItem[];
@@ -56,7 +62,7 @@ function NavSection({ title, items, pathname, search, internalRole, onNavigate }
   onNavigate?: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const visible = items.filter((item) => canOps(internalRole, item.permission));
+  const visible = items.filter((item) => canViewNavItem(internalRole, item.permission));
   if (!visible.length) return null;
 
   return (

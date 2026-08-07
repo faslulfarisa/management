@@ -25,14 +25,14 @@ export function QueueStatsGrid() {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
       <OpStatCard
-        title="Queue Depth"
+        title="Queue Status"
         value={depth}
-        sub="waiting + delayed"
+        sub="waiting to process"
         icon={GitBranch}
         variant={depth > 5000 ? 'danger' : depth > 1000 ? 'warn' : 'ok'}
       />
       <OpStatCard
-        title="Active Jobs"
+        title="Retry Queue"
         value={active}
         sub="being processed"
         icon={Cpu}
@@ -40,16 +40,16 @@ export function QueueStatsGrid() {
         live={active > 0}
       />
       <OpStatCard
-        title="Failed (DLQ)"
+        title="Needs Review"
         value={failed}
-        sub="need attention"
+        sub="retry or inspect"
         icon={AlertTriangle}
         variant={failed > 0 ? 'danger' : 'ok'}
       />
       <OpStatCard
-        title="Workers"
+        title="Processors"
         value={workers}
-        sub="active processors"
+        sub="available now"
         icon={Radio}
         variant={workers > 0 ? 'ok' : 'danger'}
         live={workers > 0}

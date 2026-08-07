@@ -20,9 +20,8 @@ interface RegistrationState {
 export const useRegistrationStore = create<RegistrationState>((set) => ({
   session: null,
 
-  // localStorage (not sessionStorage) so the session survives the email
-  // verification link opening in a new tab — sessionStorage doesn't carry
-  // over to tabs opened from another app (e.g. a mail client).
+  // localStorage keeps the in-flight registration available if the user
+  // refreshes while completing organization details.
   hydrate: () => {
     if (typeof window === 'undefined') return;
     const raw = localStorage.getItem(STORAGE_KEY);

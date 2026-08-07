@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   UserPlus, X, Loader2, Check, MoreHorizontal, Pencil, KeyRound, PowerOff, Power,
   Trash2, AlertTriangle, Eye, EyeOff, Users,
@@ -37,7 +37,11 @@ function tierFromRole(role: InternalRole): 'executive' | 'manager' {
 }
 
 function fullName(s: InternalStaffMember) {
-  return s.full_name?.trim() || s.email;
+  return s.full_name?.trim() || s.username || s.email;
+}
+
+function cleanUsername(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 function TeamBadge({ role }: { role: InternalRole }) {
@@ -75,6 +79,7 @@ function StatusBadge({ isActive }: { isActive: boolean }) {
 function CreateStaffModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [fullNameInput, setFullNameInput] = useState('');
   const [email, setEmail] = useState('');
+  const [usernameInput, setUsernameInput] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [team, setTeam] = useState<InternalTeam>('sales');
@@ -87,7 +92,13 @@ function CreateStaffModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
     if (!password || password.length < 8) { setError('Password must be at least 8 characters'); return; }
     setSaving(true); setError('');
     try {
-      await createInternalStaff({ email: email.trim(), password, fullName: fullNameInput.trim() || undefined, internalRole: roleFromTeamTier(team, tier) });
+      await createInternalStaff({
+        email: email.trim(),
+        password,
+        username: usernameInput.trim() || undefined,
+        fullName: fullNameInput.trim() || undefined,
+        internalRole: roleFromTeamTier(team, tier),
+      });
       onSaved(); onClose();
     } catch (err: any) {
       setError(err.response?.data?.error?.message ?? err.response?.data?.message ?? 'Failed to create staff account');
@@ -132,6 +143,16 @@ function CreateStaffModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="priya@company.com"
+              className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-background"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1.5">Username</label>
+            <input
+              value={usernameInput}
+              onChange={(e) => setUsernameInput(cleanUsername(e.target.value))}
+              placeholder="priyasharma"
               className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-background"
             />
           </div>
@@ -209,6 +230,7 @@ function CreateStaffModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
 
 function EditStaffModal({ staff, onClose, onSaved }: { staff: InternalStaffMember; onClose: () => void; onSaved: () => void }) {
   const [fullNameInput, setFullNameInput] = useState(staff.full_name || '');
+  const [usernameInput, setUsernameInput] = useState(staff.username || '');
   const [team, setTeam] = useState<InternalTeam>(TEAM_BY_INTERNAL_ROLE[staff.internal_role]);
   const [tier, setTier] = useState<'executive' | 'manager'>(tierFromRole(staff.internal_role));
   const [saving, setSaving] = useState(false);
@@ -217,7 +239,11 @@ function EditStaffModal({ staff, onClose, onSaved }: { staff: InternalStaffMembe
   const save = async () => {
     setSaving(true); setError('');
     try {
-      await updateInternalStaff(staff.id, { fullName: fullNameInput.trim() || undefined, internalRole: roleFromTeamTier(team, tier) });
+      await updateInternalStaff(staff.id, {
+        fullName: fullNameInput.trim() || undefined,
+        username: usernameInput.trim() || null,
+        internalRole: roleFromTeamTier(team, tier),
+      });
       onSaved(); onClose();
     } catch (err: any) {
       setError(err.response?.data?.error?.message ?? err.response?.data?.message ?? 'Failed to update');
@@ -248,6 +274,16 @@ function EditStaffModal({ staff, onClose, onSaved }: { staff: InternalStaffMembe
             <input
               value={fullNameInput}
               onChange={(e) => setFullNameInput(e.target.value)}
+              className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-background"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1.5">Username</label>
+            <input
+              value={usernameInput}
+              onChange={(e) => setUsernameInput(cleanUsername(e.target.value))}
+              placeholder="priyasharma"
               className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-background"
             />
           </div>
@@ -459,16 +495,61 @@ function RowActions({
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+
+  const updateMenuPosition = useCallback(() => {
+    const trigger = buttonRef.current;
+    if (!trigger) return;
+
+    const rect = trigger.getBoundingClientRect();
+    const menuWidth = 192;
+    const menuHeight = staff.is_active ? 152 : 190;
+    const margin = 8;
+    const left = Math.min(
+      Math.max(margin, rect.right - menuWidth),
+      window.innerWidth - menuWidth - margin,
+    );
+    const hasRoomBelow = rect.bottom + margin + menuHeight <= window.innerHeight;
+    const top = hasRoomBelow
+      ? rect.bottom + 4
+      : Math.max(margin, rect.top - menuHeight - 4);
+
+    setMenuPosition({ top, left });
+  }, [staff.is_active]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    updateMenuPosition();
+    window.addEventListener('resize', updateMenuPosition);
+    window.addEventListener('scroll', updateMenuPosition, true);
+
+    return () => {
+      window.removeEventListener('resize', updateMenuPosition);
+      window.removeEventListener('scroll', updateMenuPosition, true);
+    };
+  }, [open, updateMenuPosition]);
 
   return (
-    <div className="relative">
-      <button onClick={() => setOpen((v) => !v)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
+    <div className="flex justify-end">
+      <button
+        ref={buttonRef}
+        onClick={() => {
+          if (!open) updateMenuPosition();
+          setOpen((v) => !v);
+        }}
+        className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+      >
         <MoreHorizontal className="w-4 h-4" />
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 w-48 bg-background border border-border rounded-xl shadow-xl z-50 overflow-hidden py-1">
+          <div
+            className="fixed w-48 bg-background border border-border rounded-xl shadow-xl z-50 overflow-hidden py-1"
+            style={{ top: menuPosition.top, left: menuPosition.left }}
+          >
             <button onClick={() => { setOpen(false); onEdit(); }} className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm hover:bg-muted/60 transition-colors">
               <Pencil className="w-3.5 h-3.5" /> Edit
             </button>
@@ -546,6 +627,7 @@ export function InternalStaffTab({ onCountChange }: { onCountChange?: (count: nu
           <TableHeader>
             <TableRow>
               <TableHead className="py-3 px-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">Name</TableHead>
+              <TableHead className="py-3 px-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">Username</TableHead>
               <TableHead className="py-3 px-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">Email</TableHead>
               <TableHead className="py-3 px-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">Team / Tier</TableHead>
               <TableHead className="py-3 px-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</TableHead>
@@ -554,10 +636,10 @@ export function InternalStaffTab({ onCountChange }: { onCountChange?: (count: nu
           </TableHeader>
           <TableBody className="divide-y divide-border/60">
             {loading ? (
-              <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="text-center py-10 text-muted-foreground">Loading…</TableCell></TableRow>
             ) : staff.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5}>
+                <TableCell colSpan={6}>
                   <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
                     <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
                       <Users className="w-5 h-5 text-muted-foreground" />
@@ -574,6 +656,7 @@ export function InternalStaffTab({ onCountChange }: { onCountChange?: (count: nu
               staff.map((s) => (
                 <TableRow key={s.id} className="hover:bg-muted/30 transition-colors">
                   <TableCell className="py-3.5 px-3 font-medium text-foreground">{fullName(s)}</TableCell>
+                  <TableCell className="py-3.5 px-3 text-muted-foreground font-mono">{s.username || '-'}</TableCell>
                   <TableCell className="py-3.5 px-3 text-muted-foreground">{s.email}</TableCell>
                   <TableCell className="py-3.5 px-3"><TeamBadge role={s.internal_role} /></TableCell>
                   <TableCell className="py-3.5 px-3"><StatusBadge isActive={s.is_active} /></TableCell>

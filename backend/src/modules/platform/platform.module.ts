@@ -38,6 +38,8 @@ import { PropertyService } from './services/property.service';
 import { DepartmentService } from './services/department.service';
 import { DesignationService, CostCenterService, EmploymentTypeService, EmployeeGroupService } from './services/designation.service';
 import { TemplateService } from './services/template.service';
+import { HolidayPolicyTemplateService } from './services/holiday-policy-template.service';
+import { BreakPolicyTemplateService } from './services/break-policy-template.service';
 import { DocumentService } from './services/document.service';
 import { AuditLogService } from './services/audit-log.service';
 import { RoleService } from './services/role.service';
@@ -48,15 +50,18 @@ import { DocumentBrandingService } from './services/document-branding.service';
 import { CompanyBankAccountService } from './services/company-bank-account.service';
 import { DependencyCheckService } from './services/dependency-check.service';
 import { DependencyCheckController } from './controllers/dependency-check.controller';
+import { UserAccessService } from './services/user-access.service';
 import { UserHierarchyService } from './services/user-hierarchy.service';
 import { AuthorizationService } from './services/authorization.service';
 import { SignupOfferService } from './services/signup-offer.service';
 import { PayrollLockService } from './services/payroll-lock.service';
 
 import { BillingModule } from '../billing/billing.module';
+import { ApprovalsModule } from '../approvals/approvals.module';
+import { BiometricsModule } from '../biometrics/biometrics.module';
 
 @Module({
-  imports: [forwardRef(() => AuthModule), forwardRef(() => BillingModule)],
+  imports: [forwardRef(() => AuthModule), forwardRef(() => BillingModule), forwardRef(() => ApprovalsModule), forwardRef(() => BiometricsModule)],
   controllers: [
     TenantController, PropertyController, DepartmentController,
     DesignationController, CostCenterController, EmploymentTypeController,
@@ -70,14 +75,14 @@ import { BillingModule } from '../billing/billing.module';
   providers: [
     TenantService, PropertyService, DepartmentService, DesignationService,
     CostCenterService, EmploymentTypeService, EmployeeGroupService,
-    TemplateService, DocumentService, AuditLogService, RoleService, UserService,
+    TemplateService, HolidayPolicyTemplateService, BreakPolicyTemplateService, DocumentService, AuditLogService, RoleService, UserService,
     AreaService, PlatformDataService, PositionService, BranchService,
     BranchActivationService,
     BranchAccessService, BranchTransferService, BranchAnalyticsService,
     BranchApprovalChainService, BranchKpiService,
     OrganizationProfileService, BrandingAssetService,
     DocumentBrandingService, CompanyBankAccountService,
-    DependencyCheckService, UserHierarchyService, AuthorizationService,
+    DependencyCheckService, UserAccessService, UserHierarchyService, AuthorizationService,
     SignupOfferService, PayrollLockService,
   ],
   exports: [
@@ -85,7 +90,7 @@ import { BillingModule } from '../billing/billing.module';
     AuditLogService, AreaService, PositionService, BranchService, BranchActivationService, BranchAccessService,
     BranchTransferService, BranchAnalyticsService, BranchApprovalChainService, BranchKpiService,
     OrganizationProfileService, BrandingAssetService, DocumentBrandingService, CompanyBankAccountService,
-    TemplateService, DependencyCheckService, UserHierarchyService, AuthorizationService,
+    TemplateService, HolidayPolicyTemplateService, BreakPolicyTemplateService, DependencyCheckService, UserAccessService, UserHierarchyService, AuthorizationService,
     SignupOfferService, PayrollLockService, DocumentService,
   ],
 })

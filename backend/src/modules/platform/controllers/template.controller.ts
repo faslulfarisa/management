@@ -7,6 +7,7 @@ import { RequirePermission } from '../../auth/decorators/require-permission.deco
 import { PERMISSIONS } from '../../../shared/permissions.constants';
 import { UserHierarchyService } from '../services/user-hierarchy.service';
 import { TemplateService } from '../services/template.service';
+import { HolidayPolicyTemplateService } from '../services/holiday-policy-template.service';
 
 @ApiTags('Templates')
 @ApiBearerAuth()
@@ -15,6 +16,7 @@ import { TemplateService } from '../services/template.service';
 export class TemplateController {
   constructor(
     private readonly service: TemplateService,
+    private readonly holidayPolicy: HolidayPolicyTemplateService,
     private readonly userHierarchyService: UserHierarchyService,
   ) {}
 
@@ -31,6 +33,38 @@ export class TemplateController {
   async create(@Req() req: Request, @Body() data: any) {
     const user = (req as any).user;
     const item = await this.service.create(user.tenantId, user.sub, data);
+    return { success: true, data: item, meta: null, error: null };
+  }
+
+  @Post(':id/duplicate')
+  @RequirePermission(PERMISSIONS.PLATFORM_TEMPLATES_CREATE)
+  async duplicate(@Req() req: Request, @Param('id') id: string, @Body() data: any) {
+    const user = (req as any).user;
+    const item = await this.service.duplicate(id, user.tenantId, user.sub, data);
+    return { success: true, data: item, meta: null, error: null };
+  }
+
+  @Post(':id/archive')
+  @RequirePermission(PERMISSIONS.PLATFORM_TEMPLATES_EDIT)
+  async archive(@Req() req: Request, @Param('id') id: string) {
+    const user = (req as any).user;
+    const item = await this.service.setStatus(id, user.tenantId, user.sub, 'archived');
+    return { success: true, data: item, meta: null, error: null };
+  }
+
+  @Post(':id/activate')
+  @RequirePermission(PERMISSIONS.PLATFORM_TEMPLATES_EDIT)
+  async activate(@Req() req: Request, @Param('id') id: string) {
+    const user = (req as any).user;
+    const item = await this.service.setStatus(id, user.tenantId, user.sub, 'active');
+    return { success: true, data: item, meta: null, error: null };
+  }
+
+  @Post(':id/deactivate')
+  @RequirePermission(PERMISSIONS.PLATFORM_TEMPLATES_EDIT)
+  async deactivate(@Req() req: Request, @Param('id') id: string) {
+    const user = (req as any).user;
+    const item = await this.service.setStatus(id, user.tenantId, user.sub, 'inactive');
     return { success: true, data: item, meta: null, error: null };
   }
 
@@ -55,6 +89,35 @@ export class TemplateController {
     return { success: true, data: item, meta: null, error: null };
   }
 
+  @Post(':id/holidays/import')
+  @RequirePermission(PERMISSIONS.PLATFORM_TEMPLATES_EDIT)
+  async importHolidays(@Req() req: Request, @Param('id') id: string, @Body() body: { csv: string }) {
+    const user = (req as any).user;
+    const item = await this.holidayPolicy.importCsv(user.tenantId, user.sub, id, body.csv);
+    return { success: true, data: item, meta: null, error: null };
+  }
+
+  @Get(':id/holidays/export')
+  @RequirePermission(PERMISSIONS.PLATFORM_TEMPLATES_VIEW)
+  async exportHolidays(@Req() req: Request, @Param('id') id: string) {
+    const user = (req as any).user;
+    const csv = await this.holidayPolicy.exportCsv(user.tenantId, id);
+    return { success: true, data: { csv }, meta: null, error: null };
+  }
+
+  @Get('holiday-policy/employees/:employeeId')
+  @RequirePermission(PERMISSIONS.PLATFORM_TEMPLATES_VIEW)
+  async employeeHolidays(@Req() req: Request, @Param('employeeId') employeeId: string, @Query() query: any) {
+    const user = (req as any).user;
+    const data = await this.holidayPolicy.listEmployeeHolidays(user.tenantId, employeeId, {
+      date_from: query.date_from,
+      date_to: query.date_to,
+      upcoming: query.upcoming === 'true',
+      limit: query.limit ? Number(query.limit) : undefined,
+    });
+    return { success: true, data, meta: { count: data.length }, error: null };
+  }
+
   @Get(':id')
   @RequirePermission(PERMISSIONS.PLATFORM_TEMPLATES_VIEW)
   async findOne(@Req() req: Request, @Param('id') id: string) {
@@ -67,7 +130,7 @@ export class TemplateController {
   @RequirePermission(PERMISSIONS.PLATFORM_TEMPLATES_EDIT)
   async update(@Req() req: Request, @Param('id') id: string, @Body() data: any) {
     const user = (req as any).user;
-    const item = await this.service.update(id, user.tenantId, data);
+    const item = await this.service.update(id, user.tenantId, data, user.sub);
     return { success: true, data: item, meta: null, error: null };
   }
 
@@ -83,7 +146,7 @@ export class TemplateController {
   @RequirePermission(PERMISSIONS.PLATFORM_TEMPLATES_ASSIGN)
   async assign(@Req() req: Request, @Param('id') id: string, @Body() data: any) {
     const user = (req as any).user;
-    const item = await this.service.assign(user.tenantId, { ...data, template_id: id });
+    const item = await this.service.assign(user.tenantId, { ...data, template_id: id, user_id: user.sub });
     return { success: true, data: item, meta: null, error: null };
   }
 }
@@ -112,7 +175,7 @@ export class TemplateAssignmentController {
   @RequirePermission(PERMISSIONS.PLATFORM_TEMPLATES_ASSIGN)
   async remove(@Req() req: Request, @Param('id') id: string) {
     const user = (req as any).user;
-    await this.service.removeAssignment(id, user.tenantId);
+    await this.service.removeAssignment(id, user.tenantId, user.sub);
     return { success: true, data: null, meta: null, error: null };
   }
 

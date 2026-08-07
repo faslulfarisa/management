@@ -18,7 +18,7 @@ import {
   IPollingProvider,
   ProviderHealthResult,
 } from '../base-provider.interface';
-import { PunchEventDto, PunchDirection, VerifyMethod } from '../../dto/punch-event.dto';
+import { PunchEventDto, PunchDirection, VerifyMethod, AttendanceSource } from '../../dto/punch-event.dto';
 import { ProviderRegistryService } from '../provider-registry.service';
 import { DatabaseService } from '../../../../shared/database.service';
 import { CredentialEncryptionService } from '../../../../shared/crypto/credential-encryption.service';
@@ -268,8 +268,9 @@ export class EasyTimeProProvider implements IPollingProvider, OnModuleInit {
           employeeField:   config.employeeCodeField,
           timestampField:  config.timestampField,
           punchTypeField:  config.punchTypeField,
-          verifyField:     config.verifyMethodField,
-          deviceField:     config.deviceSerialField,
+	          verifyField:     config.verifyMethodField,
+	          deviceField:     config.deviceSerialField,
+	          workCodeField:   config.workCodeField,
         }),
       )
       .filter((e): e is PunchEventDto => e !== null);
@@ -308,11 +309,12 @@ export class EasyTimeProProvider implements IPollingProvider, OnModuleInit {
         punchTypeField,
         verifyMethodField,
         deviceSerialField,
+        workCodeField,
         attendanceLogTable = 'AttLogs',
         syncBatchSize = 500,
       } = config;
 
-      const extraFields = [punchTypeField, verifyMethodField, deviceSerialField]
+      const extraFields = [punchTypeField, verifyMethodField, deviceSerialField, workCodeField]
         .filter(Boolean)
         .join(', ');
       const selectFields = extraFields
@@ -334,8 +336,9 @@ export class EasyTimeProProvider implements IPollingProvider, OnModuleInit {
             employeeField:  employeeCodeField,
             timestampField,
             punchTypeField,
-            verifyField:    verifyMethodField,
-            deviceField:    deviceSerialField,
+	            verifyField:    verifyMethodField,
+	            deviceField:    deviceSerialField,
+	            workCodeField,
           }),
         )
         .filter((e): e is PunchEventDto => e !== null);
@@ -369,11 +372,12 @@ export class EasyTimeProProvider implements IPollingProvider, OnModuleInit {
         punchTypeField,
         verifyMethodField,
         deviceSerialField,
+        workCodeField,
         attendanceLogTable = 'iclock_transaction',
         syncBatchSize = 500,
       } = config;
 
-      const extraCols = [punchTypeField, verifyMethodField, deviceSerialField]
+      const extraCols = [punchTypeField, verifyMethodField, deviceSerialField, workCodeField]
         .filter(Boolean)
         .map((c) => `"${c}"`)
         .join(', ');
@@ -397,8 +401,9 @@ export class EasyTimeProProvider implements IPollingProvider, OnModuleInit {
             employeeField:  employeeCodeField,
             timestampField,
             punchTypeField,
-            verifyField:    verifyMethodField,
-            deviceField:    deviceSerialField,
+	            verifyField:    verifyMethodField,
+	            deviceField:    deviceSerialField,
+	            workCodeField,
           }),
         )
         .filter((e): e is PunchEventDto => e !== null);
@@ -414,9 +419,10 @@ export class EasyTimeProProvider implements IPollingProvider, OnModuleInit {
     opts: {
       employeeField:  string;
       timestampField: string;
-      punchTypeField?: string | null;
-      verifyField?:    string | null;
-      deviceField?:    string | null;
+	      punchTypeField?: string | null;
+	      verifyField?:    string | null;
+	      deviceField?:    string | null;
+	      workCodeField?:  string | null;
     },
   ): PunchEventDto | null {
     const employeeCode = String(row[opts.employeeField] ?? '').trim();
@@ -447,10 +453,14 @@ export class EasyTimeProProvider implements IPollingProvider, OnModuleInit {
       timestamp,
       punchType,
       verifyMethod,
-      providerName: this.providerName,
-      deviceId,
-      rawPayload: row as Record<string, unknown>,
-    };
+	      providerName: this.providerName,
+	      deviceId,
+	      attendanceSource: AttendanceSource.BIOMETRIC_DEVICE,
+	      punchState: opts.punchTypeField ? String(row[opts.punchTypeField] ?? '') : undefined,
+	      rawVerifyType: opts.verifyField ? String(row[opts.verifyField] ?? '') : undefined,
+	      workCode: opts.workCodeField ? String(row[opts.workCodeField] ?? '') : undefined,
+	      rawPayload: row as Record<string, unknown>,
+	    };
   }
 
   // ── Config & Cursor Helpers ─────────────────────────────────────────────────

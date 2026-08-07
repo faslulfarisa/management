@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import get_settings
+from app.config import get_settings, validate_startup_security
 from app.database import init_db, close_db
 from app.api.router import api_router
 from app.api.websocket import ws_router
@@ -32,6 +32,7 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle."""
     logger.info("Starting Biometric Attendance Microservice v1.0.0")
     logger.info(f"Service: {settings.service_name} on port {settings.service_port}")
+    validate_startup_security(settings)
 
     # Initialize database connection
     try:
@@ -52,16 +53,16 @@ async def lifespan(app: FastAPI):
 
 # ── App Factory ──────────────────────────────────────────────
 app = FastAPI(
-    title="Biometric Attendance Microservice",
+    title="Biometric Device Adapter",
     description=(
-        "Standalone microservice for ZKTeco biometric device management, "
-        "attendance syncing, real-time monitoring, and automated attendance processing. "
-        "Designed to operate independently from Ai-HRMS core."
+        "Production-safe ZKTeco biometric device adapter. It communicates with devices, "
+        "stages raw punches, forwards punches to NestJS HRMS, retries forwarding, and "
+        "reports device health. Attendance calculations remain in NestJS."
     ),
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
     lifespan=lifespan,
 )
 
@@ -94,7 +95,7 @@ async def health_check():
 async def root():
     """Root endpoint with service information."""
     return {
-        "service": "Biometric Attendance Microservice",
+        "service": "Biometric Device Adapter",
         "version": "1.0.0",
         "docs": "/docs",
         "health": "/health",

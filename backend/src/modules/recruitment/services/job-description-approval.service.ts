@@ -3,6 +3,7 @@ import { DatabaseService } from '../../../shared/database.service';
 import { ApprovalEngineService } from '../../approvals/services/approval-engine.service';
 import { AuditLogService } from '../../platform/services/audit-log.service';
 import { JobDescriptionService } from './job-description.service';
+import { isOrganizationAdmin } from './recruitment-approval-bypass.util';
 
 const WORKFLOW_TYPE = 'job_description';
 
@@ -20,6 +21,29 @@ export class JobDescriptionApprovalService {
     const jd = await this.jobDescriptions.getRaw(jobDescriptionId, tenantId);
     if (!['draft', 'rejected'].includes(jd.status)) {
       throw new BadRequestException(`Cannot submit a job description with status '${jd.status}' for approval`);
+    }
+
+    if (await isOrganizationAdmin(this.db, tenantId, submittedById)) {
+      await this.db.query(
+        `UPDATE job_descriptions
+         SET status = 'approved',
+             approval_status = 'approved',
+             approved_by = $3,
+             approved_at = now(),
+             approval_reason = 'Auto-approved by organization admin',
+             updated_at = now()
+         WHERE id = $1 AND tenant_id = $2`,
+        [jobDescriptionId, tenantId, submittedById],
+      );
+      await this.auditLog.log({
+        tenantId,
+        userId: submittedById,
+        entityType: 'job_description',
+        entityId: jobDescriptionId,
+        action: 'auto_approve',
+        newValues: { reason: 'Organization admin action' },
+      });
+      return this.jobDescriptions.findOne(jobDescriptionId, tenantId);
     }
 
     await this.db.query(

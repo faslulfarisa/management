@@ -44,10 +44,17 @@ function makeUser(overrides: Record<string, any> = {}) {
     id: 'user-1',
     tenant_id: 'tenant-1',
     email: 'user@example.com',
+    username: 'user1',
+    password_hash: '$2b$10$placeholder',
     employee_id: null,
     is_super_admin: false,
     is_internal_staff: false,
     internal_role: null,
+    is_active: true,
+    status: 'active',
+    is_locked: false,
+    locked_until: null,
+    failed_login_count: 0,
     mfa_enabled: false,
     mfa_secret: null,
     mfa_failed_attempts: 0,
@@ -73,6 +80,89 @@ function makeService(db: jest.Mock) {
   return { service, jwtService, emailService, auditLog, notificationEmitter };
 }
 
+describe('AuthService - separated login entry points', () => {
+  it('rejects an organization admin from the normal customer login after a valid password', async () => {
+    const passwordHash = await bcrypt.hash('correct-password', 10);
+    const user = makeUser({ password_hash: passwordHash });
+    const db = createDb({
+      'AND is_internal_staff = false': { rows: [user] },
+      'SELECT tenant_id FROM user_tenants': { rows: [{ tenant_id: 'tenant-1' }] },
+      'FROM user_tenants\n       WHERE user_id = $1': { rows: [{ exists: 1 }] },
+      'INSERT INTO login_attempts': { rows: [] },
+    });
+    const { service } = makeService(db);
+
+    await expect(service.validateUser('user@example.com', 'correct-password', '1.2.3.4', 'ua', 'customer'))
+      .rejects.toThrow('Organization Administrators must sign in through the Admin Portal.');
+
+    expect(db).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO login_attempts'), expect.arrayContaining(['org_admin_wrong_portal']));
+  });
+
+  it('validates admin login only for the organization admin matching the company code', async () => {
+    const passwordHash = await bcrypt.hash('correct-password', 10);
+    const db = createDb({
+      'FROM tenants\n       WHERE deleted_at IS NULL': { rows: [{ id: 'tenant-1', status: 'active' }] },
+      'JOIN users u ON u.id = ut.user_id': {
+        rows: [makeUser({ password_hash: passwordHash, user_type: 'org_admin', is_org_admin: true, preferred_tenant_id: 'tenant-1' })],
+      },
+      'INSERT INTO login_attempts': { rows: [] },
+      'UPDATE users': { rows: [] },
+    });
+    const { service } = makeService(db);
+
+    const user = await service.validateAdminUser('ABC001', 'user@example.com', 'correct-password', '1.2.3.4', 'ua');
+
+    expect(user.preferred_tenant_id).toBe('tenant-1');
+    expect(db).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO login_attempts'), expect.arrayContaining([true]));
+  });
+
+  it('rejects non-org-admin users from admin login with a generic failure', async () => {
+    const passwordHash = await bcrypt.hash('correct-password', 10);
+    const db = createDb({
+      'FROM tenants\n       WHERE deleted_at IS NULL': { rows: [{ id: 'tenant-1', status: 'active' }] },
+      'JOIN users u ON u.id = ut.user_id': {
+        rows: [makeUser({ password_hash: passwordHash, user_type: 'branch_admin', is_org_admin: false, preferred_tenant_id: 'tenant-1' })],
+      },
+      'INSERT INTO login_attempts': { rows: [] },
+    });
+    const { service } = makeService(db);
+
+    await expect(service.validateAdminUser('ABC001', 'user@example.com', 'correct-password', '1.2.3.4', 'ua'))
+      .rejects.toThrow('Invalid credentials');
+  });
+
+  it('returns organization status for a valid admin login when the organization is pending approval', async () => {
+    const passwordHash = await bcrypt.hash('correct-password', 10);
+    const db = createDb({
+      'FROM tenants\n       WHERE deleted_at IS NULL': {
+        rows: [{
+          id: 'tenant-1',
+          name: 'Acme',
+          status: 'pending',
+          lifecycle_stage: 'pending_review',
+          approval_status: 'approved',
+          rejection_reason: null,
+        }],
+      },
+      'JOIN users u ON u.id = ut.user_id': {
+        rows: [makeUser({ password_hash: passwordHash, user_type: 'org_admin', is_org_admin: true, preferred_tenant_id: 'tenant-1' })],
+      },
+      'INSERT INTO login_attempts': { rows: [] },
+      'UPDATE users': { rows: [] },
+    });
+    const { service } = makeService(db);
+
+    const user = await service.validateAdminUser('ABC001', 'user@example.com', 'correct-password', '1.2.3.4', 'ua');
+
+    expect(user.pendingOrganization).toEqual({
+      id: 'tenant-1',
+      name: 'Acme',
+      approvalStatus: 'pending_review',
+      rejectionReason: null,
+    });
+  });
+});
+
 describe('AuthService — login() MFA gate', () => {
   it('issues tokens directly when MFA is disabled', async () => {
     const db = createDb({
@@ -86,6 +176,53 @@ describe('AuthService — login() MFA gate', () => {
     expect(result.requiresMfa).toBeUndefined();
     expect(result.accessToken).toBe('signed.jwt.token');
     expect(result.refreshToken).toBeTruthy();
+  });
+
+  it('normalizes a legacy customer super_admin membership to org_admin during login', async () => {
+    const db = createDb({
+      [ACTIVE_TENANT_LOOKUP]: {
+        rows: [{ id: 't1', name: 'Acme', slug: 'acme', logo_url: null, status: 'active', is_org_admin: false, user_type: 'super_admin' }],
+      },
+      [REFRESH_TOKEN_INSERT]: { rows: [] },
+    });
+    const { service, jwtService } = makeService(db);
+
+    const result: any = await service.login(makeUser({ mfa_enabled: false, is_super_admin: true }), '1.2.3.4', 'ua');
+
+    expect(result.isSuperAdmin).toBe(false);
+    expect(result.tenants[0]).toEqual(expect.objectContaining({ userType: 'org_admin', isOrgAdmin: true }));
+    expect(jwtService.sign).toHaveBeenCalledWith(expect.objectContaining({ is_super_admin: false }));
+  });
+
+  it('withholds tokens when the only customer organization is pending approval', async () => {
+    const db = createDb({
+      [ACTIVE_TENANT_LOOKUP]: { rows: [] },
+      'FROM user_tenants ut\n         JOIN tenants t ON ut.tenant_id = t.id': {
+        rows: [{
+          id: 'tenant-1',
+          name: 'Acme',
+          status: 'pending',
+          lifecycle_stage: 'pending_review',
+          approval_status: 'approved',
+          rejection_reason: null,
+        }],
+      },
+      [REFRESH_TOKEN_INSERT]: { rows: [] },
+    });
+    const { service, jwtService } = makeService(db);
+
+    const result: any = await service.login(makeUser({ mfa_enabled: false }), '1.2.3.4', 'ua');
+
+    expect(result.accessToken).toBeUndefined();
+    expect(result.refreshToken).toBeUndefined();
+    expect(result.pendingOrganization).toEqual({
+      id: 'tenant-1',
+      name: 'Acme',
+      approvalStatus: 'pending_review',
+      rejectionReason: null,
+    });
+    expect(jwtService.sign).not.toHaveBeenCalled();
+    expect(db).not.toHaveBeenCalledWith(expect.stringContaining(REFRESH_TOKEN_INSERT), expect.any(Array));
   });
 
   it('creates a login session and withholds tokens when MFA is enabled with no trusted device', async () => {

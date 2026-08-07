@@ -20,9 +20,10 @@ import {
   UnauthorizedException,
   ForbiddenException,
 } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { createHash, randomBytes } from 'crypto';
 import { DatabaseService } from '../../../shared/database.service';
+import { SchedulerControlService } from '../../../shared/scheduler-control.service';
 import { BiometricsMetricsService } from '../../../shared/metrics/biometrics-metrics.service';
 
 // ── DTOs ─────────────────────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ export class AttendanceTerminalService {
   constructor(
     private readonly db: DatabaseService,
     private readonly metrics: BiometricsMetricsService,
+    private readonly schedulerControl: SchedulerControlService = new SchedulerControlService(),
   ) {}
 
   // ── Registration & token lifecycle ──────────────────────────────────────────
@@ -385,8 +387,10 @@ export class AttendanceTerminalService {
    * Marks online terminals offline if last_ping_at has exceeded STALE_MINUTES.
    * Runs every 5 minutes via @Cron.
    */
-  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'terminal-stale-sweep' })
+  @Cron('49 */5 * * * *', { name: 'terminal-stale-sweep' })
   async sweepStaleTerminals(): Promise<{ markedOffline: number }> {
+    if (!this.schedulerControl.isEnabled('terminal-stale-sweep')) return { markedOffline: 0 };
+
     const { rows } = await this.db.query(
       `UPDATE attendance_terminals
        SET is_online = false, updated_at = NOW()

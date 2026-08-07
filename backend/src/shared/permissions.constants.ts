@@ -130,7 +130,7 @@ export const PERMISSIONS = {
   ORGANIZATION_PROFILE_VIEW: 'organization_profile:view',
   ORGANIZATION_PROFILE_EDIT: 'organization_profile:edit',
 
-  // Resource-aware checks (not stored in `permissions` table — evaluated via
+  // Resource-aware checks (not stored in `permissions` table — evaluated via�� evaluated via
   // hierarchy/scope rather than role/position grants).
   BRANCH_VIEW: 'branch:view',
   BRANCH_MANAGE: 'branch:manage',
@@ -140,6 +140,10 @@ export const PERMISSIONS = {
   SCHEDULES_EDIT: 'schedules:edit',
   SCHEDULES_DELETE: 'schedules:delete',
   SCHEDULES_ASSIGN: 'schedules:assign',
+
+  SHIFT_OVERRIDE_VIEW: 'hr.shifts:override_view',
+  SHIFT_OVERRIDE_CREATE: 'hr.shifts:override_create',
+  SHIFT_OVERRIDE_APPROVE: 'hr.shifts:override_approve',
 
   APPROVALS_VIEW: 'approvals:view',
   APPROVALS_APPROVE: 'approvals:approve',
@@ -178,44 +182,27 @@ export const PERMISSIONS = {
   ASSETS_VIEW: 'assets:view',
   ASSETS_MANAGE: 'assets:manage',
   ASSETS_RECOVER: 'assets:recover',
+
+  TASKS_VIEW: 'hr.tasks:view',
+  TASKS_CREATE: 'hr.tasks:create',
+  TASKS_EDIT: 'hr.tasks:edit',
+  TASKS_DELETE: 'hr.tasks:delete',
+  TASKS_ASSIGN: 'hr.tasks:assign',
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 
 /**
- * Baseline permission grants per hierarchy user type, layered *underneath*
- * role_permissions / position_permissions (see AuthorizationService.can()).
+ * Baseline permission grants per hierarchy user type.
  *
- * `'*'` preserves the current behaviour for admin-tier users (rank <=
- * 'admin'): until now these endpoints had no permission-level enforcement at
- * all, so granting everything keeps existing flows working unchanged. Branch
- * /org scoping is enforced separately via AccessScope.
- *
- * `employee` (rank 4, self-service portal) gets an explicit minimal grant
- * list matching the existing "Employee / Staff" position preset
- * (PositionService.POSITION_PRESETS) — additional permissions can be granted
- * via role/position assignment.
+ * Only platform super admins and organization admins receive wildcard module
+ * access. Branch admins, admins, and employees must inherit operational
+ * capabilities from their assigned Position.
  */
 export const DEFAULT_PERMISSIONS_BY_USER_TYPE: Record<UserType, '*' | Permission[]> = {
   super_admin: '*',
   org_admin: '*',
-  branch_admin: '*',
-  admin: '*',
-  employee: [
-    PERMISSIONS.ATTENDANCE_VIEW,
-    PERMISSIONS.LEAVE_VIEW,
-    PERMISSIONS.LEAVE_CREATE,
-    PERMISSIONS.PAYROLL_VIEW,
-    PERMISSIONS.SCHEDULES_VIEW,
-    PERMISSIONS.DOCUMENTS_VIEW,
-    PERMISSIONS.NOTIFICATIONS_VIEW,
-    PERMISSIONS.APPROVALS_VIEW,
-    PERMISSIONS.PERFORMANCE_VIEW,
-    PERMISSIONS.PERFORMANCE_BEHAVIOUR_VIEW,
-    // Coarse gate, same pattern as PAYROLL_VIEW above — ComplianceDocumentService's
-    // buildVisibilityClause() restricts the actual rows returned to self/manager/non-confidential.
-    PERMISSIONS.COMPLIANCE_VIEW,
-    PERMISSIONS.COMPLIANCE_EMPLOYEE_DOCS_VIEW_OWN,
-    PERMISSIONS.COMPLIANCE_POLICY_ACKNOWLEDGE,
-  ],
+  branch_admin: [],
+  admin: [],
+  employee: [],
 };

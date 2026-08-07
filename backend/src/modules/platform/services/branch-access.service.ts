@@ -1,9 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../../../shared/database.service';
+import { PermissionsCacheService } from '../../../shared/permissions-cache.service';
 
 @Injectable()
 export class BranchAccessService {
-  constructor(private db: DatabaseService) {}
+  constructor(
+    private db: DatabaseService,
+    private permissionsCache: PermissionsCacheService,
+  ) {}
 
   async findByBranch(branchId: string, tenantId: string) {
     const { rows } = await this.db.query(
@@ -33,6 +37,7 @@ export class BranchAccessService {
        RETURNING *`,
       [tenantId, branchId, data.user_id, data.role || 'viewer', grantedBy],
     );
+    await this.permissionsCache.invalidateUser(tenantId, data.user_id);
     return rows[0];
   }
 
@@ -45,6 +50,7 @@ export class BranchAccessService {
       [tenantId, branchId, userId, revokedBy],
     );
     if (!rows.length) throw new NotFoundException('Access record not found');
+    await this.permissionsCache.invalidateUser(tenantId, userId);
     return rows[0];
   }
 

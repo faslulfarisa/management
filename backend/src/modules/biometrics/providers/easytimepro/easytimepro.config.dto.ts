@@ -64,6 +64,9 @@ export interface EasyTimeProConfig {
    */
   punchTypeField?: string;
 
+  /** Column/field name for provider work code, if available. */
+  workCodeField?: string;
+
   /**
    * Column/field name for the verification mode (e.g. 'VerifyMode', 'CheckType').
    * The raw value is normalized via verification_method_mappings at runtime.

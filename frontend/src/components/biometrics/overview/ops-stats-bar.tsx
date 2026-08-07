@@ -75,32 +75,32 @@ export function OpsStatsBar() {
         sub="mobile / laptop / kiosk"
       />
       <OpStatCard
-        title="Queue Lag"
+        title="Queue Status"
         value={depth}
         icon={Clock}
         variant={depth > 5000 ? 'danger' : depth > 1000 ? 'warn' : 'ok'}
-        sub="jobs waiting"
+        sub="waiting to process"
       />
       <OpStatCard
-        title="Failed Jobs"
+        title="Failed Punches"
         value={failed}
         icon={AlertTriangle}
         variant={failed > 0 ? 'danger' : 'ok'}
         sub="need attention"
       />
       <OpStatCard
-        title="DLQ Count"
+        title="Needs Review"
         value={dlq}
         icon={AlertTriangle}
         variant={dlq > 0 ? 'danger' : 'ok'}
-        sub="dead-letter queue"
+        sub="retry or review"
       />
       <OpStatCard
-        title="Workers"
+        title="Processors"
         value={workers}
         icon={Radio}
         variant={workers === 0 ? 'danger' : 'ok'}
-        sub="active processors"
+        sub="available now"
       />
       <OpStatCard
         title="Connection"

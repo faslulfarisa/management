@@ -25,6 +25,12 @@ export function RequestDetailSheet({ request, onClose }: RequestDetailSheetProps
   if (!request) return null;
 
   const s = statusStyle[request.status] ?? { label: request.status, bg: 'bg-muted', text: 'text-muted-foreground' };
+  const priorityStyle = 
+    request.priority === 'high' ? 'bg-red-50 text-red-600 border-red-200' :
+    request.priority === 'urgent' ? 'bg-orange-50 text-orange-600 border-orange-200' :
+    request.priority === 'low' ? 'bg-slate-50 text-slate-600 border-slate-200' :
+    'bg-gray-50 text-gray-600 border-gray-200';
+  const priorityLabel = request.priority ? request.priority.charAt(0).toUpperCase() + request.priority.slice(1) : 'Normal';
 
   return (
     <BottomSheet open={!!request} onOpenChange={(v) => !v && onClose()}>
@@ -34,9 +40,14 @@ export function RequestDetailSheet({ request, onClose }: RequestDetailSheetProps
           <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-2">
             <div className="flex items-start justify-between gap-2">
               <p className="text-sm font-semibold text-foreground leading-snug flex-1">{request.title}</p>
-              <span className={cn('text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0', s.bg, s.text)}>
-                {s.label}
-              </span>
+              <div className="flex gap-1.5 shrink-0">
+                <span className={cn('text-xs font-medium px-2.5 py-1 rounded-full', s.bg, s.text)}>
+                  {s.label}
+                </span>
+                <span className={cn('text-xs font-medium px-2.5 py-1 rounded-full border', priorityStyle)}>
+                  {priorityLabel} Priority
+                </span>
+              </div>
             </div>
             {request.description && (
               <p className="text-xs text-muted-foreground">{request.description}</p>

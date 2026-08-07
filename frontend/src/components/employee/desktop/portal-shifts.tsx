@@ -6,6 +6,8 @@ import { Calendar, Clock } from 'lucide-react';
 import { employeeApi } from '@/lib/employee-api';
 import { ShiftWeekView } from '@/components/employee/shifts/shift-week-view';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Plus } from 'lucide-react';
 
 function fmtShiftTime(t: string) {
   try { return format(parseISO(`1970-01-01T${t}`), 'hh:mm a'); } catch { return t; }
@@ -20,7 +22,7 @@ function dayLabel(dateStr: string) {
   } catch { return dateStr; }
 }
 
-export function PortalShifts() {
+export function PortalShifts({ onRequestOverride }: { onRequestOverride: () => void }) {
   const now = new Date();
 
   const { data: upcoming, isLoading } = useQuery({
@@ -42,8 +44,12 @@ export function PortalShifts() {
 
   return (
     <div>
-      <div className="sticky top-0 z-10 flex h-14 items-center border-b border-gray-200 bg-white px-6">
+      <div className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-gray-200 bg-white px-6">
         <h1 className="text-[15px] font-bold text-gray-900">My Schedule</h1>
+        <Button onClick={onRequestOverride} size="sm" className="gap-1.5 font-bold text-xs">
+          <Plus className="h-4 w-4" />
+          Request Shift Override
+        </Button>
       </div>
 
       <div className="p-6 space-y-5 max-w-[1100px]">

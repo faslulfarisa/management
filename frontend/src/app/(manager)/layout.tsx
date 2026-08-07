@@ -8,6 +8,8 @@ import Link from 'next/link';
 import { Home, Inbox, Users, ArrowLeftRight, LogOut, Sparkles, Award } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { resetOrgScopedState } from '@/lib/org-switch';
+import { getPostLogoutRedirectPath } from '@/lib/auth/logout-redirect';
+import { getCurrentPortalKind } from '@/lib/portal-host';
 
 export default function ManagerLayout({ children }: { children: React.ReactNode }) {
   const { accessToken, employeeProfile, _hydrated, logout } = useAuthStore();
@@ -18,6 +20,11 @@ export default function ManagerLayout({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     if (_hydrated) {
+      if (getCurrentPortalKind() === 'platform') {
+        router.push('/login');
+        return;
+      }
+
       if (!accessToken) {
         router.push('/login');
         return;
@@ -96,9 +103,10 @@ export default function ManagerLayout({ children }: { children: React.ReactNode 
           </Link>
           <button
             onClick={() => {
+              const redirectPath = getPostLogoutRedirectPath();
               resetOrgScopedState(queryClient);
               logout();
-              router.push('/login');
+              router.push(redirectPath);
             }}
             className="flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-500/5 transition-all w-full text-left"
           >

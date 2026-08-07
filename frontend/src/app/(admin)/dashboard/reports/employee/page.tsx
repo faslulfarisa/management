@@ -225,7 +225,28 @@ export default function EmployeeReportsPage() {
   const cfg = TAB_CONFIG[tab];
 
   function buildExportData() {
-    return { columns: cfg.exportCols, rows: rows.map(r => cfg.exportKeys.map(k => String(r[k] ?? ''))) };
+    return {
+      columns: cfg.exportCols,
+      rows: rows.map(r => cfg.exportKeys.map(k => {
+        const v = r[k];
+        const formatted = (() => {
+          if (['joining_date', 'transfer_date', 'issued_date', 'approved_at'].includes(k)) {
+            return fmtDate(v);
+          }
+          if (k === 'amount') {
+            return v != null ? `₹${parseFloat(String(v)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '';
+          }
+          if (k === 'avg_gross') {
+            return v != null ? `₹${parseFloat(String(v)).toLocaleString('en-IN')}` : '';
+          }
+          if (k === 'pct') {
+            return fmtPct(v);
+          }
+          return v != null ? String(v) : '';
+        })();
+        return formatted === '—' ? '' : formatted;
+      })),
+    };
   }
 
   return (

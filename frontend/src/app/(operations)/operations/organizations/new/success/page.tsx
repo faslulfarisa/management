@@ -49,7 +49,7 @@ function SuccessContent() {
           </h2>
           <ul className="space-y-3">
             {[
-              'A verification email has been sent to the org admin. They must verify before logging in.',
+              'The org admin account has been provisioned and can sign in once the organization is approved.',
               'Review and approve the organization from the Approvals section.',
               'Once approved, the organization workspace will be activated.',
             ].map((step, i) => (

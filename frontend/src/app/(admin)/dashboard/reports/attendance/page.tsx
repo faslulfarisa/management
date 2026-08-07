@@ -334,7 +334,18 @@ export default function AttendanceReportsPage() {
       columns: cfg.exportCols,
       rows: rows.map(r => cfg.exportKeys.map(k => {
         const v = r[k];
-        return v == null ? '' : String(v);
+        const formatted = (() => {
+          if (k === 'date' || k === 'approved_at') return fmtDate(v);
+          if ([
+            'check_in', 'check_out', 'punch_time', 'clock_in', 'clock_out',
+            'original_check_in', 'corrected_check_in', 'original_check_out', 'corrected_check_out'
+          ].includes(k)) return fmtTime(v);
+          if (['avg_late_mins', 'late_minutes', 'total_overtime_mins', 'overtime_minutes'].includes(k)) return fmtMins(v);
+          if (['overtime_hours', 'total_hours'].includes(k)) return fmtHrs(v);
+          if (['absenteeism_pct', 'pct'].includes(k)) return fmtPct(v);
+          return v != null ? String(v) : '';
+        })();
+        return formatted === '—' ? '' : formatted;
       })),
     };
   }

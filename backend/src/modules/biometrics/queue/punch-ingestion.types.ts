@@ -21,6 +21,28 @@ export interface PunchIngestionJobData {
     verifyMethod: string;
     providerName: string;
     deviceId?: string;
+    terminalSerialNumber?: string;
+    workCode?: string;
+    punchState?: string;
+    rawVerifyType?: string;
+    gps?: {
+      latitude: number;
+      longitude: number;
+      accuracyMeters?: number;
+      recordedAt?: string;
+    };
+    photo?: {
+      url?: string;
+      objectKey?: string;
+      sha256?: string;
+      capturedAt?: string;
+    };
+    locationMetadata?: Record<string, unknown>;
+    requestId?: string;
+    correlationId?: string;
+    syncBatchId?: string;
+    sourceIp?: string;
+    sourceUserAgent?: string;
     /** UUID of the attendance_terminals row when punch came from a trusted terminal. */
     terminalId?: string;
     /** Normalized AttendanceSource written to attendance_records.attendance_source. */

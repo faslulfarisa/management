@@ -8,6 +8,7 @@ import {
   Users, Building2,
 } from 'lucide-react';
 import api from '@/lib/api';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 import { useAuthStore } from '@/store/auth.store';
 import { USER_TYPE_LABELS, type UserType } from '@/lib/hierarchy';
 
@@ -975,12 +976,19 @@ export function CreateUserDrawer({ onClose, onSaved, editUser }: CreateUserDrawe
     return e;
   };
 
-  const applyAccessScope = async (targetUserId: string, positionId: string) => {
+  const applyAccessScope = async (
+    targetUserId: string,
+    positionId: string,
+    roleId?: string,
+    reportingManagerId?: string,
+  ) => {
     if (manageableTypes.length === 0) return;
     await api.patch(`/users/${targetUserId}/access`, {
       userType: accessUserType,
       branchIds: (accessUserType === 'branch_admin' || accessUserType === 'admin') ? accessBranchIds : undefined,
       positionId: positionId || null,
+      ...(reportingManagerId !== undefined ? { reportingManagerId: reportingManagerId || null } : {}),
+      ...(roleId ? { roles: [{ roleId }] } : {}),
       ...(accessUserType === 'org_admin' && accessOrgId ? { organizationId: accessOrgId } : {}),
     });
   };
@@ -1015,30 +1023,14 @@ export function CreateUserDrawer({ onClose, onSaved, editUser }: CreateUserDrawe
         payloadBranchIds = accessBranchIds;
       }
 
-      const res = await api.post('/users', {
+      await api.post('/users', {
         ...payload,
         userType: accessUserType,
         branch_ids: payloadBranchIds,
+        position_id: form1.position_id || undefined,
+        roles: form1.role_id ? [{ roleId: form1.role_id }] : undefined,
         ...(crossOrgTargetId ? { organizationId: crossOrgTargetId } : {}),
       });
-      const newUserId = res.data?.data?.id;
-
-      if (newUserId && form1.position_id) {
-        await api.post(`/positions/${form1.position_id}/users`, {
-          userId: newUserId,
-          ...(crossOrgTargetId ? { organizationId: crossOrgTargetId } : {}),
-        });
-      }
-
-      if (newUserId && form1.role_id) {
-        await api.put(`/users/${newUserId}/roles`, {
-          roles: [{ roleId: form1.role_id }]
-        });
-      }
-
-      if (newUserId) {
-        await applyAccessScope(newUserId, form1.position_id);
-      }
 
       onSaved(); onClose();
     } catch (err: any) {
@@ -1099,14 +1091,6 @@ export function CreateUserDrawer({ onClose, onSaved, editUser }: CreateUserDrawe
             userId: selectedEntry!.id,
           });
         }
-        if (form2.position_id) {
-          await api.post(`/positions/${form2.position_id}/users`, { userId: selectedEntry!.id });
-        }
-        if (form2.role_id) {
-          await api.put(`/users/${selectedEntry!.id}/roles`, {
-            roles: [{ roleId: form2.role_id }]
-          });
-        }
       } else {
         const { branch_ids, username, password, confirm_password, ...invitePayload } = form2;
         let payloadBranchIds: string[] = [];
@@ -1124,23 +1108,14 @@ export function CreateUserDrawer({ onClose, onSaved, editUser }: CreateUserDrawe
           ...invitePayload,
           userType: accessUserType,
           branch_ids: payloadBranchIds,
+          position_id: form2.position_id || undefined,
+          roles: form2.role_id ? [{ roleId: form2.role_id }] : undefined,
         });
         targetUserId = res.data?.data?.id;
-        const newUserId = targetUserId;
-
-        if (newUserId && form2.position_id) {
-          await api.post(`/positions/${form2.position_id}/users`, { userId: newUserId });
-        }
-
-        if (newUserId && form2.role_id) {
-          await api.put(`/users/${newUserId}/roles`, {
-            roles: [{ roleId: form2.role_id }]
-          });
-        }
       }
 
-      if (targetUserId) {
-        await applyAccessScope(targetUserId, form2.position_id);
+      if (targetUserId && selectedEntry!.source === 'user') {
+        await applyAccessScope(targetUserId, form2.position_id, form2.role_id, form2.reports_to);
       }
 
       onSaved(); onClose();
@@ -1377,8 +1352,7 @@ export function CreateUserDrawer({ onClose, onSaved, editUser }: CreateUserDrawe
                   </div>
                   <div>
                     <FieldLabel>Phone Number</FieldLabel>
-                    <input value={form1.phone} onChange={e => set1('phone', e.target.value)}
-                      placeholder="+1 234 567 8900" className={inputCls()} />
+                    <PhoneNumberInput value={form1.phone} onChange={value => set1('phone', value)} />
                   </div>
                   <div>
                     <FieldLabel required>Password</FieldLabel>

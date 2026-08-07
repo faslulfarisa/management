@@ -72,6 +72,9 @@ export const approvalsApi = {
   getSubmitted: (filters?: InboxFilters): Promise<{ data: ApprovalRequest[]; total: number }> =>
     api.get('/approvals/submitted', { params: filters }).then((r) => r.data),
 
+  getHistory: (filters?: InboxFilters): Promise<{ data: ApprovalRequest[]; total: number }> =>
+    api.get('/approvals/history', { params: filters }).then((r) => r.data),
+
   getPendingCount: (): Promise<{ count: number }> =>
     api.get('/approvals/pending-count').then((r) => r.data),
 

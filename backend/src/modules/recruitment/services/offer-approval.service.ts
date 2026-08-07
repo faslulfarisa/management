@@ -3,6 +3,7 @@ import { DatabaseService } from '../../../shared/database.service';
 import { ApprovalEngineService } from '../../approvals/services/approval-engine.service';
 import { AuditLogService } from '../../platform/services/audit-log.service';
 import { OfferService } from './offer.service';
+import { isOrganizationAdmin } from './recruitment-approval-bypass.util';
 
 const WORKFLOW_TYPE = 'offer';
 
@@ -20,6 +21,29 @@ export class OfferApprovalService {
     const offer = await this.offers.getRaw(offerId, tenantId);
     if (!['draft', 'rejected'].includes(offer.status)) {
       throw new BadRequestException(`Cannot submit an offer with status '${offer.status}' for approval`);
+    }
+
+    if (await isOrganizationAdmin(this.db, tenantId, submittedById)) {
+      await this.db.query(
+        `UPDATE offers
+         SET status = 'approved',
+             approval_status = 'approved',
+             approved_by = $3,
+             approved_at = now(),
+             approval_reason = 'Auto-approved by organization admin',
+             updated_at = now()
+         WHERE id = $1 AND tenant_id = $2`,
+        [offerId, tenantId, submittedById],
+      );
+      await this.auditLog.log({
+        tenantId,
+        userId: submittedById,
+        entityType: 'offer',
+        entityId: offerId,
+        action: 'auto_approve',
+        newValues: { reason: 'Organization admin action' },
+      });
+      return this.offers.findOne(offerId, tenantId);
     }
 
     await this.db.query(

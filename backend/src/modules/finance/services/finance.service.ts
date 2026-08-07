@@ -3,6 +3,7 @@ import { DatabaseService } from '../../../shared/database.service';
 import { AuditLogService } from '../../platform/services/audit-log.service';
 import { ApprovalEngineService } from '../../approvals/services/approval-engine.service';
 import { assertUniqueCode, translateUniqueViolation } from '../../../shared/unique-code.validator';
+import { CurrencyService } from '../../../shared/currency.service';
 
 function parseDate(d: any): string | null {
   return d && typeof d === 'string' && d.trim() !== '' ? d : null;
@@ -22,6 +23,7 @@ export class FinanceService {
     private auditLog: AuditLogService,
     @Inject(forwardRef(() => ApprovalEngineService))
     private approvalEngine: ApprovalEngineService,
+    private currencyService: CurrencyService,
   ) {}
 
   private async audit(
@@ -152,6 +154,8 @@ export class FinanceService {
   }
 
   async createExpense(tenantId: string, userId: string, data: any) {
+    const currency = await this.currencyService.getTenantCurrencySnapshot(tenantId, data.currency);
+    const currencySnapshot = JSON.stringify(currency.snapshot);
     let branchId = data.branch_id ?? null;
     if (!branchId && data.employee_id) {
       const { rows: empRows } = await this.db.query(
@@ -161,9 +165,15 @@ export class FinanceService {
       branchId = empRows[0]?.branch_id ?? null;
     }
     const { rows } = await this.db.query(
-      `INSERT INTO expenses (tenant_id, employee_id, category, amount, date, description, receipt_url, branch_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [tenantId, data.employee_id || null, data.category, data.amount, parseDateOrDefault(data.date), data.description, data.receipt_url, branchId],
+      `INSERT INTO expenses (
+        tenant_id, employee_id, category, amount, currency, currency_symbol, exchange_rate,
+        base_currency, exchange_rate_to_base, exchange_rate_source, exchange_rate_as_of, currency_snapshot,
+        date, description, receipt_url, branch_id
+      )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16) RETURNING *`,
+      [tenantId, data.employee_id || null, data.category, data.amount, currency.currencyCode, currency.currencySymbol,
+       currency.exchangeRate, currency.baseCurrency, currency.exchangeRateToBase, currency.exchangeRateSource,
+       currency.exchangeRateAsOf, currencySnapshot, parseDateOrDefault(data.date), data.description, data.receipt_url, branchId],
     );
     await this.audit(tenantId, userId, 'finance.expense', rows[0].id, 'create', null, rows[0]);
 
@@ -176,6 +186,7 @@ export class FinanceService {
       submittedBy: data.employee_id || userId,
       branchId: branchId ?? null,
       title: `Expense: ${data.category} – ${data.amount} (${data.description ?? ''})`.slice(0, 120),
+      priority: data.priority || 'normal',
       metadata: { category: data.category, amount: data.amount, employee_id: data.employee_id },
     });
 
@@ -251,6 +262,8 @@ export class FinanceService {
   }
 
   async createInvoice(tenantId: string, createdBy: string, data: any) {
+    const currency = await this.currencyService.getTenantCurrencySnapshot(tenantId, data.currency);
+    const currencySnapshot = JSON.stringify(currency.snapshot);
     // Compute totals from line items
     let subtotal = 0; let taxAmount = 0;
     const lines = data.line_items || [];
@@ -271,11 +284,14 @@ export class FinanceService {
       try {
         const { rows } = await this.db.query(
           `INSERT INTO invoices (tenant_id, invoice_number, customer_name, customer_email, customer_phone, customer_address, customer_gstin,
-            issue_date, due_date, currency, subtotal, discount_amount, tax_amount, total_amount, notes, terms, status, source, ocr_raw_text, created_by, branch_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *`,
+            issue_date, due_date, currency, currency_symbol, exchange_rate, base_currency, exchange_rate_to_base,
+            exchange_rate_source, exchange_rate_as_of, currency_snapshot, subtotal, discount_amount, tax_amount,
+            total_amount, notes, terms, status, source, ocr_raw_text, created_by, branch_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28) RETURNING *`,
           [tenantId, invoiceNumber, data.customer_name, data.customer_email, data.customer_phone, data.customer_address,
            data.customer_gstin, parseDateOrDefault(data.issue_date), parseDate(data.due_date),
-           data.currency || 'INR', subtotal, discountAmount, taxAmount, totalAmount, data.notes, data.terms,
+           currency.currencyCode, currency.currencySymbol, currency.exchangeRate, currency.baseCurrency, currency.exchangeRateToBase,
+           currency.exchangeRateSource, currency.exchangeRateAsOf, currencySnapshot, subtotal, discountAmount, taxAmount, totalAmount, data.notes, data.terms,
            data.status || 'draft', data.source || 'manual', data.ocr_raw_text || null, createdBy,
            data.branch_id || null],
         );
@@ -292,9 +308,13 @@ export class FinanceService {
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
       await this.db.query(
-        `INSERT INTO invoice_line_items (tenant_id, invoice_id, description, hsn_sac, quantity, unit, unit_price, discount_pct, tax_rate, amount, sort_order)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [tenantId, invoice.id, l.description, l.hsn_sac, l.quantity, l.unit || 'nos', l.unit_price, l.discount_pct || 0, l.tax_rate || 0, l.amount, i],
+        `INSERT INTO invoice_line_items (
+          tenant_id, invoice_id, description, hsn_sac, quantity, unit, unit_price, discount_pct, tax_rate,
+          amount, sort_order, currency, currency_symbol, base_currency, exchange_rate_to_base, currency_snapshot
+        )
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb)`,
+        [tenantId, invoice.id, l.description, l.hsn_sac, l.quantity, l.unit || 'nos', l.unit_price, l.discount_pct || 0, l.tax_rate || 0,
+         l.amount, i, invoice.currency, invoice.currency_symbol, invoice.base_currency, invoice.exchange_rate_to_base, JSON.stringify(invoice.currency_snapshot ?? currency.snapshot)],
       );
     }
     await this.audit(tenantId, createdBy, 'finance.invoice', invoice.id, 'create', null, { ...invoice, line_items: lines });
@@ -365,7 +385,8 @@ export class FinanceService {
   async markInvoicePaid(id: string, tenantId: string, userId: string, paymentData: any) {
     // Lock-free read of current state
     const { rows: existing } = await this.db.query(
-      `SELECT id, total_amount, currency, status,
+      `SELECT id, total_amount, currency, currency_symbol, exchange_rate, base_currency,
+        exchange_rate_to_base, exchange_rate_source, exchange_rate_as_of, currency_snapshot, status,
         (SELECT COALESCE(SUM(amount),0) FROM finance_payments WHERE invoice_id = invoices.id) AS amount_paid
        FROM invoices WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId],
@@ -393,11 +414,17 @@ export class FinanceService {
     }
 
     await this.db.query(
-      `INSERT INTO finance_payments (tenant_id, payment_type, payment_date, amount, currency, payment_method, reference, notes, invoice_id, created_by)
-       VALUES ($1,'received',$2,$3,$4,$5,$6,$7,$8,$9)`,
+      `INSERT INTO finance_payments (
+        tenant_id, payment_type, payment_date, amount, currency, currency_symbol, exchange_rate,
+        base_currency, exchange_rate_to_base, exchange_rate_source, exchange_rate_as_of, currency_snapshot,
+        payment_method, reference, notes, invoice_id, created_by
+      )
+       VALUES ($1,'received',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16)`,
       [tenantId, parseDateOrDefault(paymentData.payment_date),
-       amount, inv.currency,
-       paymentData.payment_method || 'bank', paymentData.reference, paymentData.notes, id, userId],
+       amount, inv.currency, inv.currency_symbol ?? this.currencyService.getDefinition(inv.currency).symbol, inv.exchange_rate ?? null,
+       inv.base_currency ?? inv.currency, inv.exchange_rate_to_base ?? inv.exchange_rate ?? null,
+       inv.exchange_rate_source ?? 'document_snapshot', inv.exchange_rate_as_of ?? new Date().toISOString(),
+       JSON.stringify(inv.currency_snapshot ?? {}), paymentData.payment_method || 'bank', paymentData.reference, paymentData.notes, id, userId],
     );
 
     // Recompute amount_paid from payments table and determine new status
@@ -456,6 +483,8 @@ export class FinanceService {
   }
 
   async createBill(tenantId: string, createdBy: string, data: any) {
+    const currency = await this.currencyService.getTenantCurrencySnapshot(tenantId, data.currency);
+    const currencySnapshot = JSON.stringify(currency.snapshot);
     const lines = data.line_items || [];
     let subtotal = 0; let taxAmount = 0;
     for (const l of lines) {
@@ -473,10 +502,14 @@ export class FinanceService {
       try {
         const { rows } = await this.db.query(
           `INSERT INTO vendor_bills (tenant_id, bill_number, vendor_name, vendor_email, vendor_gstin, bill_date, due_date,
-            subtotal, tax_amount, total_amount, notes, status, source, ocr_raw_text, created_by, branch_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+            currency, currency_symbol, exchange_rate, base_currency, exchange_rate_to_base, exchange_rate_source,
+            exchange_rate_as_of, currency_snapshot, subtotal, tax_amount, total_amount, notes, status, source,
+            ocr_raw_text, created_by, branch_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20,$21,$22,$23,$24) RETURNING *`,
           [tenantId, billNumber, data.vendor_name, data.vendor_email, data.vendor_gstin,
            parseDateOrDefault(data.bill_date), parseDate(data.due_date),
+           currency.currencyCode, currency.currencySymbol, currency.exchangeRate, currency.baseCurrency,
+           currency.exchangeRateToBase, currency.exchangeRateSource, currency.exchangeRateAsOf, currencySnapshot,
            subtotal, taxAmount, totalAmount, data.notes, data.status || 'pending',
            data.source || 'manual', data.ocr_raw_text || null, createdBy, data.branch_id || null],
         );
@@ -493,9 +526,13 @@ export class FinanceService {
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
       await this.db.query(
-        `INSERT INTO vendor_bill_line_items (tenant_id, bill_id, description, hsn_sac, quantity, unit, unit_price, tax_rate, amount, sort_order)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [tenantId, bill.id, l.description, l.hsn_sac, l.quantity, l.unit || 'nos', l.unit_price, l.tax_rate || 0, l.amount, i],
+        `INSERT INTO vendor_bill_line_items (
+          tenant_id, bill_id, description, hsn_sac, quantity, unit, unit_price, tax_rate,
+          amount, sort_order, currency, currency_symbol, base_currency, exchange_rate_to_base, currency_snapshot
+        )
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb)`,
+        [tenantId, bill.id, l.description, l.hsn_sac, l.quantity, l.unit || 'nos', l.unit_price, l.tax_rate || 0,
+         l.amount, i, bill.currency, bill.currency_symbol, bill.base_currency, bill.exchange_rate_to_base, JSON.stringify(bill.currency_snapshot ?? currency.snapshot)],
       );
     }
     await this.audit(tenantId, createdBy, 'finance.bill', bill.id, 'create', null, { ...bill, line_items: lines });
@@ -516,7 +553,8 @@ export class FinanceService {
 
   async payBill(id: string, tenantId: string, userId: string, paymentData: any) {
     const { rows: existing } = await this.db.query(
-      `SELECT id, total_amount, currency, status,
+      `SELECT id, total_amount, currency, currency_symbol, exchange_rate, base_currency,
+        exchange_rate_to_base, exchange_rate_source, exchange_rate_as_of, currency_snapshot, status,
         (SELECT COALESCE(SUM(amount),0) FROM finance_payments WHERE bill_id = vendor_bills.id) AS amount_paid
        FROM vendor_bills WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId],
@@ -544,11 +582,17 @@ export class FinanceService {
     }
 
     await this.db.query(
-      `INSERT INTO finance_payments (tenant_id, payment_type, payment_date, amount, currency, payment_method, reference, notes, bill_id, created_by)
-       VALUES ($1,'made',$2,$3,$4,$5,$6,$7,$8,$9)`,
+      `INSERT INTO finance_payments (
+        tenant_id, payment_type, payment_date, amount, currency, currency_symbol, exchange_rate,
+        base_currency, exchange_rate_to_base, exchange_rate_source, exchange_rate_as_of, currency_snapshot,
+        payment_method, reference, notes, bill_id, created_by
+      )
+       VALUES ($1,'made',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16)`,
       [tenantId, parseDateOrDefault(paymentData.payment_date),
-       amount, bill.currency,
-       paymentData.payment_method || 'bank', paymentData.reference, paymentData.notes, id, userId],
+       amount, bill.currency, bill.currency_symbol ?? this.currencyService.getDefinition(bill.currency).symbol, bill.exchange_rate ?? null,
+       bill.base_currency ?? bill.currency, bill.exchange_rate_to_base ?? bill.exchange_rate ?? null,
+       bill.exchange_rate_source ?? 'document_snapshot', bill.exchange_rate_as_of ?? new Date().toISOString(),
+       JSON.stringify(bill.currency_snapshot ?? {}), paymentData.payment_method || 'bank', paymentData.reference, paymentData.notes, id, userId],
     );
 
     const { rows: sumRows } = await this.db.query(
@@ -612,10 +656,19 @@ export class FinanceService {
   }
 
   async createCashbookEntry(tenantId: string, userId: string, data: any) {
+    const currency = await this.currencyService.getTenantCurrencySnapshot(tenantId, data.currency);
+    const currencySnapshot = JSON.stringify(currency.snapshot);
     const { rows } = await this.db.query(
-      `INSERT INTO cashbook_entries (tenant_id, entry_date, entry_type, category, description, reference, amount, account, created_by, branch_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [tenantId, parseDateOrDefault(data.entry_date), data.entry_type, data.category, data.description, data.reference, data.amount, data.account || 'main', userId, data.branch_id || null],
+      `INSERT INTO cashbook_entries (
+        tenant_id, entry_date, entry_type, category, description, reference, amount,
+        currency, currency_symbol, exchange_rate, base_currency, exchange_rate_to_base,
+        exchange_rate_source, exchange_rate_as_of, currency_snapshot, account, created_by, branch_id
+      )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18) RETURNING *`,
+      [tenantId, parseDateOrDefault(data.entry_date), data.entry_type, data.category, data.description, data.reference,
+       data.amount, currency.currencyCode, currency.currencySymbol, currency.exchangeRate, currency.baseCurrency,
+       currency.exchangeRateToBase, currency.exchangeRateSource, currency.exchangeRateAsOf, currencySnapshot,
+       data.account || 'main', userId, data.branch_id || null],
     );
     await this.audit(tenantId, userId, 'finance.cashbook_entry', rows[0].id, 'create', null, rows[0]);
     return rows[0];
@@ -637,10 +690,19 @@ export class FinanceService {
   }
 
   async createBudget(tenantId: string, userId: string, data: any) {
+    const currency = await this.currencyService.getTenantCurrencySnapshot(tenantId, data.currency);
+    const currencySnapshot = JSON.stringify(currency.snapshot);
     const { rows } = await this.db.query(
-      `INSERT INTO budgets (tenant_id, name, department, category, period_start, period_end, allocated, notes, created_by, branch_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [tenantId, data.name, data.department, data.category, parseDateOrDefault(data.period_start), parseDateOrDefault(data.period_end), data.allocated, data.notes, userId, data.branch_id || null],
+      `INSERT INTO budgets (
+        tenant_id, name, department, category, period_start, period_end, allocated,
+        currency, currency_symbol, exchange_rate, base_currency, exchange_rate_to_base,
+        exchange_rate_source, exchange_rate_as_of, currency_snapshot, notes, created_by, branch_id
+      )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18) RETURNING *`,
+      [tenantId, data.name, data.department, data.category, parseDateOrDefault(data.period_start), parseDateOrDefault(data.period_end),
+       data.allocated, currency.currencyCode, currency.currencySymbol, currency.exchangeRate, currency.baseCurrency,
+       currency.exchangeRateToBase, currency.exchangeRateSource, currency.exchangeRateAsOf, currencySnapshot,
+       data.notes, userId, data.branch_id || null],
     );
     await this.audit(tenantId, userId, 'finance.budget', rows[0].id, 'create', null, rows[0]);
     return rows[0];
@@ -699,6 +761,8 @@ export class FinanceService {
   }
 
   async createReimbursement(tenantId: string, userId: string, data: any) {
+    const currency = await this.currencyService.getTenantCurrencySnapshot(tenantId, data.currency);
+    const currencySnapshot = JSON.stringify(currency.snapshot);
     // Retry on claim-number unique-violation
     let reimbursement: any;
     for (let attempt = 0; attempt < MAX_RETRY; attempt++) {
@@ -713,10 +777,17 @@ export class FinanceService {
           rmbBranchId = eRows[0]?.branch_id ?? null;
         }
         const { rows } = await this.db.query(
-          `INSERT INTO reimbursements (tenant_id, employee_id, claim_number, category, amount, expense_date, description, receipt_url, branch_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+          `INSERT INTO reimbursements (
+            tenant_id, employee_id, claim_number, category, amount, currency, currency_symbol, exchange_rate,
+            base_currency, exchange_rate_to_base, exchange_rate_source, exchange_rate_as_of, currency_snapshot,
+            expense_date, description, receipt_url, branch_id
+          )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17) RETURNING *`,
           [tenantId, data.employee_id || null, claimNumber, data.category, data.amount,
-           parseDateOrDefault(data.expense_date), data.description, data.receipt_url || null, rmbBranchId],
+           currency.currencyCode, currency.currencySymbol, currency.exchangeRate,
+           currency.baseCurrency, currency.exchangeRateToBase, currency.exchangeRateSource,
+           currency.exchangeRateAsOf, currencySnapshot, parseDateOrDefault(data.expense_date),
+           data.description, data.receipt_url || null, rmbBranchId],
         );
         reimbursement = rows[0];
         break;

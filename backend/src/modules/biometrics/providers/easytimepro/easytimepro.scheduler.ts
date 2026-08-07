@@ -14,7 +14,7 @@
  *     same window is silently dropped by BullMQ (idempotent trigger).
  *   - Backpressure: skips scheduling when the biometric-sync queue exceeds
  *     BACKPRESSURE_LIMIT waiting jobs.
- *   - Offline buffer drain: every 30 s, re-enqueues punches that were
+ *   - Offline buffer drain: every 60 s, re-enqueues punches that were
  *     buffered to Redis while Bull was temporarily unavailable.
  */
 
@@ -22,9 +22,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { randomUUID } from 'crypto';
-import { Cron, CronExpression, Interval } from '@nestjs/schedule';
+import { Cron, Interval } from '@nestjs/schedule';
 
 import { DatabaseService } from '../../../../shared/database.service';
+import { SchedulerControlService } from '../../../../shared/scheduler-control.service';
 import { EasyTimeProConfig } from './easytimepro.config.dto';
 import {
   BIOMETRIC_SYNC_QUEUE,
@@ -36,6 +37,7 @@ import { OfflineBufferService } from '../../services/offline-buffer.service';
 
 const BACKPRESSURE_LIMIT = 2_000;
 const PROVIDER_NAME      = 'easytimepro';
+const OFFLINE_BUFFER_DRAIN_MS = parseInt(process.env.OFFLINE_BUFFER_DRAIN_MS ?? '60000', 10);
 
 @Injectable()
 export class EasyTimeProScheduler {
@@ -46,43 +48,48 @@ export class EasyTimeProScheduler {
     private readonly offlineBuffer: OfflineBufferService,
     @InjectQueue(BIOMETRIC_SYNC_QUEUE) private readonly syncQueue: Queue,
     @InjectQueue(PUNCH_INGESTION_QUEUE) private readonly punchQueue: Queue,
+    private readonly schedulerControl: SchedulerControlService = new SchedulerControlService(),
   ) {}
 
   // ── Scheduled Sync ─────────────────────────────────────────────────────────
 
-  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'easytimepro-sync' })
+  @Cron('37 */5 * * * *', { name: 'easytimepro-sync' })
   async runScheduledSync(): Promise<void> {
-    const integrations = await this._loadActiveIntegrations();
-    if (integrations.length === 0) return;
+    await this.schedulerControl.run('easytimepro-sync', async () => {
+      const integrations = await this._loadActiveIntegrations();
+      if (integrations.length === 0) return;
 
-    const queueDepth = await this.syncQueue.getWaitingCount();
-    if (queueDepth > BACKPRESSURE_LIMIT) {
-      this.logger.warn(
-        JSON.stringify({
-          event: 'sync_skipped_backpressure',
-          provider: PROVIDER_NAME,
-          queueDepth,
-          limit: BACKPRESSURE_LIMIT,
-        }),
-      );
-      return;
-    }
+      const queueDepth = await this.syncQueue.getWaitingCount();
+      if (queueDepth > BACKPRESSURE_LIMIT) {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'sync_skipped_backpressure',
+            provider: PROVIDER_NAME,
+            queueDepth,
+            limit: BACKPRESSURE_LIMIT,
+          }),
+        );
+        return;
+      }
 
-    for (const integration of integrations) {
-      await this._enqueueSyncJob(integration);
-    }
+      for (const integration of integrations) {
+        await this._enqueueSyncJob(integration);
+      }
+    });
   }
 
   /** Drain the offline Redis buffer back into the punch queue every 30 s. */
-  @Interval(30_000)
+  @Interval(OFFLINE_BUFFER_DRAIN_MS)
   async drainOfflineBuffer(): Promise<void> {
-    const integrations = await this._loadActiveIntegrations();
-    for (const { tenant_id: tenantId } of integrations) {
-      const buffered = await this.offlineBuffer.size(tenantId, PROVIDER_NAME);
-      if (buffered > 0) {
-        await this.offlineBuffer.drain(tenantId, PROVIDER_NAME, this.punchQueue);
+    await this.schedulerControl.run('biometrics-offline-buffer-drain', async () => {
+      const pending = await this.offlineBuffer.pendingProviders();
+      for (const { tenantId, provider } of pending) {
+        const buffered = await this.offlineBuffer.size(tenantId, provider);
+        if (buffered > 0) {
+          await this.offlineBuffer.drain(tenantId, provider, this.punchQueue);
+        }
       }
-    }
+    });
   }
 
   /** Trigger a full sync immediately for a given integration (manual / API-triggered). */
@@ -126,7 +133,7 @@ export class EasyTimeProScheduler {
       attempts: 3,
       backoff: { type: 'exponential', delay: 10_000 },
       removeOnComplete: { count: 200 },
-      removeOnFail:     { count: 100 },
+      removeOnFail:     false,
     });
 
     this.logger.log(

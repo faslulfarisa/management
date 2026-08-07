@@ -14,7 +14,7 @@ import {
   XCircle, Shield,
 } from 'lucide-react';
 
-type Tab = 'pending' | 'submitted' | 'analytics';
+type Tab = 'pending' | 'submitted' | 'history' | 'analytics';
 
 // ─── Analytics View ───────────────────────────────────────────────────────────
 
@@ -336,7 +336,7 @@ function OtActionBar({ onSubmitted }: { onSubmitted: () => void }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-const VALID_TABS: Tab[] = ['pending', 'submitted', 'analytics'];
+const VALID_TABS: Tab[] = ['pending', 'submitted', 'history', 'analytics'];
 
 export default function ApprovalsPage() {
   return (
@@ -358,6 +358,7 @@ function ApprovalsPageContent() {
   const tabs: { key: Tab; label: string; icon: React.ElementType }[] = [
     { key: 'pending',   label: 'Inbox',     icon: Inbox },
     { key: 'submitted', label: 'Submitted',  icon: Send },
+    { key: 'history',   label: 'History',    icon: Clock },
     { key: 'analytics', label: 'Analytics',  icon: BarChart3 },
   ];
 
@@ -385,7 +386,7 @@ function ApprovalsPageContent() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
+      <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit overflow-x-auto">
         {tabs.map(({ key, label, icon: Icon }) => (
           <button
             key={key}
@@ -405,6 +406,7 @@ function ApprovalsPageContent() {
       {/* Content */}
       {tab === 'pending'      && <ApprovalInbox mode="inbox" />}
       {tab === 'submitted'    && <ApprovalInbox key={submittedKey} mode="submitted" />}
+      {tab === 'history'      && <ApprovalInbox mode="history" />}
       {tab === 'analytics'    && <AnalyticsView />}
 
       {/* Payroll-safe note */}

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Search, X, LayoutDashboard, Building2, Users, CalendarDays, Banknote,
-  FileText, Settings, Briefcase, BarChart3, Zap, Shield, DollarSign,
+  FileText, Settings, Briefcase, BarChart3, Shield, DollarSign,
   CreditCard, KeyRound, Receipt, IndianRupee,
   ArrowRight, CornerDownLeft, Loader2,
   UserCircle, Landmark, FileCheck, ClipboardList, CircleDollarSign,
@@ -46,7 +46,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Cashbook',         href: '/dashboard/finance/cashbook',     icon: Banknote,     group: 'Pages', keywords: ['cash', 'ledger'] },
   { label: 'Budgets',          href: '/dashboard/finance/budgets',      icon: BarChart3,    group: 'Pages', keywords: ['budget', 'forecast'] },
   { label: 'GST Dashboard',    href: '/dashboard/finance/gst',          icon: IndianRupee,  group: 'Pages', keywords: ['gst', 'tax'] },
-  { label: 'Automation',  href: '/dashboard/automation',       icon: Zap,      group: 'Pages', keywords: ['workflow', 'automate', 'rules'] },
+  { label: 'Notification Center', href: '/dashboard/notifications', icon: ClipboardList, group: 'Pages', keywords: ['notifications', 'alerts', 'inbox'] },
   { label: 'Settings',    href: '/dashboard/system/settings',  icon: Settings, group: 'Pages', keywords: ['config', 'preferences'] },
 ];
 
@@ -72,7 +72,7 @@ const NAV_PERMISSIONS: Record<string, string[]> = {
   '/dashboard/finance/cashbook': [PERMISSIONS.FINANCE_CASHBOOK_VIEW],
   '/dashboard/finance/budgets': [PERMISSIONS.FINANCE_BUDGETS_VIEW],
   '/dashboard/finance/gst': [PERMISSIONS.GST_RETURNS_VIEW],
-  '/dashboard/automation': [PERMISSIONS.NOTIFICATIONS_VIEW],
+  '/dashboard/notifications': [PERMISSIONS.NOTIFICATIONS_VIEW],
   '/dashboard/system/settings': [PERMISSIONS.ORGANIZATION_PROFILE_EDIT],
 };
 
@@ -81,7 +81,8 @@ function isBranchScopedAdmin(userType: string) {
 }
 
 function hasAnyPermission(granted: string[], required: string[]) {
-  if (!required.length || !granted.length) return true;
+  if (!required.length) return true;
+  if (!granted.length) return false;
   return required.some((permission) => granted.includes(permission));
 }
 
@@ -99,9 +100,9 @@ function isNavAllowedForUserType(item: NavItem, userType: string) {
     item.href.startsWith('/dashboard/finance') ||
     item.href.startsWith('/dashboard/system')
   ) {
-    return isAtLeast(userType, 'org_admin');
+    return isAtLeast(userType, 'admin');
   }
-  if (item.href.startsWith('/dashboard/hr') || item.href === '/dashboard/automation') {
+  if (item.href.startsWith('/dashboard/hr') || item.href === '/dashboard/notifications') {
     return isAtLeast(userType, 'admin');
   }
   return true;

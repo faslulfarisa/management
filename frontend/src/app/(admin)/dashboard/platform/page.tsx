@@ -5,6 +5,8 @@ import api from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import AddressFields from '@/components/forms/AddressFields';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 
 export default function OrganizationPage() {
   const [org, setOrg] = useState<any>(null);
@@ -48,7 +50,7 @@ export default function OrganizationPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const payload = { ...form };
+      const { countryCode, stateCode, ...payload } = form as typeof form & { countryCode?: string; stateCode?: string };
       Object.keys(payload).forEach(key => { if (payload[key as keyof typeof payload] === '') delete payload[key as keyof typeof payload]; });
       await api.put('/organization', payload);
       setEditing(false);
@@ -127,7 +129,7 @@ export default function OrganizationPage() {
           <div>
             <label className="text-sm font-medium mb-1 block">Contact Phone</label>
             {editing ? (
-              <Input value={form.contact_phone} onChange={e => setForm({ ...form, contact_phone: e.target.value })} />
+              <PhoneNumberInput value={form.contact_phone} onChange={value => setForm({ ...form, contact_phone: value })} />
             ) : <p className="py-2">{org?.contact_phone || '-'}</p>}
           </div>
         </CardContent>
@@ -135,37 +137,34 @@ export default function OrganizationPage() {
 
       <Card>
         <CardHeader><CardTitle>Address</CardTitle></CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="md:col-span-3">
-            <label className="text-sm font-medium mb-1 block">Address</label>
-            {editing ? (
-              <Input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} />
-            ) : <p className="py-2">{org?.address || '-'}</p>}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">City</label>
-            {editing ? (
-              <Input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} />
-            ) : <p className="py-2">{org?.city || '-'}</p>}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">State</label>
-            {editing ? (
-              <Input value={form.state} onChange={e => setForm({ ...form, state: e.target.value })} />
-            ) : <p className="py-2">{org?.state || '-'}</p>}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Country</label>
-            {editing ? (
-              <Input value={form.country} onChange={e => setForm({ ...form, country: e.target.value })} />
-            ) : <p className="py-2">{org?.country || '-'}</p>}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Postal Code</label>
-            {editing ? (
-              <Input value={form.postal_code} onChange={e => setForm({ ...form, postal_code: e.target.value })} />
-            ) : <p className="py-2">{org?.postal_code || '-'}</p>}
-          </div>
+        <CardContent className="space-y-4">
+          {editing ? (
+            <AddressFields
+              value={{
+                line1: form.address,
+                city: form.city,
+                state: form.state,
+                country: form.country,
+                postal_code: form.postal_code,
+                countryCode: (form as any).countryCode || '',
+                stateCode: (form as any).stateCode || '',
+              }}
+              onChange={(address) => setForm({
+                ...form,
+                address: address.line1 || '',
+                city: address.city || '',
+                state: address.state || '',
+                country: address.country || '',
+                postal_code: address.postal_code || '',
+                ...(address.countryCode ? { countryCode: address.countryCode } : {}),
+                ...(address.stateCode ? { stateCode: address.stateCode } : {}),
+              } as any)}
+              postalCodeKey="postal_code"
+            />
+          ) : (
+            <p className="py-2">{[org?.address, org?.city, org?.state, org?.country, org?.postal_code].filter(Boolean).join(', ') || '-'}</p>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="text-sm font-medium mb-1 block">Timezone</label>
             {editing ? (
@@ -177,6 +176,7 @@ export default function OrganizationPage() {
             {editing ? (
               <Input value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value })} />
             ) : <p className="py-2">{org?.currency || '-'}</p>}
+          </div>
           </div>
         </CardContent>
       </Card>

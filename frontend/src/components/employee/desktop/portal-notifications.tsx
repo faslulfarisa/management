@@ -6,6 +6,7 @@ import { Bell, CheckCheck, FileText, DollarSign, User, AlertCircle } from 'lucid
 import { employeeApi } from '@/lib/employee-api';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useNotificationAction } from '@/lib/notification-action-registry';
 
 const typeConfig: Record<string, { Icon: React.ElementType; bg: string; color: string }> = {
   leave:    { Icon: FileText,    bg: 'bg-blue-100',   color: 'text-blue-600'   },
@@ -17,6 +18,9 @@ const typeConfig: Record<string, { Icon: React.ElementType; bg: string; color: s
 
 export function PortalNotifications() {
   const queryClient = useQueryClient();
+  const openNotification = useNotificationAction({
+    onNavigated: () => queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+  });
 
   const { data, isLoading } = useQuery({
     queryKey: ['notifications'],
@@ -81,9 +85,14 @@ export function PortalNotifications() {
                 const cfg = typeConfig[n.type] ?? typeConfig.default;
                 const Icon = cfg.Icon;
                 return (
-                  <div
+                  <button
                     key={n.id}
-                    className={cn('flex items-start gap-3 px-5 py-4 transition-colors', !n.read && 'bg-primary/5')}
+                    onClick={() => openNotification({
+                      ...n,
+                      action_url: n.action_url ?? n.href ?? null,
+                      source_module: n.source_module ?? n.type,
+                    })}
+                    className={cn('flex w-full items-start gap-3 px-5 py-4 text-left transition-colors hover:bg-gray-50', !n.read && 'bg-primary/5')}
                   >
                     <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', cfg.bg)}>
                       <Icon className={cn('h-4 w-4', cfg.color)} />
@@ -102,7 +111,7 @@ export function PortalNotifications() {
                       </div>
                       <p className="text-[12px] text-gray-500 mt-0.5">{n.message}</p>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>

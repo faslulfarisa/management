@@ -16,8 +16,9 @@
  */
 
 import { Injectable, Logger, NotFoundException, ConflictException, Inject, forwardRef } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { DatabaseService } from '../../../shared/database.service';
+import { SchedulerControlService } from '../../../shared/scheduler-control.service';
 import { BiometricsMetricsService } from '../../../shared/metrics/biometrics-metrics.service';
 import { DeviceSyncRecord } from '../sync/biometric-sync.types';
 import { ApprovalEngineService } from '../../approvals/services/approval-engine.service';
@@ -76,6 +77,7 @@ export class BiometricDeviceService {
     private readonly approvalEngine: ApprovalEngineService,
     @Inject(forwardRef(() => NotificationEmitterService))
     private readonly notificationEmitter: NotificationEmitterService,
+    private readonly schedulerControl: SchedulerControlService = new SchedulerControlService(),
   ) {}
 
   // ── Sync integration ──────────────────────────────────────────────────────
@@ -399,10 +401,12 @@ export class BiometricDeviceService {
    * Runs every 5 minutes via @Cron; can also be called directly with a custom
    * staleMinutes value for tests or manual ops.
    */
-  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'device-stale-sweep' })
+  @Cron('43 */5 * * * *', { name: 'device-stale-sweep' })
   async sweepStaleDevices(
     staleMinutes: number = STALE_THRESHOLD_MINUTES,
   ): Promise<{ markedOffline: number }> {
+    if (!this.schedulerControl.isEnabled('device-stale-sweep')) return { markedOffline: 0 };
+
     const { rows } = await this.db.query(
       `UPDATE biometric_devices
        SET is_online = false, updated_at = NOW()
@@ -451,7 +455,7 @@ export class BiometricDeviceService {
           type: 'critical',
           priority: 'high',
           sourceModule: 'system',
-          actionUrl: '/dashboard/automation?tab=system-alerts',
+          actionUrl: '/dashboard/notifications?tab=system-alerts',
           entityType: 'biometric_device',
           entityId: device.id,
           branchId: device.branch_id || undefined,

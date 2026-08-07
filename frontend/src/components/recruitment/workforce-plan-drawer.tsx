@@ -26,10 +26,12 @@ export function WorkforcePlanDrawer({ plan, onClose, onSaved }: { plan?: Workfor
     api.get('/positions', { params: { limit: 200 } }).then((r) => setPositions(r.data.data));
   }, []);
 
-  const addRow = () => setBreakdown((b) => [...b, { current_headcount: 0, budgeted_headcount: 0, planned_hires: 0, budget_amount: 0 }]);
+  const addRow = () => setBreakdown((b) => [...b, {}]);
   const updateRow = (idx: number, patch: Partial<WorkforcePlanBreakdownItem>) =>
     setBreakdown((b) => b.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
   const removeRow = (idx: number) => setBreakdown((b) => b.filter((_, i) => i !== idx));
+  const optionalInt = (value: string) => (value === '' ? undefined : parseInt(value, 10) || 0);
+  const optionalNumber = (value: string) => (value === '' ? undefined : parseFloat(value) || 0);
 
   const save = async () => {
     if (!form.title.trim()) { setError('Title is required'); return; }
@@ -104,19 +106,19 @@ export function WorkforcePlanDrawer({ plan, onClose, onSaved }: { plan?: Workfor
                   <div className="grid grid-cols-4 gap-2">
                     <div>
                       <label className="text-[10px] text-muted-foreground block mb-0.5">Current HC</label>
-                      <input type="number" value={row.current_headcount ?? 0} onChange={(e) => updateRow(i, { current_headcount: parseInt(e.target.value, 10) || 0 })} className="w-full border border-border rounded-lg px-2 py-1.5 text-sm" />
+                      <input type="number" value={row.current_headcount ?? ''} onChange={(e) => updateRow(i, { current_headcount: optionalInt(e.target.value) })} className="w-full border border-border rounded-lg px-2 py-1.5 text-sm" />
                     </div>
                     <div>
                       <label className="text-[10px] text-muted-foreground block mb-0.5">Budgeted HC</label>
-                      <input type="number" value={row.budgeted_headcount ?? 0} onChange={(e) => updateRow(i, { budgeted_headcount: parseInt(e.target.value, 10) || 0 })} className="w-full border border-border rounded-lg px-2 py-1.5 text-sm" />
+                      <input type="number" value={row.budgeted_headcount ?? ''} onChange={(e) => updateRow(i, { budgeted_headcount: optionalInt(e.target.value) })} className="w-full border border-border rounded-lg px-2 py-1.5 text-sm" />
                     </div>
                     <div>
                       <label className="text-[10px] text-muted-foreground block mb-0.5">Planned Hires</label>
-                      <input type="number" value={row.planned_hires ?? 0} onChange={(e) => updateRow(i, { planned_hires: parseInt(e.target.value, 10) || 0 })} className="w-full border border-border rounded-lg px-2 py-1.5 text-sm" />
+                      <input type="number" value={row.planned_hires ?? ''} onChange={(e) => updateRow(i, { planned_hires: optionalInt(e.target.value) })} className="w-full border border-border rounded-lg px-2 py-1.5 text-sm" />
                     </div>
                     <div>
                       <label className="text-[10px] text-muted-foreground block mb-0.5">Budget Amount</label>
-                      <input type="number" value={row.budget_amount ?? 0} onChange={(e) => updateRow(i, { budget_amount: parseFloat(e.target.value) || 0 })} className="w-full border border-border rounded-lg px-2 py-1.5 text-sm" />
+                      <input type="number" value={row.budget_amount ?? ''} onChange={(e) => updateRow(i, { budget_amount: optionalNumber(e.target.value) })} className="w-full border border-border rounded-lg px-2 py-1.5 text-sm" />
                     </div>
                   </div>
                   <div className="flex gap-2">

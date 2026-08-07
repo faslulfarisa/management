@@ -12,6 +12,9 @@ import { SummaryStats } from '@/components/attendance/summary-stats';
 import { DailyAttendanceGrid } from '@/components/attendance/daily-attendance-grid';
 import { WeeklySummary } from '@/components/attendance/weekly-summary';
 import { RequestModal } from '@/components/attendance/request-modal';
+import { ExportButton } from '@/components/export';
+import { ImportButton } from '@/components/import';
+import { PERMISSIONS } from '@/lib/permissions';
 
 export default function AttendancePage() {
   const [records, setRecords] = useState<any[]>([]);
@@ -187,10 +190,44 @@ export default function AttendancePage() {
           <h1 className="text-3xl font-bold text-slate-900">Attendance</h1>
           <p className="text-slate-600 mt-1">Track and manage employee attendance records</p>
         </div>
-        <Button onClick={() => setShowBulkDrawer(true)} className="gap-2">
-          <Upload className="w-4 h-4" />
-          Bulk Import
-        </Button>
+        <div className="flex gap-2">
+          <ExportButton
+            config={{
+              module: 'attendance',
+              title: 'Attendance Records',
+              permission: PERMISSIONS.ATTENDANCE_EXPORT,
+              columns: [
+                { key: 'employee_code', header: 'Employee Code' },
+                { key: 'employee_name', header: 'Employee Name' },
+                { key: 'branch_name', header: 'Branch' },
+                { key: 'department_name', header: 'Department' },
+                { key: 'date', header: 'Date', type: 'date' },
+                { key: 'status', header: 'Status' },
+                { key: 'clock_in', header: 'Clock In' },
+                { key: 'clock_out', header: 'Clock Out' },
+                { key: 'worked_hours', header: 'Worked Hours', type: 'number' },
+                { key: 'overtime_minutes', header: 'OT (min)', type: 'number' },
+                { key: 'late_minutes', header: 'Late (min)', type: 'number' },
+              ],
+              defaultColumns: ['employee_code', 'employee_name', 'branch_name', 'date', 'status', 'clock_in', 'clock_out'],
+              filenamePrefix: 'attendance',
+            }}
+            filters={{}}
+            currentPageData={records}
+            totalRecords={records.length > 0 ? undefined : 0} // Would use pagination meta here
+          />
+          <ImportButton
+            config={{
+              module: 'attendance',
+              title: 'Attendance Records',
+              permission: PERMISSIONS.ATTENDANCE_CREATE,
+            }}
+          />
+          <Button onClick={() => setShowBulkDrawer(true)} className="gap-2">
+            <Upload className="w-4 h-4" />
+            Bulk Import
+          </Button>
+        </div>
       </div>
 
       {/* Summary Stats */}

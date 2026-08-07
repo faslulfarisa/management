@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { DatabaseService } from '../../../shared/database.service';
+import { SchedulerControlService } from '../../../shared/scheduler-control.service';
 import { AuditLogService } from '../../platform/services/audit-log.service';
 import { ApprovalEngineService } from '../../approvals/services/approval-engine.service';
 import { NotificationEmitterService } from './notification-emitter.service';
@@ -28,6 +29,27 @@ export interface ListFilters {
   search?: string;
 }
 
+function deriveNotificationActionType(row: any): string {
+  const metadata = row?.metadata ?? {};
+  const explicit = metadata.action_type ?? metadata.actionType;
+  if (explicit) return String(explicit).toUpperCase();
+
+  const title = `${row?.title ?? ''} ${row?.message ?? ''}`.toLowerCase();
+  if (row?.type === 'approval' || title.includes('approval') || title.includes('approve')) return 'APPROVE';
+  if (title.includes('reject')) return 'REJECT';
+  if (title.includes('download') || row?.entity_type === 'payslip') return 'DOWNLOAD';
+  if (row?.action_url || row?.entity_id) return 'DETAILS';
+  return 'VIEW';
+}
+
+function withActionPayload(row: any) {
+  return {
+    ...row,
+    action_type: deriveNotificationActionType(row),
+    module: row.source_module,
+  };
+}
+
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
@@ -37,6 +59,7 @@ export class NotificationsService {
     private auditLog: AuditLogService,
     private approvalEngine: ApprovalEngineService,
     private emitter: NotificationEmitterService,
+    private schedulerControl: SchedulerControlService = new SchedulerControlService(),
   ) {}
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -111,7 +134,7 @@ export class NotificationsService {
     ]);
     const total = parseInt(countResult.rows[0].count, 10);
 
-    return { data: dataResult.rows, total, page: Number(page), limit: Number(limit) };
+    return { data: dataResult.rows.map(withActionPayload), total, page: Number(page), limit: Number(limit) };
   }
 
   async markRead(id: string, actor: NotificationActor) {
@@ -121,7 +144,7 @@ export class NotificationsService {
     );
     if (!rows.length) throw new NotFoundException('Notification not found');
     await this.auditLog.log({ tenantId: actor.tenantId, userId: actor.sub, entityType: 'notification', entityId: id, action: 'notification_read' });
-    return rows[0];
+    return withActionPayload(rows[0]);
   }
 
   async markUnread(id: string, actor: NotificationActor) {
@@ -130,7 +153,7 @@ export class NotificationsService {
       [id, actor.tenantId, actor.sub],
     );
     if (!rows.length) throw new NotFoundException('Notification not found');
-    return rows[0];
+    return withActionPayload(rows[0]);
   }
 
   async archive(id: string, actor: NotificationActor) {
@@ -140,7 +163,7 @@ export class NotificationsService {
     );
     if (!rows.length) throw new NotFoundException('Notification not found');
     await this.auditLog.log({ tenantId: actor.tenantId, userId: actor.sub, entityType: 'notification', entityId: id, action: 'notification_archived' });
-    return rows[0];
+    return withActionPayload(rows[0]);
   }
 
   async markAllRead(actor: NotificationActor) {
@@ -632,51 +655,53 @@ export class NotificationsService {
   // ─────────────────────────────────────────────────────────────────────────
 
   /** Daily sweep that warns HR/admins and the affected employee about soon-to-expire documents. */
-  @Cron(CronExpression.EVERY_DAY_AT_7AM, { name: 'document-expiry-check' })
+  @Cron('13 0 7 * * *', { name: 'document-expiry-check' })
   async checkExpiringDocuments() {
-    const { rows } = await this.db.query(
-      `SELECT ed.id, ed.tenant_id, ed.document_type, ed.name, ed.expires_at,
-              e.first_name || ' ' || e.last_name AS employee_name, e.branch_id, u.id AS user_id
-       FROM employee_documents ed
-       JOIN employees e ON e.id = ed.employee_id
-       LEFT JOIN users u ON u.employee_id = e.id AND u.deleted_at IS NULL
-       WHERE ed.deleted_at IS NULL
-         AND (ed.expires_at - CURRENT_DATE) IN (30, 7, 1, 0)`,
-    );
+    await this.schedulerControl.run('document-expiry-check', async () => {
+      const { rows } = await this.db.query(
+        `SELECT ed.id, ed.tenant_id, ed.document_type, ed.name, ed.expires_at,
+                e.first_name || ' ' || e.last_name AS employee_name, e.branch_id, u.id AS user_id
+         FROM employee_documents ed
+         JOIN employees e ON e.id = ed.employee_id
+         LEFT JOIN users u ON u.employee_id = e.id AND u.deleted_at IS NULL
+         WHERE ed.deleted_at IS NULL
+           AND (ed.expires_at - CURRENT_DATE) IN (30, 7, 1, 0)`,
+      );
 
-    for (const row of rows) {
-      const daysLeft = Math.round((new Date(row.expires_at).getTime() - Date.now()) / 86_400_000);
-      const when = daysLeft <= 0 ? 'today' : `in ${daysLeft} day(s)`;
-      const message = `${row.document_type || row.name} for ${row.employee_name} expires ${when} (${new Date(row.expires_at).toLocaleDateString()}).`;
-      const priority = daysLeft <= 1 ? 'high' : 'medium';
+      for (const row of rows) {
+        const daysLeft = Math.round((new Date(row.expires_at).getTime() - Date.now()) / 86_400_000);
+        const when = daysLeft <= 0 ? 'today' : `in ${daysLeft} day(s)`;
+        const message = `${row.document_type || row.name} for ${row.employee_name} expires ${when} (${new Date(row.expires_at).toLocaleDateString()}).`;
+        const priority = daysLeft <= 1 ? 'high' : 'medium';
 
-      await this.emitter.emit(row.tenant_id, {
-        title: 'Document Expiring',
-        message,
-        type: 'warning',
-        priority,
-        sourceModule: 'documents',
-        actionUrl: '/dashboard/automation?tab=documents-compliance',
-        entityType: 'employee_document',
-        entityId: row.id,
-        branchId: row.branch_id || undefined,
-      }).catch((err) => this.logger.warn(`Failed to emit document-expiry notification: ${err?.message}`));
-
-      if (row.user_id) {
         await this.emitter.emit(row.tenant_id, {
-          userIds: [row.user_id],
           title: 'Document Expiring',
           message,
           type: 'warning',
           priority,
           sourceModule: 'documents',
-          actionUrl: '/dashboard/profile',
+          actionUrl: '/dashboard/notifications?tab=documents-compliance',
           entityType: 'employee_document',
           entityId: row.id,
           branchId: row.branch_id || undefined,
         }).catch((err) => this.logger.warn(`Failed to emit document-expiry notification: ${err?.message}`));
+
+        if (row.user_id) {
+          await this.emitter.emit(row.tenant_id, {
+            userIds: [row.user_id],
+            title: 'Document Expiring',
+            message,
+            type: 'warning',
+            priority,
+            sourceModule: 'documents',
+            actionUrl: '/dashboard/profile',
+            entityType: 'employee_document',
+            entityId: row.id,
+            branchId: row.branch_id || undefined,
+          }).catch((err) => this.logger.warn(`Failed to emit document-expiry notification: ${err?.message}`));
+        }
       }
-    }
+    });
   }
 
   async updatePreferences(actor: NotificationActor, module: string, channels: { in_app?: boolean; email?: boolean; sms?: boolean; whatsapp?: boolean }) {

@@ -180,11 +180,11 @@ export class ShiftReportsService {
         sd.name                                             AS shift_name,
         b.name                                             AS branch,
         COUNT(*)                                           AS total_overnight,
-        COUNT(*) FILTER (WHERE ar.status = 'present')     AS present,
-        COUNT(*) FILTER (WHERE ar.status = 'late')        AS late,
+        COUNT(*) FILTER (WHERE ar.status IN ('present', 'late'))     AS present,
+        COUNT(*) FILTER (WHERE ar.status = 'late' OR ar.late_minutes > 0)        AS late,
         SUM(ar.overtime_minutes)                           AS total_ot_mins,
         ROUND(
-          COUNT(*) FILTER (WHERE ar.status = 'present') * 100.0 / NULLIF(COUNT(*), 0)::numeric, 1
+          COUNT(*) FILTER (WHERE ar.status IN ('present', 'late')) * 100.0 / NULLIF(COUNT(*), 0)::numeric, 1
         )                                                  AS attendance_pct,
         COUNT(*) OVER()                                    AS full_count
       FROM attendance_records ar
@@ -195,6 +195,45 @@ export class ShiftReportsService {
         AND ar.is_overnight = TRUE ${where}
       GROUP BY ar.date, sd.name, b.name
       ORDER BY ar.date DESC
+      LIMIT $${idx} OFFSET $${idx + 1}
+    `, [...params, limit, offset]);
+
+    return { data: rows, total: parseInt(rows[0]?.full_count ?? '0'), page, limit };
+  }
+
+  async getShiftOverrides(tenantId: string, filter: ReportFilterDto) {
+    const { branch_id, department_id, employee_id, date_from, date_to, page = 1, limit = 50 } = filter;
+    const offset = (page - 1) * limit;
+    const params: any[] = [tenantId];
+    let idx = 2;
+    let where = '';
+    if (date_from)     { where += ` AND so.date >= $${idx++}`; params.push(date_from); }
+    if (date_to)       { where += ` AND so.date <= $${idx++}`; params.push(date_to); }
+    if (branch_id)     { where += ` AND e.branch_id = $${idx++}`; params.push(branch_id); }
+    if (department_id) { where += ` AND e.department_id = $${idx++}`; params.push(department_id); }
+    if (employee_id)   { where += ` AND so.employee_id = $${idx++}`; params.push(employee_id); }
+
+    const { rows } = await this.db.query(`
+      SELECT
+        so.date,
+        e.employee_code,
+        e.first_name || ' ' || e.last_name   AS employee_name,
+        b.name                               AS branch,
+        d.name                               AS department,
+        so.override_type,
+        COALESCE(sd.name, 'Custom Hours')    AS shift_name,
+        so.start_time,
+        so.end_time,
+        sor.detailed_reason                  AS reason,
+        COUNT(*) OVER()                      AS full_count
+      FROM shift_overrides so
+      JOIN employees e          ON so.employee_id = e.id
+      LEFT JOIN shift_definitions sd ON so.shift_id = sd.id
+      LEFT JOIN shift_override_requests sor ON so.request_id = sor.id
+      LEFT JOIN branches b      ON e.branch_id = b.id
+      LEFT JOIN departments d   ON e.department_id = d.id
+      WHERE so.tenant_id = $1 ${where}
+      ORDER BY so.date DESC, e.first_name
       LIMIT $${idx} OFFSET $${idx + 1}
     `, [...params, limit, offset]);
 

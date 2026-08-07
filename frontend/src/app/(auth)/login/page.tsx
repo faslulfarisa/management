@@ -5,13 +5,13 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
 import {
   AlertCircle, Ban, CalendarOff, Eye, EyeOff, Lock, Mail, ShieldAlert, ShieldCheck,
   Sparkles, ClipboardCheck, UserX, UsersRound,
 } from 'lucide-react';
 import api from '@/lib/api';
 import { completeLogin } from '@/lib/auth/complete-login';
+import { loginSchema, type LoginFormData } from '@/lib/auth/login-validation';
 import { saveMfaPendingSession } from '@/lib/auth/mfa-pending-session';
 import { savePasswordChangePendingSession } from '@/lib/auth/password-change-pending-session';
 import { Button } from '@/components/ui/button';
@@ -19,25 +19,24 @@ import { Input } from '@/components/ui/input';
 import { AuthHeroPanel, AuthBrandMark, HeroFeature } from '@/components/auth/auth-hero-panel';
 
 const REMEMBER_KEY = 'remembered_login_email';
+const ORG_ADMIN_PORTAL_MESSAGE = 'Organization administrators must sign in through the Admin Portal.';
 
-const loginSchema = z.object({
-  email: z
-    .string()
-    .min(1, 'Email is required')
-    .email('Enter a valid email address'),
-  password: z
-    .string()
-    .min(1, 'Password is required')
-    .min(6, 'Password must be at least 6 characters'),
-});
+function extractErrorMessage(err: any): string {
+  const message = err.response?.data?.error?.message ?? err.response?.data?.message;
+  return Array.isArray(message) ? message[0] : message;
+}
 
-type LoginFormData = z.infer<typeof loginSchema>;
+function isOrgAdminPortalError(err: any): boolean {
+  const message = extractErrorMessage(err);
+  return err.response?.status === 403 && typeof message === 'string' && message.toLowerCase().includes('admin portal');
+}
 
 export default function LoginPage() {
   const router = useRouter();
   const [error, setError] = useState('');
   const [isLocked, setIsLocked] = useState(false);
   const [isDeactivated, setIsDeactivated] = useState(false);
+  const [isOrgAdminPortal, setIsOrgAdminPortal] = useState(false);
   const [deactivatedStatus, setDeactivatedStatus] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -49,13 +48,13 @@ export default function LoginPage() {
     formState: { errors },
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { email: '', password: '' },
+    defaultValues: { identifier: '', password: '' },
   });
 
   useEffect(() => {
     const remembered = typeof window !== 'undefined' ? localStorage.getItem(REMEMBER_KEY) : null;
     if (remembered) {
-      setValue('email', remembered);
+      setValue('identifier', remembered);
       setRememberMe(true);
     }
   }, [setValue]);
@@ -65,19 +64,21 @@ export default function LoginPage() {
     setError('');
     setIsLocked(false);
     setIsDeactivated(false);
+    setIsOrgAdminPortal(false);
     setDeactivatedStatus('');
     try {
-      const res = await api.post('/auth/login', { email: data.email, password: data.password, portal: 'customer' });
+      const loginIdentifier = data.identifier.trim();
+      const res = await api.post('/auth/login', { email: loginIdentifier, password: data.password, portal: 'customer' });
       const resultData = res.data.data;
 
-      if (rememberMe) localStorage.setItem(REMEMBER_KEY, data.email);
+      if (rememberMe) localStorage.setItem(REMEMBER_KEY, loginIdentifier);
       else localStorage.removeItem(REMEMBER_KEY);
 
       // Accounts flagged must_change_password (e.g. bulk-imported) never get a
       // token on this request — stash the pending session and force a password
       // change before they can reach the dashboard.
       if (resultData.requiresPasswordChange) {
-        savePasswordChangePendingSession(resultData.changeSessionId, data.email, resultData.expiresIn);
+        savePasswordChangePendingSession(resultData.changeSessionId, loginIdentifier, resultData.expiresIn);
         router.push('/change-password');
         return;
       }
@@ -85,17 +86,18 @@ export default function LoginPage() {
       // MFA-enabled accounts never get a token on this request — stash the
       // pending session and send the user to the verification screen instead.
       if (resultData.requiresMfa) {
-        saveMfaPendingSession(resultData.loginSessionId, data.email, resultData.expiresIn);
+        saveMfaPendingSession(resultData.loginSessionId, loginIdentifier, resultData.expiresIn);
         router.push('/mfa-verify');
         return;
       }
 
-      await completeLogin(resultData, data.email, router);
+      await completeLogin(resultData, loginIdentifier, router);
     } catch (err: any) {
       setIsLocked(err.response?.status === 423);
       setIsDeactivated(err.response?.data?.error === 'AccountDeactivated');
+      setIsOrgAdminPortal(isOrgAdminPortalError(err));
       setDeactivatedStatus(err.response?.data?.status ?? '');
-      setError(err.response?.data?.error?.message ?? err.response?.data?.message ?? 'Login failed');
+      setError(isOrgAdminPortalError(err) ? ORG_ADMIN_PORTAL_MESSAGE : extractErrorMessage(err) ?? 'Login failed');
     } finally {
       setLoading(false);
     }
@@ -115,7 +117,7 @@ export default function LoginPage() {
         <div className="space-y-4">
           <HeroFeature icon={<ShieldCheck className="h-5 w-5" />} title="Enterprise-grade security" desc="Role-based access, audit trails, and SSO-ready." />
           <HeroFeature icon={<UsersRound className="h-5 w-5" />} title="Real-time workforce insights" desc="Headcount, attendance, and payroll at a glance." />
-          <HeroFeature icon={<ClipboardCheck className="h-5 w-5" />} title="AI-assisted automation" desc="Smart rosters, anomaly detection, and reporting." />
+          <HeroFeature icon={<ClipboardCheck className="h-5 w-5" />} title="AI-assisted workflows" desc="Smart rosters, anomaly detection, and reporting." />
         </div>
       </AuthHeroPanel>
 
@@ -130,8 +132,7 @@ export default function LoginPage() {
           <div className="mb-8">
             <h2 className="text-3xl font-bold tracking-tight text-foreground">Welcome back</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              Sign in to your workspace to continue.{' '}
-              <Link href="/register" className="font-medium text-primary hover:underline">Register your organization</Link>
+              Sign in to your workspace to continue.
             </p>
           </div>
 
@@ -145,25 +146,32 @@ export default function LoginPage() {
                 ) : (
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                 )}
-                <span>{error}</span>
+                <span className="flex-1">
+                  {error}
+                  {isOrgAdminPortal && (
+                    <Link href="/admin-login" className="ml-1 font-semibold underline underline-offset-2">
+                      Go to Admin Portal
+                    </Link>
+                  )}
+                </span>
               </div>
             )}
 
             <div className="space-y-2">
-              <label htmlFor="email" className="text-sm font-medium text-foreground">Email Address</label>
+              <label htmlFor="identifier" className="text-sm font-medium text-foreground">Email or username</label>
               <div className="relative">
                 <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  id="email"
-                  type="email"
+                  id="identifier"
+                  type="text"
                   placeholder="you@company.com"
-                  className={`pl-10 h-11 ${errors.email ? 'border-destructive focus-visible:ring-destructive' : ''}`}
-                  autoComplete="email"
-                  {...register('email')}
+                  className={`pl-10 h-11 ${errors.identifier ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                  autoComplete="username"
+                  {...register('identifier')}
                 />
               </div>
-              {errors.email && (
-                <p className="text-xs text-destructive">{errors.email.message}</p>
+              {errors.identifier && (
+                <p className="text-xs text-destructive">{errors.identifier.message}</p>
               )}
             </div>
 

@@ -13,9 +13,11 @@ import {
   Calendar, ArrowRight,
 } from 'lucide-react';
 import Link from 'next/link';
-import { cn } from '@/lib/utils';
+import { cn, formatCurrency } from '@/lib/utils';
+import { formatLeaveDays, getApprovedLeaveDaysInCurrentMonth } from '@/lib/leave-stats';
 import { PunchOutReasonModal } from '@/components/employee/home/punch-out-reason-modal';
 import { ActiveBreakBanner } from '@/components/employee/home/active-break-banner';
+import { useEmployeeAttendanceStats } from '@/hooks/use-employee-attendance-stats';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -26,6 +28,16 @@ function fmtTime(t: string | null | undefined) {
 
 function fmtShiftTime(t: string) {
   try { return format(parseISO(`1970-01-01T${t}`), 'hh:mm a'); } catch { return t; }
+}
+
+function formatDecimalHours(decimalHours: number) {
+  if (!decimalHours) return '0h';
+  const h = Math.floor(decimalHours);
+  const m = Math.round((decimalHours - h) * 60);
+  if (h === 0 && m === 0) return '0h';
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
 }
 
 function shiftDayLabel(dateStr: string) {
@@ -86,16 +98,10 @@ function KPIStrip() {
     staleTime: 30_000,
   });
 
-  const { data: summary } = useQuery({
-    queryKey: ['employee-attendance-summary', month, year],
-    queryFn: () => employeeApi.getAttendanceSummary(month, year),
+  const { data: leaveHistory } = useQuery({
+    queryKey: ['employee-leave-history', 'dashboard'],
+    queryFn: () => employeeApi.getLeaveHistory({ limit: 100 }),
     staleTime: 5 * 60_000,
-  });
-
-  const { data: balances } = useQuery({
-    queryKey: ['employee-leave-balances'],
-    queryFn: () => employeeApi.getLeaveBalances(),
-    staleTime: 10 * 60_000,
   });
 
   const { data: pendingData } = useQuery({
@@ -105,11 +111,10 @@ function KPIStrip() {
     retry: false,
   });
 
+  const { summary, pct: attendancePct } = useEmployeeAttendanceStats(month, year);
+
   const todayStatus  = today?.status;
-  const totalLeave   = balances?.reduce((s, b) => s + b.available, 0) ?? 0;
-  const presentDays  = summary?.present ?? 0;
-  const totalWD      = summary?.total_working_days ?? 0;
-  const attendancePct = totalWD > 0 ? Math.round((presentDays / totalWD) * 100) : null;
+  const leaveTakenThisMonth = getApprovedLeaveDaysInCurrentMonth(leaveHistory?.data);
   const pendingCount = pendingData?.total ?? 0;
 
   const todayStatusCfg = todayStatus ? statusMap[todayStatus] : null;
@@ -124,15 +129,15 @@ function KPIStrip() {
     },
     {
       label: 'This Month',
-      value: totalWD > 0 ? `${presentDays} / ${totalWD}` : '—',
+      value: summary?.total_work_hours != null ? formatDecimalHours(summary.total_work_hours) : '0h',
       sub: attendancePct != null ? `${attendancePct}% attendance` : 'No data yet',
       dotColor: 'bg-primary',
       href: '/attendance',
     },
     {
-      label: 'Leave Balance',
-      value: `${totalLeave}d`,
-      sub: `Across ${balances?.length ?? 0} leave type${balances?.length !== 1 ? 's' : ''}`,
+      label: 'Leave Taken',
+      value: `${formatLeaveDays(leaveTakenThisMonth)}d`,
+      sub: 'Approved this month',
       dotColor: 'bg-emerald-500',
       href: '/leave',
     },
@@ -180,6 +185,12 @@ function TodayPanel() {
     queryKey: ['employee-today-shift'],
     queryFn: () => employeeApi.getTodayShift(),
     staleTime: 5 * 60_000,
+  });
+
+  const { data: breaksData } = useQuery({
+    queryKey: ['employee-today-breaks'],
+    queryFn: () => employeeApi.getTodayBreaks(),
+    staleTime: 30_000,
   });
 
   const punch = useMutation({
@@ -295,6 +306,7 @@ function TodayPanel() {
         onOpenChange={setReasonModalOpen}
         onConfirm={(reason_code, note) => punch.mutate({ type: 'out', reason_code, note })}
         isSubmitting={punch.isPending}
+        breakTypes={breaksData?.policy?.break_types}
       />
     </Card>
   );
@@ -307,11 +319,7 @@ function MonthPanel() {
   const month = now.getMonth() + 1;
   const year  = now.getFullYear();
 
-  const { data: summary, isLoading: loadingSummary } = useQuery({
-    queryKey: ['employee-attendance-summary', month, year],
-    queryFn: () => employeeApi.getAttendanceSummary(month, year),
-    staleTime: 5 * 60_000,
-  });
+  const { summary, pct, isLoading: loadingSummary } = useEmployeeAttendanceStats(month, year);
 
   const { data: history, isLoading: loadingHistory } = useQuery({
     queryKey: ['employee-attendance-history', 'recent', 6],
@@ -320,8 +328,6 @@ function MonthPanel() {
   });
 
   const records = history?.data?.slice(0, 5) ?? [];
-  const pct = summary && summary.total_working_days > 0
-    ? Math.round((summary.present / summary.total_working_days) * 100) : 0;
 
   return (
     <Card>
@@ -376,13 +382,14 @@ function MonthPanel() {
           <div className="space-y-0 border-t border-gray-100 pt-3">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Recent</p>
             {records.map((r) => {
-              const s = statusMap[r.status];
+              const computedStatus = r.late_minutes && r.late_minutes > 0 && r.status === 'present' ? 'late' : r.status;
+              const s = statusMap[computedStatus];
               return (
                 <div key={r.id} className="flex items-center gap-2 py-1.5">
                   <div className={cn('h-1.5 w-1.5 rounded-full shrink-0', s?.dot ?? 'bg-gray-300')} />
                   <p className="text-[12px] text-gray-600 flex-1">{format(parseISO(r.date), 'EEE, d MMM')}</p>
-                  <p className={cn('text-[11px] font-medium', s ? (r.status === 'present' ? 'text-emerald-600' : r.status === 'late' ? 'text-amber-600' : 'text-red-600') : 'text-gray-400')}>
-                    {s?.label ?? r.status}
+                  <p className={cn('text-[11px] font-medium', s ? (computedStatus === 'present' ? 'text-emerald-600' : computedStatus === 'late' ? 'text-amber-600' : 'text-red-600') : 'text-gray-400')}>
+                    {s?.label ?? computedStatus}
                   </p>
                   <p className="text-[11px] text-gray-400 w-24 text-right shrink-0">
                     {r.clock_in ? format(parseISO(r.clock_in), 'hh:mm a') : '—'}
@@ -543,7 +550,7 @@ function PayrollPanel() {
                 <p className="text-[11px] text-gray-400">
                   Net:{' '}
                   <span className="font-semibold text-gray-700">
-                    {p.net_salary.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}
+                    {formatCurrency(p.net_salary)}
                   </span>
                 </p>
               </div>

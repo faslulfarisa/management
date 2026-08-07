@@ -63,9 +63,10 @@ export class BulkInitiatePaymentsDto {
 }
 
 export class MarkManualPaidDto {
-  @ApiProperty({ description: 'UTR number, cheque number, receipt ID, or any reference' })
+  @ApiPropertyOptional({ description: 'UTR number, cheque number, receipt ID, or any reference. Optional for cash payments.' })
+  @IsOptional()
   @IsString()
-  transaction_reference: string;
+  transaction_reference?: string;
 
   @ApiProperty({ description: 'Date the payment was actually made (ISO 8601 date)', example: '2026-06-01' })
   @IsDateString()

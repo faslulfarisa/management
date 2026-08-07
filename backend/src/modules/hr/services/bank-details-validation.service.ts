@@ -37,7 +37,7 @@ export class BankDetailsValidationService {
         e.id            AS employee_id,
         e.employee_code,
         e.first_name || ' ' || e.last_name AS name,
-        e.work_email    AS email,
+        e.personal_email AS email,
         e.branch_id,
         ps.net_salary,
         eba.id          AS bank_account_id,
@@ -89,7 +89,7 @@ export class BankDetailsValidationService {
       if (!row.bank_account_id) {
         status.issue = 'missing_bank_account';
         missing.push(status);
-      } else if (row.verification_status === 'unverified') {
+      } else if (row.verification_status !== 'verified') {
         status.issue = 'unverified_account';
         incomplete.push(status);
       } else {
@@ -110,7 +110,7 @@ export class BankDetailsValidationService {
         e.id            AS employee_id,
         e.employee_code,
         e.first_name || ' ' || e.last_name AS name,
-        e.work_email    AS email,
+        e.personal_email AS email,
         e.branch_id,
         eba.id          AS bank_account_id,
         eba.bank_name,
@@ -149,7 +149,7 @@ export class BankDetailsValidationService {
     const masked = row.account_number_enc ? this.maskLast4(row.account_number_enc) : null;
     let issue: EmployeeBankStatus['issue'] = null;
     if (!row.bank_account_id) issue = 'missing_bank_account';
-    else if (row.verification_status === 'unverified') issue = 'unverified_account';
+    else if (row.verification_status !== 'verified') issue = 'unverified_account';
 
     return {
       employee_id: row.employee_id,

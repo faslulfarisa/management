@@ -33,10 +33,25 @@ export interface EmployeeAttendanceRecord {
   source?: string;
 }
 
+export interface EmployeeHoliday {
+  name: string;
+  date: string;
+  type: string;
+  description?: string;
+  recurring_yearly?: boolean;
+  half_day?: boolean;
+  optional_holiday?: boolean;
+  restricted_holiday?: boolean;
+  paid_holiday?: boolean;
+  color_label?: string;
+  template_id?: string;
+  template_name?: string;
+}
+
 export interface CurrentBreakSession {
   id: string;
   break_code: string;
-  category: 'temporary_break' | 'official_outside' | 'emergency';
+  category: string;
   reason_label: string;
   note: string | null;
   started_at: string;
@@ -47,7 +62,7 @@ export interface CurrentBreakSession {
 export interface BreakSession {
   id: string;
   break_code: string;
-  category: 'temporary_break' | 'official_outside' | 'emergency';
+  category: string;
   reason_label: string;
   note: string | null;
   status: 'active' | 'completed';
@@ -63,11 +78,49 @@ export interface BreakSession {
 export interface BreakLimit {
   allowed_minutes: number | null;
   paid: boolean;
+  name?: string;
+  category?: string;
+  active?: boolean;
+  visible_to_employees?: boolean;
+  max_uses_per_day?: number | null;
+  max_total_minutes_per_day?: number | null;
+  remaining_uses?: number | null;
+  remaining_minutes?: number | null;
+  current_daily_usage_minutes?: number;
+}
+
+export interface BreakPolicyType {
+  name: string;
+  code: string;
+  category: string;
+  allowed_minutes: number | null;
+  paid: boolean;
+  max_uses_per_day?: number | null;
+  max_total_minutes_per_day?: number | null;
+  allow_extension?: boolean;
+  max_extension_minutes?: number | null;
+  requires_employee_reason?: boolean;
+  requires_manager_approval?: boolean;
+  requires_hr_approval?: boolean;
+  allow_early_return?: boolean;
+  allow_multiple_sessions?: boolean;
+  visible_to_employees?: boolean;
+  active?: boolean;
+  color?: string | null;
+  icon?: string | null;
+  sort_order?: number;
+}
+
+export interface BreakPolicySummary {
+  template_id: string | null;
+  template_name: string | null;
+  break_types: BreakPolicyType[];
 }
 
 export interface BreakSessionSummary {
   breaks: BreakSession[];
   limits: Record<string, BreakLimit>;
+  policy?: BreakPolicySummary;
 }
 
 export interface EmployeeTodayAttendance {
@@ -142,6 +195,7 @@ export interface EmployeeShift {
 }
 
 export interface TodayShift {
+  shift_id?: string;
   shift_name: string;
   shift_code?: string;
   start_time: string;
@@ -165,6 +219,7 @@ export interface AttendanceMonthlySummary {
   late: number;
   half_day: number;
   total_working_days: number;
+  total_work_hours?: number;
   overtime_hours: number;
 }
 
@@ -249,6 +304,12 @@ export interface EnrichedPayslipDetail {
     payslip_number: string;
   };
 
+  currency: {
+    code: string;
+    symbol: string;
+    exchange_rate: string | null;
+  };
+
   earnings: Array<{ label: string; amount: number }>;
   deductions: Array<{ label: string; amount: number }>;
   fines: PayslipFine[];
@@ -277,4 +338,8 @@ export interface EnrichedPayslipDetail {
     payment_date: string | null;
     paid_at: string | null;
   } | null;
+  pay_basis?: string | null;
+  rate?: number | null;
+  worked_units?: number | null;
+  calculation_method?: string | null;
 }

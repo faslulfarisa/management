@@ -16,6 +16,7 @@ import { REDIS_CLIENT } from './redis.provider';
 export class PermissionsCacheService {
   private readonly logger = new Logger(PermissionsCacheService.name);
   private readonly ttl = parseInt(process.env.PERMISSIONS_CACHE_TTL_SECONDS ?? '60', 10);
+  private readonly operationTimeoutMs = parseInt(process.env.PERMISSIONS_CACHE_TIMEOUT_MS ?? '250', 10);
 
   constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
 
@@ -46,7 +47,10 @@ export class PermissionsCacheService {
   /** Call after any change to this user's role/position assignments. */
   async invalidateUser(tenantId: string, userId: string): Promise<void> {
     try {
-      await this.redis.del(this.roleKey(tenantId, userId), this.positionKey(tenantId, userId));
+      if (!this.isRedisReady()) return;
+      await this.withTimeout(
+        this.redis.del(this.roleKey(tenantId, userId), this.positionKey(tenantId, userId)),
+      );
     } catch (e) {
       this.logger.warn(`Redis invalidation failed for user ${userId}`);
     }
@@ -56,7 +60,8 @@ export class PermissionsCacheService {
   async invalidateRoleForUsers(tenantId: string, userIds: string[]): Promise<void> {
     if (!userIds.length) return;
     try {
-      await this.redis.del(...userIds.map(id => this.roleKey(tenantId, id)));
+      if (!this.isRedisReady()) return;
+      await this.withTimeout(this.redis.del(...userIds.map(id => this.roleKey(tenantId, id))));
     } catch (e) {
       this.logger.warn('Redis invalidation failed for role permission change');
     }
@@ -66,7 +71,8 @@ export class PermissionsCacheService {
   async invalidatePositionForUsers(tenantId: string, userIds: string[]): Promise<void> {
     if (!userIds.length) return;
     try {
-      await this.redis.del(...userIds.map(id => this.positionKey(tenantId, id)));
+      if (!this.isRedisReady()) return;
+      await this.withTimeout(this.redis.del(...userIds.map(id => this.positionKey(tenantId, id))));
     } catch (e) {
       this.logger.warn('Redis invalidation failed for position permission change');
     }
@@ -74,8 +80,10 @@ export class PermissionsCacheService {
 
   private async getOrLoad(key: string, loader: () => Promise<string[]>): Promise<string[]> {
     try {
-      const cached = await this.redis.get(key);
-      if (cached) return JSON.parse(cached) as string[];
+      if (this.isRedisReady()) {
+        const cached = await this.withTimeout(this.redis.get(key));
+        if (cached) return JSON.parse(cached) as string[];
+      }
     } catch (e) {
       this.logger.warn(`Redis get failed for key ${key}, falling back to DB`);
     }
@@ -83,11 +91,35 @@ export class PermissionsCacheService {
     const value = await loader();
 
     try {
-      await this.redis.setex(key, this.ttl, JSON.stringify(value));
+      if (this.isRedisReady()) {
+        await this.withTimeout(this.redis.setex(key, this.ttl, JSON.stringify(value)));
+      }
     } catch (e) {
       // Cache write failure is non-fatal
     }
 
     return value;
+  }
+
+  private async withTimeout<T>(operation: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`Redis cache operation timed out after ${this.operationTimeoutMs}ms`)),
+            this.operationTimeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private isRedisReady(): boolean {
+    const status = (this.redis as Redis & { status?: string }).status;
+    return !status || status === 'ready';
   }
 }

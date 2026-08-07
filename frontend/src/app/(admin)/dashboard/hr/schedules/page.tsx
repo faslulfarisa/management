@@ -69,6 +69,26 @@ const TEMPLATE_CATEGORIES = [
   },
 ];
 
+const getCategoryRoute = (key: string) => {
+  switch (key) {
+    case 'attendance_policy':
+      return '/dashboard/templates/attendance-policy';
+    case 'leave_policy':
+      return '/dashboard/templates/leave-policy';
+    case 'salary_structure':
+      return '/dashboard/templates/salary-structure';
+    case 'overtime_policy':
+      return '/dashboard/templates/overtime-policy';
+    case 'shift_management':
+      return '/dashboard/templates/shifts';
+    case 'holiday_policy':
+      return '/dashboard/templates/holiday-policy';
+    default:
+      return '/dashboard/templates';
+  }
+};
+
+
 const SCOPE_LABELS: Record<string, string> = {
   employee: 'Employee', designation: 'Designation', department: 'Department', property: 'Branch',
 };
@@ -296,7 +316,7 @@ function AssignDrawer({
                 ) : templates.length === 0 ? (
                   <div className="text-center py-8 text-sm text-muted-foreground border border-dashed rounded-xl">
                     No templates found.{' '}
-                    <Link href="/dashboard/platform/templates" className="text-primary underline">Create one</Link>
+                    <Link href={getCategoryRoute(categoryKey)} className="text-primary underline">Create one</Link>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -967,7 +987,7 @@ export default function SchedulesPage() {
                             <Plus className="w-3.5 h-3.5" /> Assign
                           </button>
                           <Link
-                            href="/dashboard/platform/templates"
+                            href={getCategoryRoute(cat.key)}
                             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-border hover:bg-muted transition-colors ${cat.textColor}`}
                           >
                             <Settings2 className="w-3.5 h-3.5" />

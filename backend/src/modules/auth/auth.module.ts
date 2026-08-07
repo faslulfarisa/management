@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
+import { AccountProfileService } from './account-profile.service';
 import { AuthController } from './auth.controller';
 import { EmailService } from './email.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
@@ -14,6 +15,7 @@ import { OrgAdminGuard } from './guards/org-admin.guard';
 import { ActiveOrgGuard } from './guards/active-org.guard';
 import { HierarchyGuard } from './guards/hierarchy.guard';
 import { PermissionGuard } from './guards/permission.guard';
+import { FeatureAvailabilityGuard } from './guards/feature-availability.guard';
 import { InternalStaffGuard } from './guards/internal-staff.guard';
 import { OpsPermissionGuard } from './guards/ops-permission.guard';
 import { PlatformModule } from '../platform/platform.module';
@@ -41,7 +43,7 @@ import { NotificationEmitterService } from '../notifications/services/notificati
   // (global, via SharedModule) and an optional ApprovalGateway for realtime
   // push, so a second DI instance here is harmless — it just won't push
   // over the websocket gateway for auth-originated notifications.
-  providers: [AuthService, EmailService, LocalStrategy, JwtStrategy, JwtAuthGuard, ApiKeyOrJwtGuard, SuperAdminGuard, OrgAdminGuard, ActiveOrgGuard, HierarchyGuard, PermissionGuard, InternalStaffGuard, OpsPermissionGuard, NotificationEmitterService],
-  exports: [AuthService, EmailService, JwtAuthGuard, ApiKeyOrJwtGuard, JwtModule, SuperAdminGuard, OrgAdminGuard, ActiveOrgGuard, HierarchyGuard, PermissionGuard, InternalStaffGuard, OpsPermissionGuard],
+  providers: [AuthService, AccountProfileService, EmailService, LocalStrategy, JwtStrategy, JwtAuthGuard, ApiKeyOrJwtGuard, SuperAdminGuard, OrgAdminGuard, ActiveOrgGuard, HierarchyGuard, PermissionGuard, FeatureAvailabilityGuard, InternalStaffGuard, OpsPermissionGuard, NotificationEmitterService],
+  exports: [AuthService, EmailService, JwtAuthGuard, ApiKeyOrJwtGuard, JwtModule, SuperAdminGuard, OrgAdminGuard, ActiveOrgGuard, HierarchyGuard, PermissionGuard, FeatureAvailabilityGuard, InternalStaffGuard, OpsPermissionGuard],
 })
 export class AuthModule {}

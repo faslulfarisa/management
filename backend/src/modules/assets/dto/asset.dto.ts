@@ -18,8 +18,16 @@ export class CreateAssetItemDto {
 }
 
 export class AssignAssetDto {
-  @IsString() asset_item_id!: string;
+  @IsOptional() @IsString() asset_item_id?: string;
+  @IsOptional() @IsString() item_name?: string;
   @IsString() employee_id!: string;
+  @IsOptional() @IsDateString() expected_return_date?: string;
+  @IsOptional() @IsString() notes?: string;
+}
+
+export class UpdateAssignmentDto {
+  @IsOptional() @IsString() item_name?: string;
+  @IsOptional() @IsString() employee_id?: string;
   @IsOptional() @IsDateString() expected_return_date?: string;
   @IsOptional() @IsString() notes?: string;
 }

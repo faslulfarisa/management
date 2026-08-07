@@ -70,4 +70,8 @@ export class VerifyBankAccountDto {
   @IsString()
   @IsOptional()
   verification_notes?: string;
+
+  @IsString()
+  @IsOptional()
+  notes?: string;
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 import {
   startOfWeek,
   endOfWeek,
@@ -95,6 +95,38 @@ function NativeSelect({
   );
 }
 
+function FormattedDateInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  // Convert "yyyy-mm-dd" to "dd-mm-yyyy"
+  const displayValue = value
+    ? value.split('-').reverse().join('-')
+    : '';
+
+  return (
+    <div className="relative inline-block">
+      {/* Visual Text Layer */}
+      <div className="border border-border rounded-xl px-3 py-1.5 text-sm bg-white text-foreground flex items-center justify-between min-w-[130px] h-[34px] cursor-pointer shadow-sm hover:border-primary/40 transition-all">
+        <span className={cn(!displayValue && "text-muted-foreground")}>
+          {displayValue || 'DD-MM-YYYY'}
+        </span>
+        <Calendar className="w-3.5 h-3.5 text-muted-foreground ml-2" />
+      </div>
+      {/* Invisible Native Input on top */}
+      <input
+        type="date"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+      />
+    </div>
+  );
+}
+
 export function ReportFilters({ value, onChange, fields, options = {}, onReset }: ReportFiltersProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [dateMode, setDateMode] = useState<'preset' | 'custom'>('preset');
@@ -149,18 +181,14 @@ export function ReportFilters({ value, onChange, fields, options = {}, onReset }
               {/* Custom date inputs */}
               {dateMode === 'custom' && (
                 <div className="flex items-center gap-2">
-                  <input
-                    type="date"
+                  <FormattedDateInput
                     value={value.date_from ?? ''}
-                    onChange={e => set({ date_from: e.target.value })}
-                    className="border border-border rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    onChange={v => set({ date_from: v })}
                   />
                   <span className="text-xs text-muted-foreground">to</span>
-                  <input
-                    type="date"
+                  <FormattedDateInput
                     value={value.date_to ?? ''}
-                    onChange={e => set({ date_to: e.target.value })}
-                    className="border border-border rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    onChange={v => set({ date_to: v })}
                   />
                 </div>
               )}

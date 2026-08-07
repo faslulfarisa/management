@@ -27,6 +27,7 @@ const schema = z.object({
   amount: z.coerce.number().positive('Amount must be greater than 0'),
   date: z.string().min(1, 'Date is required'),
   description: z.string().min(5, 'Please describe the expense'),
+  priority: z.enum(['low', 'normal', 'high']).optional(),
 });
 
 type FormData = z.infer<typeof schema>;
@@ -44,7 +45,7 @@ export function ExpenseSheet({ open, onClose }: ExpenseSheetProps) {
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { category: '', amount: undefined, date: today, description: '' },
+    defaultValues: { category: '', amount: undefined, date: today, description: '', priority: 'normal' },
   });
 
   const submit = useMutation({
@@ -91,7 +92,7 @@ export function ExpenseSheet({ open, onClose }: ExpenseSheetProps) {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Amount (PKR)</label>
+                <label className="text-sm font-medium text-foreground">Amount</label>
                 <Input
                   type="number"
                   min="1"
@@ -107,6 +108,18 @@ export function ExpenseSheet({ open, onClose }: ExpenseSheetProps) {
                 <Input type="date" {...register('date')} className="h-11" />
                 {errors.date && <p className="text-xs text-destructive">{errors.date.message}</p>}
               </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Priority</label>
+              <select
+                {...register('priority')}
+                className="w-full h-11 px-3 text-sm rounded-lg border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="low">Low</option>
+                <option value="normal">Medium</option>
+                <option value="high">High</option>
+              </select>
             </div>
 
             <div className="space-y-1.5">

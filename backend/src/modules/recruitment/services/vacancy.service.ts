@@ -3,6 +3,7 @@ import { DatabaseService } from '../../../shared/database.service';
 import { AccessScope, branchScopeClause } from '../../../shared/scope.util';
 import { NotificationEmitterService } from '../../notifications/services/notification-emitter.service';
 import { CreateVacancyDto, UpdateVacancyDto } from '../dto/vacancy.dto';
+import { CurrencyService } from '../../../shared/currency.service';
 
 const EDITABLE_STATUSES = ['draft', 'rejected'];
 
@@ -52,7 +53,11 @@ export interface VacancyFilters {
 
 @Injectable()
 export class VacancyService {
-  constructor(private db: DatabaseService, private notifications: NotificationEmitterService) {}
+  constructor(
+    private db: DatabaseService,
+    private notifications: NotificationEmitterService,
+    private currencyService: CurrencyService,
+  ) {}
 
   async list(tenantId: string, accessScope: AccessScope | undefined, filters: VacancyFilters) {
     const {
@@ -106,6 +111,7 @@ export class VacancyService {
   }
 
   async create(tenantId: string, createdById: string, dto: CreateVacancyDto) {
+    const currency = await this.currencyService.getTenantCurrencySnapshot(tenantId, dto.currency);
     const { rows } = await this.db.query(
       `INSERT INTO vacancies (
         tenant_id, branch_id, department_id, position_id, title,
@@ -120,7 +126,7 @@ export class VacancyService {
         tenantId, dto.branch_id ?? null, dto.department_id ?? null, dto.position_id ?? null, dto.title,
         dto.hiring_manager_id ?? null, dto.recruiter_id ?? null, dto.reporting_manager_id ?? null, dto.employment_type_id ?? null,
         dto.experience_min_years ?? null, dto.experience_max_years ?? null, dto.qualification ?? null,
-        dto.salary_min ?? null, dto.salary_max ?? null, dto.currency ?? 'INR', dto.number_of_positions ?? 1,
+        dto.salary_min ?? null, dto.salary_max ?? null, currency.currencyCode, dto.number_of_positions ?? 1,
         dto.target_start_date ?? null, dto.target_close_date ?? null, dto.description ?? null, dto.justification ?? null,
         createdById,
       ],
@@ -133,6 +139,10 @@ export class VacancyService {
     if (!EDITABLE_STATUSES.includes(existing.status)) {
       throw new BadRequestException(`Cannot edit a vacancy with status '${existing.status}'`);
     }
+
+    const currencyCode = dto.currency !== undefined
+      ? this.currencyService.getDefinition(dto.currency).code
+      : undefined;
 
     await this.db.query(
       `UPDATE vacancies SET
@@ -152,7 +162,7 @@ export class VacancyService {
         id, tenantId, dto.branch_id, dto.department_id, dto.position_id, dto.title,
         dto.hiring_manager_id, dto.recruiter_id, dto.reporting_manager_id, dto.employment_type_id,
         dto.experience_min_years, dto.experience_max_years, dto.qualification,
-        dto.salary_min, dto.salary_max, dto.currency, dto.number_of_positions,
+        dto.salary_min, dto.salary_max, currencyCode, dto.number_of_positions,
         dto.target_start_date, dto.target_close_date, dto.description, dto.justification,
         updatedById,
       ],

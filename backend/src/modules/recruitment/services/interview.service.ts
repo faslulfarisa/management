@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { DatabaseService } from '../../../shared/database.service';
+import { SchedulerControlService } from '../../../shared/scheduler-control.service';
 import { NotificationEmitterService } from '../../notifications/services/notification-emitter.service';
 import { EmailService } from '../../auth/email.service';
 import {
@@ -10,10 +11,21 @@ import {
 
 const SELECT_WITH_JOINS = `
   SELECT i.*, c.first_name, c.last_name, c.email AS candidate_email,
-    v.title AS vacancy_title, cb.email AS created_by_email
+    v.title AS vacancy_title, cb.email AS created_by_email,
+    d.name AS department_name,
+    (
+      SELECT json_agg(json_build_object(
+        'id', u.id,
+        'name', COALESCE(NULLIF(u.full_name, ''), NULLIF(CONCAT_WS(' ', e.first_name, e.last_name), ''), u.email)
+      ))
+      FROM unnest(i.panel_member_ids) AS pm_id
+      JOIN users u ON u.id = pm_id
+      LEFT JOIN employees e ON e.id = u.employee_id
+    ) AS panel_members
   FROM interviews i
   JOIN candidates c ON i.candidate_id = c.id
   LEFT JOIN vacancies v ON i.vacancy_id = v.id
+  LEFT JOIN departments d ON v.department_id = d.id
   LEFT JOIN users cb ON i.created_by = cb.id
 `;
 
@@ -25,6 +37,7 @@ export class InterviewService {
     private db: DatabaseService,
     private notifications: NotificationEmitterService,
     private email: EmailService,
+    private schedulerControl: SchedulerControlService = new SchedulerControlService(),
   ) {}
 
   async list(tenantId: string, filters: { q?: string; applicationId?: string; candidateId?: string; status?: string; page?: number; limit?: number }) {
@@ -74,13 +87,13 @@ export class InterviewService {
       `INSERT INTO interviews (
          tenant_id, candidate_id, job_posting_id, application_id, vacancy_id, interviewer_id,
          interview_type, round_type, round_number, scheduled_at, duration_minutes, location, meeting_link,
-         panel_member_ids, created_by
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+         panel_member_ids, notes, created_by
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
       [
         tenantId, application.candidate_id, application.job_posting_id, application.id, application.vacancy_id,
         dto.interviewer_id ?? panelMemberIds[0] ?? null, dto.interview_type ?? 'video', dto.round_type ?? 'technical',
         dto.round_number ?? 1, dto.scheduled_at, dto.duration_minutes ?? 60, dto.location ?? null, dto.meeting_link ?? null,
-        panelMemberIds, scheduledById,
+        panelMemberIds, dto.notes ?? null, scheduledById,
       ],
     );
 
@@ -156,6 +169,18 @@ export class InterviewService {
        WHERE id = $1 AND tenant_id = $2 RETURNING *`,
       [id, tenantId, dto.feedback ?? null, dto.rating ?? null, dto.recommendation ?? null],
     );
+    const updated = rows[0];
+
+    // Workflow transition
+    if (dto.recommendation === 'hire' && updated.application_id) {
+      const stageRes = await this.db.query(`SELECT id FROM pipeline_stages WHERE tenant_id = $1 AND name ILIKE '%Offer%' AND is_active = true LIMIT 1`, [tenantId]);
+      if (stageRes.rows.length) {
+        await this.db.query(`UPDATE applications SET current_stage_id = $1, status = 'shortlisted', updated_at = now() WHERE id = $2`, [stageRes.rows[0].id, updated.application_id]);
+      }
+    } else if (dto.recommendation === 'reject' && updated.application_id) {
+      await this.db.query(`UPDATE applications SET status = 'rejected', updated_at = now() WHERE id = $1`, [updated.application_id]);
+    }
+
     return this.findOne(id, tenantId);
   }
 
@@ -193,37 +218,39 @@ export class InterviewService {
     await this.notifications.emit(tenantId, {
       userIds, title, message: `${title} for ${interview.scheduled_at ? new Date(interview.scheduled_at).toLocaleString() : 'a candidate'}.`,
       type: 'info', sourceModule: 'recruitment', entityType: 'interview', entityId: interview.id,
-      actionUrl: `/dashboard/hr/recruitment/interviews`,
+      actionUrl: interview.application_id ? `/dashboard/hr/recruitment/pipeline/${interview.application_id}` : `/dashboard/hr/recruitment/interviews`,
     });
   }
 
   /** Daily sweep: email candidates whose interview is within the next 24h and hasn't been reminded yet. */
-  @Cron(CronExpression.EVERY_DAY_AT_8AM)
+  @Cron('29 0 8 * * *', { name: 'interview-reminder-sweep' })
   async sendUpcomingInterviewReminders(): Promise<void> {
-    const { rows } = await this.db.query(
-      `SELECT i.*, c.email AS candidate_email, c.first_name, c.last_name, jp.title AS job_title
-       FROM interviews i
-       JOIN candidates c ON c.id = i.candidate_id
-       LEFT JOIN job_postings jp ON jp.id = i.job_posting_id
-       WHERE i.status = 'scheduled' AND i.reminder_sent_at IS NULL
-         AND i.scheduled_at BETWEEN now() AND now() + interval '24 hours'`,
-    );
+    await this.schedulerControl.run('interview-reminder-sweep', async () => {
+      const { rows } = await this.db.query(
+        `SELECT i.*, c.email AS candidate_email, c.first_name, c.last_name, jp.title AS job_title
+         FROM interviews i
+         JOIN candidates c ON c.id = i.candidate_id
+         LEFT JOIN job_postings jp ON jp.id = i.job_posting_id
+         WHERE i.status = 'scheduled' AND i.reminder_sent_at IS NULL
+           AND i.scheduled_at BETWEEN now() AND now() + interval '24 hours'`,
+      );
 
-    for (const interview of rows) {
-      const subject = `Reminder: your interview for ${interview.job_title || 'the role'} is coming up`;
-      const body = `Hi ${interview.first_name},\n\nThis is a reminder that your interview is scheduled on ${new Date(interview.scheduled_at).toLocaleString()}.\n\nLooking forward to speaking with you.`;
-      try {
-        await this.email.sendGenericEmail(interview.candidate_email, subject, body);
-        await this.db.query(
-          `INSERT INTO candidate_communications (tenant_id, candidate_id, application_id, channel, subject, body, status, sent_at)
-           VALUES ($1,$2,$3,'email',$4,$5,'sent',now())`,
-          [interview.tenant_id, interview.candidate_id, interview.application_id, subject, body],
-        );
-      } catch (err) {
-        this.logger.error(`Failed to send interview reminder for interview ${interview.id}`, err as Error);
-      } finally {
-        await this.db.query('UPDATE interviews SET reminder_sent_at = now() WHERE id = $1', [interview.id]);
+      for (const interview of rows) {
+        const subject = `Reminder: your interview for ${interview.job_title || 'the role'} is coming up`;
+        const body = `Hi ${interview.first_name},\n\nThis is a reminder that your interview is scheduled on ${new Date(interview.scheduled_at).toLocaleString()}.\n\nLooking forward to speaking with you.`;
+        try {
+          await this.email.sendGenericEmail(interview.candidate_email, subject, body);
+          await this.db.query(
+            `INSERT INTO candidate_communications (tenant_id, candidate_id, application_id, channel, subject, body, status, sent_at)
+             VALUES ($1,$2,$3,'email',$4,$5,'sent',now())`,
+            [interview.tenant_id, interview.candidate_id, interview.application_id, subject, body],
+          );
+        } catch (err: any) {
+          this.logger.error(`Failed to send interview reminder for interview ${interview.id}`, err as Error);
+        } finally {
+          await this.db.query('UPDATE interviews SET reminder_sent_at = now() WHERE id = $1', [interview.id]);
+        }
       }
-    }
+    });
   }
 }

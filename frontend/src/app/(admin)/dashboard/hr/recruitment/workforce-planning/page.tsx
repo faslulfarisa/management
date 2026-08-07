@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, Plus } from 'lucide-react';
+import { Loader2, Plus, Users, DollarSign } from 'lucide-react';
 import { workforcePlansApi, WorkforcePlan } from '@/lib/workforce-plans-api';
 import { Card } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -45,6 +45,10 @@ export default function WorkforcePlanningPage() {
   useEffect(() => { setPage(1); }, [status, year]);
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  const activePlans = plans.filter((p) => p.status === 'active');
+  const totalPlannedHires = activePlans.reduce((sum, p) => sum + (p.total_planned_hires ?? 0), 0);
+  const totalBudget = activePlans.reduce((sum, p) => sum + (p.total_budget_amount ?? 0), 0);
+
   return (
     <div className="space-y-4">
       {showCreate && <WorkforcePlanDrawer onClose={() => setShowCreate(false)} onSaved={fetchData} />}
@@ -69,10 +73,31 @@ export default function WorkforcePlanningPage() {
         <input value={year} onChange={(e) => setYear(e.target.value)} placeholder="Year" type="number" className="w-28 border border-border rounded-xl px-3 py-2 text-sm" />
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card className="p-4 flex items-center gap-4">
+          <div className="bg-primary/10 p-3 rounded-full text-primary">
+            <Users className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-muted-foreground">Planned Hires (Active)</p>
+            <p className="text-2xl font-bold">{totalPlannedHires}</p>
+          </div>
+        </Card>
+        <Card className="p-4 flex items-center gap-4">
+          <div className="bg-primary/10 p-3 rounded-full text-primary">
+            <DollarSign className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-muted-foreground">Total Budget (Active)</p>
+            <p className="text-2xl font-bold">{totalBudget.toLocaleString()}</p>
+          </div>
+        </Card>
+      </div>
+
       {loading ? (
         <div className="py-12 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-muted-foreground" /></div>
       ) : plans.length === 0 ? (
-        <Card><div className="p-10 text-center text-muted-foreground text-sm">No workforce plans yet.</div></Card>
+        <Card><div className="p-10 text-center text-muted-foreground text-sm">No workforce plans available.</div></Card>
       ) : (
         <Card>
           <Table>
@@ -93,7 +118,7 @@ export default function WorkforcePlanningPage() {
                   <TableCell className="text-muted-foreground">{p.branch_name || 'Org-wide'}</TableCell>
                   <TableCell>{p.year}</TableCell>
                   <TableCell>{p.total_planned_hires ?? 0}</TableCell>
-                  <TableCell>{p.total_budget_amount ? p.total_budget_amount.toLocaleString() : '—'}</TableCell>
+                  <TableCell>{p.total_budget_amount != null ? p.total_budget_amount.toLocaleString() : '—'}</TableCell>
                   <TableCell>
                     <span className={`px-2 py-1 rounded-full text-xs font-medium capitalize ${STATUS_STYLES[p.status] || 'bg-gray-100'}`}>{p.status.replace('_', ' ')}</span>
                   </TableCell>

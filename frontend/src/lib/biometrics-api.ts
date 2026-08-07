@@ -12,9 +12,12 @@ import type {
   ProviderHealthResult,
   DlqResponse,
   QueueHealthSnapshot,
+  QueueDiagnostics,
+  BiometricsOperationsSummary,
   CorrectionRequest,
   CreateCorrectionPayload,
   AuditEntry,
+  DeviceCommand,
 } from '@/types/biometrics';
 
 // ── Queue & DLQ ───────────────────────────────────────────────────────────────
@@ -22,6 +25,15 @@ import type {
 export const queueApi = {
   getHealth: (): Promise<QueueHealthSnapshot> =>
     api.get('/biometrics/queue/health').then((r) => r.data.data),
+
+  getDiagnostics: (): Promise<QueueDiagnostics> =>
+    api.get('/biometrics/queue/diagnostics').then((r) => r.data.data),
+
+  getOperationsSummary: (): Promise<BiometricsOperationsSummary> =>
+    api.get('/biometrics/operations/summary').then((r) => r.data.data),
+
+  replayOfflineBuffer: (payload?: { provider?: string; limit?: number }): Promise<ApiResponse<{ replayed: number }>> =>
+    api.post('/biometrics/queue/offline-buffer/replay', payload ?? {}).then((r) => r.data),
 
   getDlq: (offset = 0, limit = 50): Promise<DlqResponse> =>
     api.get('/biometrics/queue/dlq', { params: { offset, limit } }).then((r) => r.data.data),
@@ -37,6 +49,31 @@ export const queueApi = {
 
   retryAllFailed: (): Promise<ApiResponse<{ retried: number }>> =>
     api.post('/biometrics/queue/retry-failed').then((r) => r.data),
+
+  retryUnknownEmployees: (payload?: { employeeCode?: string; limit?: number }): Promise<ApiResponse<{ attempted: number; processed: number; failed: number }>> =>
+    api.post('/biometrics/pending-punch-reviews/retry', payload ?? { limit: 100 }).then((r) => r.data),
+
+  getSyncDlq: (offset = 0, limit = 50): Promise<{
+    total: number;
+    offset: number;
+    limit: number;
+    jobs: Array<{
+      id: string;
+      provider: string;
+      tenant: string;
+      integrationId?: string;
+      cursorTypes: string[];
+      failedReason: string;
+      stacktrace?: string[];
+      attemptsMade: number;
+      timestamp: string;
+      data?: Record<string, unknown>;
+    }>;
+  }> =>
+    api.get('/biometrics/sync/dlq', { params: { offset, limit } }).then((r) => r.data.data),
+
+  retrySyncJob: (jobId: string): Promise<ApiResponse<{ retried: string }>> =>
+    api.post(`/biometrics/sync/dlq/${jobId}/retry`).then((r) => r.data),
 };
 
 // ── Corrections ───────────────────────────────────────────────────────────────
@@ -121,6 +158,15 @@ export const devicesApi = {
 
   deactivate: (id: string): Promise<void> =>
     api.delete(`/biometrics/devices/${id}`).then(() => undefined),
+
+  listCommands: (id: string, limit = 20): Promise<DeviceCommand[]> =>
+    api.get(`/biometrics/devices/${id}/commands`, { params: { limit } }).then((r) => r.data.data),
+
+  queueCommand: (
+    id: string,
+    payload: { commandType?: string; command: string; priority?: number; expiresAt?: string },
+  ): Promise<DeviceCommand> =>
+    api.post(`/biometrics/devices/${id}/commands`, payload).then((r) => r.data.data),
 };
 
 // ── Terminals ─────────────────────────────────────────────────────────────────

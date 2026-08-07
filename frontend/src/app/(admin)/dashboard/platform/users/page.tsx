@@ -14,8 +14,12 @@ import {
 } from 'lucide-react';
 import { CreateUserDrawer } from '@/components/users/create-user-drawer';
 import { exportReportCsv } from '@/lib/report-export';
+import { ExportButton } from '@/components/export';
+import { ImportButton } from '@/components/import';
+import { PERMISSIONS } from '@/lib/permissions';
 import { UserTypeBadge, ScopeCell, type ScopeSummary } from '@/components/users/user-type-badge';
 import UserBulkImportDrawer from '@/components/users/user-bulk-import-drawer';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 import { ALL_USER_TYPES, USER_TYPE_LABELS, type UserType } from '@/lib/hierarchy';
 import { useAuthStore } from '@/store/auth.store';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -85,6 +89,10 @@ function fullName(u: Pick<User, 'first_name' | 'last_name' | 'email'>) {
 
 function isUserActive(u: Pick<User, 'status' | 'is_active'>) {
   return u.status === 'active' || u.is_active;
+}
+
+function branchLabel(u: Pick<User, 'branch' | 'branches'>) {
+  return u.branch || u.branches?.map((branch) => branch.name).join(', ') || '';
 }
 
 function initials(u: Pick<User, 'first_name' | 'last_name'>) {
@@ -645,12 +653,7 @@ function EditUserDrawer({
               </div>
               <div>
                 <FieldLabel>Phone Number</FieldLabel>
-                <input
-                  value={form.phone}
-                  onChange={e => set('phone', e.target.value)}
-                  placeholder="+1 234 567 8900"
-                  className={inp()}
-                />
+                <PhoneNumberInput value={form.phone} onChange={value => set('phone', value)} />
               </div>
             </div>
           </section>
@@ -1858,6 +1861,52 @@ export default function UsersPage() {
 
   const hasFilters = !!(search || filterRole || filterUserType || filterStatus || filterMFA);
 
+  const exportFilters = useMemo(() => ({
+    search,
+    role: filterRole,
+    user_type: filterUserType,
+    status: filterStatus,
+    mfa_enabled: filterMFA === 'enabled' ? true : filterMFA === 'disabled' ? false : '',
+  }), [search, filterRole, filterUserType, filterStatus, filterMFA]);
+
+  const activeExportFilters = useMemo(() => {
+    const filters: { key: string; label: string; value: string }[] = [];
+    if (search) filters.push({ key: 'search', label: 'Search', value: search });
+    if (filterRole) filters.push({ key: 'role', label: 'Role', value: filterRole });
+    if (filterUserType) {
+      filters.push({
+        key: 'user_type',
+        label: 'User Type',
+        value: USER_TYPE_LABELS[filterUserType as UserType] ?? filterUserType,
+      });
+    }
+    if (filterStatus) {
+      filters.push({
+        key: 'status',
+        label: 'Status',
+        value: USER_STATUS_LABELS[filterStatus as UserStatus] ?? filterStatus,
+      });
+    }
+    if (filterMFA) {
+      filters.push({ key: 'mfa_enabled', label: 'MFA', value: filterMFA === 'enabled' ? 'Enabled' : 'Disabled' });
+    }
+    return filters;
+  }, [search, filterRole, filterUserType, filterStatus, filterMFA]);
+
+  const exportRows = useMemo(() => filteredUsers.map((u) => ({
+    email: u.email,
+    full_name: fullName(u),
+    user_type: u.user_type ?? 'employee',
+    department: u.department ?? '',
+    role: u.role ?? '',
+    branch_name: branchLabel(u),
+    status: u.status ?? (isUserActive(u) ? 'active' : 'inactive'),
+    is_active: isUserActive(u),
+    mfa_enabled: !!u.mfa_enabled,
+    last_login: u.last_login_at,
+    created_at: u.created_at,
+  })), [filteredUsers]);
+
   /* ── Bulk selection helpers ──────────────────────────────────────────────── */
 
   const allSelected = filteredUsers.length > 0 && filteredUsers.every(u => selected.has(u.id));
@@ -1959,6 +2008,39 @@ export default function UsersPage() {
             >
               <RefreshCw className="w-4 h-4" />
             </button>
+            <ExportButton
+              config={{
+                module: 'users',
+                title: 'User Management',
+                permission: PERMISSIONS.PLATFORM_USERS_VIEW,
+                columns: [
+                  { key: 'email', header: 'Email' },
+                  { key: 'full_name', header: 'Name' },
+                  { key: 'user_type', header: 'User Type' },
+                  { key: 'department', header: 'Department' },
+                  { key: 'role', header: 'Role' },
+                  { key: 'branch_name', header: 'Branch' },
+                  { key: 'status', header: 'Status' },
+                  { key: 'is_active', header: 'Active', type: 'boolean' },
+                  { key: 'mfa_enabled', header: 'MFA', type: 'boolean' },
+                  { key: 'last_login', header: 'Last Login', type: 'date' },
+                  { key: 'created_at', header: 'Created At', type: 'date' },
+                ],
+                defaultColumns: ['email', 'full_name', 'user_type', 'branch_name', 'status', 'mfa_enabled', 'last_login'],
+                filenamePrefix: 'users',
+              }}
+              filters={exportFilters}
+              activeFilters={activeExportFilters}
+              currentPageData={exportRows}
+              totalRecords={hasFilters ? filteredUsers.length : stats.total}
+            />
+            <ImportButton
+              config={{
+                module: 'users',
+                title: 'User Management',
+                permission: PERMISSIONS.PLATFORM_USERS_CREATE,
+              }}
+            />
             <button
               onClick={() => setShowBulkDrawer(true)}
               className="flex items-center gap-2 border border-border rounded-lg px-4 py-2 text-sm font-semibold hover:bg-muted transition-colors"

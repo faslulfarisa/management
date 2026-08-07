@@ -2,13 +2,13 @@
   "name": "ai-hrms",
   "version": "0.1.0",
   "private": true,
-  "description": "AI Hotel Workforce Management System",
+  "description": "AI Human Resource Management System",
   "workspaces": [
     "backend",
     "frontend"
   ],
   "scripts": {
-    "dev:backend": "npm run dev --workspace=backend",
+    "dev:backend": "npm run start:dev --workspace=backend",
     "dev:frontend": "npm run dev --workspace=frontend",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "build:backend": "npm run build --workspace=backend",

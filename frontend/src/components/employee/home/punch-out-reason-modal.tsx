@@ -14,6 +14,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { PUNCH_OUT_REASONS, type PunchOutReason } from '@/lib/punch-out-reasons';
+import type { BreakPolicyType } from '@/types/employee';
 import { cn } from '@/lib/utils';
 
 const REASON_ICONS: Record<string, LucideIcon> = {
@@ -32,11 +33,31 @@ interface PunchOutReasonModalProps {
   onOpenChange: (open: boolean) => void;
   onConfirm: (reasonCode: string, note?: string) => void;
   isSubmitting?: boolean;
+  breakTypes?: BreakPolicyType[];
 }
 
-export function PunchOutReasonModal({ open, onOpenChange, onConfirm, isSubmitting }: PunchOutReasonModalProps) {
+export function PunchOutReasonModal({ open, onOpenChange, onConfirm, isSubmitting, breakTypes }: PunchOutReasonModalProps) {
   const [selected, setSelected] = useState<PunchOutReason | null>(null);
   const [note, setNote] = useState('');
+  const reasons: PunchOutReason[] = [
+    ...(
+      breakTypes?.length
+        ? breakTypes
+            .filter((item) => item.active !== false && item.visible_to_employees !== false)
+            .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+            .map((item) => ({
+              code: item.code,
+              label: item.name,
+              category: item.category === 'emergency'
+                ? 'emergency'
+                : item.category === 'official_duty'
+                  ? 'official_outside'
+                  : 'temporary_break',
+            } as PunchOutReason))
+        : PUNCH_OUT_REASONS.filter((reason) => reason.category !== 'final_logout')
+    ),
+    PUNCH_OUT_REASONS.find((reason) => reason.category === 'final_logout')!,
+  ];
 
   const handleConfirm = () => {
     if (!selected) return;
@@ -62,7 +83,7 @@ export function PunchOutReasonModal({ open, onOpenChange, onConfirm, isSubmittin
         </DialogHeader>
 
         <div className="grid grid-cols-2 gap-2">
-          {PUNCH_OUT_REASONS.map((reason) => {
+          {reasons.map((reason) => {
             const Icon = REASON_ICONS[reason.code] ?? MoreHorizontal;
             const isSelected = selected?.code === reason.code;
             return (

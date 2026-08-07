@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,11 +19,43 @@ export function ExitNewRequestDialog({ open, employees, onClose, onCreated }: {
   });
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    if (open) {
+      setForm({
+        employee_id: '', request_type: 'resignation', reason: '',
+        notice_period_days: 30, requested_date: '', last_working_date: '',
+      });
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (form.requested_date) {
+      const d = new Date(form.requested_date + 'T00:00:00');
+      d.setDate(d.getDate() + (form.notice_period_days || 0));
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const calculatedDate = `${year}-${month}-${day}`;
+      setForm(prev => ({ ...prev, last_working_date: calculatedDate }));
+    }
+  }, [form.requested_date, form.notice_period_days]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    
+    const payload = { ...form };
+    if (!payload.last_working_date && payload.requested_date) {
+      const d = new Date(payload.requested_date + 'T00:00:00');
+      d.setDate(d.getDate() + (payload.notice_period_days || 0));
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      payload.last_working_date = `${year}-${month}-${day}`;
+    }
+
     try {
-      await exitApi.createRequest(form);
+      await exitApi.createRequest(payload);
       onCreated();
       onClose();
       setForm({ employee_id: '', request_type: 'resignation', reason: '', notice_period_days: 30, requested_date: '', last_working_date: '' });

@@ -162,6 +162,13 @@ export default function EditEmployeePage() {
     if (!form.position_id) errs.position_id = 'Required';
     if (!form.date_of_joining) errs.date_of_joining = 'Required';
 
+    if (form.personal_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.personal_email)) {
+      errs.personal_email = 'Invalid email format';
+    }
+    if (form.office_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.office_email)) {
+      errs.office_email = 'Invalid email format';
+    }
+
     if (form.date_of_joining) {
       if (form.probation_end_date && new Date(form.probation_end_date) <= new Date(form.date_of_joining)) {
         errs.probation_end_date = 'Probation end date must be after the joining date.';
@@ -201,7 +208,29 @@ export default function EditEmployeePage() {
       await api.put(`/employees/${id}`, payload);
       router.push(`/dashboard/hr/employees/${id}`);
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to update employee');
+      let msg = err.response?.data?.message || err.response?.data?.error || 'Failed to update employee';
+      if (Array.isArray(msg)) msg = msg[0];
+      const msgLower = typeof msg === 'string' ? msg.toLowerCase() : '';
+
+      if (msgLower.includes('personal email')) {
+        setErrors({ personal_email: msg });
+      } else if (msgLower.includes('office email')) {
+        setErrors({ office_email: msg });
+      } else if (msgLower.includes('mobile number')) {
+        setErrors({ personal_phone: msg });
+      } else if (msgLower.includes('alternate number')) {
+        setErrors({ alternate_phone: msg });
+      } else if (msgLower.includes('aadhaar number')) {
+        setErrors({ aadhaar_number: msg });
+      } else if (msgLower.includes('pan number')) {
+        setErrors({ pan_number: msg });
+      } else if (msgLower.includes('passport number')) {
+        setErrors({ passport_number: msg });
+      } else if (msgLower.includes('18 years old')) {
+        setErrors({ date_of_birth: msg });
+      } else {
+        alert(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -279,7 +308,8 @@ export default function EditEmployeePage() {
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Date of Birth</label>
-              <Input type="date" value={form.date_of_birth} onChange={e => handleChange('date_of_birth', e.target.value)} />
+              <Input type="date" id="date_of_birth" value={form.date_of_birth} onChange={e => handleChange('date_of_birth', e.target.value)} className={errors.date_of_birth ? 'border-red-400' : ''} />
+              {errors.date_of_birth && <p className="text-xs text-red-500 mt-1">{errors.date_of_birth}</p>}
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Gender</label>
@@ -309,11 +339,18 @@ export default function EditEmployeePage() {
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Personal Email</label>
-              <Input type="email" value={form.personal_email} onChange={e => handleChange('personal_email', e.target.value)} />
+              <Input type="email" id="personal_email" value={form.personal_email} onChange={e => handleChange('personal_email', e.target.value)} className={errors.personal_email ? 'border-red-400' : ''} />
+              {errors.personal_email && <p className="text-xs text-red-500 mt-1">{errors.personal_email}</p>}
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Personal Phone</label>
               <PhoneNumberInput value={form.personal_phone} onChange={v => handleChange('personal_phone', v)} />
+              {errors.personal_phone && <p className="text-xs text-red-500 mt-1">{errors.personal_phone}</p>}
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Alternate Phone</label>
+              <PhoneNumberInput value={form.alternate_phone} onChange={v => handleChange('alternate_phone', v)} />
+              {errors.alternate_phone && <p className="text-xs text-red-500 mt-1">{errors.alternate_phone}</p>}
             </div>
           </CardContent>
         </Card>
@@ -487,11 +524,18 @@ export default function EditEmployeePage() {
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">PAN Number</label>
-              <Input value={form.pan_number} onChange={e => handleChange('pan_number', e.target.value)} />
+              <Input value={form.pan_number} onChange={e => handleChange('pan_number', e.target.value.toUpperCase())} className={errors.pan_number ? 'border-red-400 uppercase' : 'uppercase'} />
+              {errors.pan_number && <p className="text-xs text-red-500 mt-1">{errors.pan_number}</p>}
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Aadhaar Number</label>
-              <Input value={form.aadhaar_number} onChange={e => handleChange('aadhaar_number', e.target.value)} />
+              <Input value={form.aadhaar_number} onChange={e => handleChange('aadhaar_number', e.target.value)} className={errors.aadhaar_number ? 'border-red-400' : ''} />
+              {errors.aadhaar_number && <p className="text-xs text-red-500 mt-1">{errors.aadhaar_number}</p>}
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Passport Number</label>
+              <Input value={form.passport_number} onChange={e => handleChange('passport_number', e.target.value.toUpperCase())} className={errors.passport_number ? 'border-red-400 uppercase' : 'uppercase'} />
+              {errors.passport_number && <p className="text-xs text-red-500 mt-1">{errors.passport_number}</p>}
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">PF Number</label>

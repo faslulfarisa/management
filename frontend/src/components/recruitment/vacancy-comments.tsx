@@ -35,7 +35,7 @@ export function VacancyComments({ vacancyId }: { vacancyId: string }) {
 
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold text-foreground">Comments</h3>
+      <h3 className="text-base font-bold text-foreground">Comments</h3>
       {loading ? (
         <p className="text-xs text-muted-foreground">Loading…</p>
       ) : comments.length === 0 ? (

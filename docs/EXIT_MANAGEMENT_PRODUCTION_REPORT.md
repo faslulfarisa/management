@@ -8,7 +8,7 @@ The previous Exit Management module was a plain-CRUD MVP over four tables (`exit
 - **No RBAC** — the controller only checked `JwtAuthGuard`; any authenticated user could approve, reject, or delete any exit request.
 - **No integrations** — Full & Final settlement fields (`gratuity`, `leave_encashment`, `basic_salary`, etc.) were blank text boxes the admin had to type in by hand. Nothing read from Payroll, Leave, or Attendance.
 - **No asset tracking** — `final_settlements.asset_recovery` existed but no system tracked what assets an employee held or what they owed back.
-- **No automation** — checklist items and department clearances had to be added one at a time per exit; nothing auto-generated them on approval.
+- **No generated checklist** — checklist items and department clearances had to be added one at a time per exit; nothing auto-generated them on approval.
 - **No account lifecycle** — completing an exit never touched the employee's user account, session, or `employees.status`.
 - **No visual history** — only a single `status` column; no stage-by-stage timeline.
 
@@ -80,7 +80,7 @@ final_settlements:  { statusCol: 'payment_status', approvedStatus: 'approved', r
 
 ## 6. Exit Templates (auto-generated checklists)
 
-`ExitChecklistService.applyTemplate()` calls `TemplateService.getResolved(tenantId, 'exit_checklist', 'employee', employeeId)` on full approval. If a tenant has configured a template (`template_type='exit_checklist'`, `config.items: [{item, department, is_mandatory, priority, sort_order}]`), those items are bulk-inserted. **If none is configured, a built-in default set is used** (Return Laptop/Disable Email/VPN/Git under IT; Clear Advances/Expense Claims under Finance; FnF/Leave Encashment under Payroll; ID Card/Parking/Keys under Admin; Exit Interview/Policy Ack under HR) — so automation works out of the box with zero setup. Department clearances get a fixed default set (HR, Payroll, Finance, IT, Administration, Reporting Manager) via `ExitClearanceService.applyDefaultDepartments()`.
+`ExitChecklistService.applyTemplate()` calls `TemplateService.getResolved(tenantId, 'exit_checklist', 'employee', employeeId)` on full approval. If a tenant has configured a template (`template_type='exit_checklist'`, `config.items: [{item, department, is_mandatory, priority, sort_order}]`), those items are bulk-inserted. **If none is configured, a built-in default set is used** (Return Laptop/Disable Email/VPN/Git under IT; Clear Advances/Expense Claims under Finance; FnF/Leave Encashment under Payroll; ID Card/Parking/Keys under Admin; Exit Interview/Policy Ack under HR) — so checklist generation works out of the box with zero setup. Department clearances get a fixed default set (HR, Payroll, Finance, IT, Administration, Reporting Manager) via `ExitClearanceService.applyDefaultDepartments()`.
 
 ## 7. Asset Management Module (net new)
 

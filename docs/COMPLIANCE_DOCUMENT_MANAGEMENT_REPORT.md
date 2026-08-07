@@ -7,9 +7,9 @@ The previous Compliance module was two flat tables wired to one HR sub-page:
 - `compliance_filings` — a monthly PF/ESI/PT/TDS statutory-filing ledger.
 - `compliance_documents` — `name`, `document_type`, `issue_date`, `expiry_date`, `notes`. No file attachment, no owner, no branch/department, no employee linkage, no approval, no versioning, no confidentiality, and no audit trail.
 
-There was no concept of an *employee* document vault, no category taxonomy, no expiry automation beyond a client-side "is this date < 30 days away" check, and no security model beyond "any authenticated user with `hr.compliance:view`."
+There was no concept of an *employee* document vault, no category taxonomy, no expiry workflow beyond a client-side "is this date < 30 days away" check, and no security model beyond "any authenticated user with `hr.compliance:view`."
 
-This report documents the resulting system: a single, RBAC-enforced, audited repository for both **company** documents (statutory registrations, licenses, agreements, financial records, policies) and **employee** documents (identity, education, contracts, certifications, exit paperwork), with versioning, approvals, expiry/renewal automation, and policy acknowledgement tracking — built by maximizing reuse of existing platform infrastructure.
+This report documents the resulting system: a single, RBAC-enforced, audited repository for both **company** documents (statutory registrations, licenses, agreements, financial records, policies) and **employee** documents (identity, education, contracts, certifications, exit paperwork), with versioning, approvals, expiry/renewal workflows, and policy acknowledgement tracking — built by maximizing reuse of existing platform infrastructure.
 
 ## 2. Architecture: what was reused vs. what is new
 
@@ -97,7 +97,7 @@ New permission slugs (`backend/src/shared/permissions.constants.ts`): `COMPLIANC
 - **Branch isolation**: every list/find applies the existing `AccessScope` pattern, same as `exit-request.service.ts`.
 - **Not implemented in application code** (infra/ops, called out rather than faked): at-rest encryption is a MinIO bucket policy (SSE), not something the application layer controls — flagged in the production-readiness checklist (§12).
 
-## 9. Automation
+## 9. Expiry And Renewal Workflows
 
 - **`ComplianceExpiryService`** (`@Cron(EVERY_DAY_AT_1AM)`, mirrors the existing `ApprovalEngineService.processExpiredRequests()` cron pattern): notifies owner/employee/employee's-manager exactly once per threshold crossing (90/60/30/15/7/1/0 days, matched on exact day-count so it never double-fires), then transitions `status` to `renewal_pending` (within `grace_period_days` of expiry) or `expired` (grace exceeded).
 - **Renewal workflow**: expiring/expired document → "Request Renewal" (new version + re-submit through the same approval workflow, §5) → manager approval → new version becomes current, prior version stays in history → tracker/dashboard counts update from live data (no separate sync step).

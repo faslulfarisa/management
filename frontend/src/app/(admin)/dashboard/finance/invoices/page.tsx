@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '@/lib/api';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 import { extractInvoiceData } from '@/lib/ocr';
 import {
   Plus, Search, RefreshCw, FileText, Send, CheckCircle2,
@@ -250,7 +251,7 @@ function InvoiceDrawer({ invoice, onClose, onSaved }: { invoice?: any; onClose: 
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1">Phone</label>
-                  <input value={form.customer_phone} onChange={(e) => setField('customer_phone', e.target.value)} placeholder="9876543210" className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                  <PhoneNumberInput value={form.customer_phone} onChange={(value) => setField('customer_phone', value)} />
                 </div>
                 <div className="col-span-2">
                   <label className="text-xs font-medium text-muted-foreground block mb-1">Address</label>

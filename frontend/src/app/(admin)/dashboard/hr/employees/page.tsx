@@ -10,12 +10,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import {
   Loader2, Upload, ArrowRightLeft, X, Activity, Clock, CheckCircle2, XCircle, Ban,
+  Eye, Pencil, Trash2, PowerOff, AlertTriangle, Users, Sparkles,
 } from 'lucide-react';
 import BulkImportDrawer from '@/components/ui/bulk-import-drawer';
 import { AttendanceStatusModal } from '@/components/ui/attendance-status-modal';
 import { EmployeeDeletionModal } from '@/components/ui/employee-deletion-modal';
 import { useCan } from '@/hooks/use-permissions';
 import { PERMISSIONS } from '@/lib/permissions';
+import { ExportButton } from '@/components/export';
+import { ImportButton } from '@/components/import';
 
 interface Employee {
   id: string;
@@ -177,6 +180,7 @@ function RegularEmployeeView() {
   const [branches, setBranches] = useState<any[]>([]);
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState<any>(null);
+  const [planLimits, setPlanLimits] = useState<{ maxActiveEmployees: number | null; activeEmployeeCount: number; totalEmployeeCount: number; planName: string; canCreateEmployee: boolean }>({ maxActiveEmployees: null, activeEmployeeCount: 0, totalEmployeeCount: 0, planName: 'Free Plan', canCreateEmployee: true });
   const [showBulkDrawer, setShowBulkDrawer] = useState(false);
   const [transferHistoryEmp, setTransferHistoryEmp] = useState<Employee | null>(null);
   const [attendanceStatusEmp, setAttendanceStatusEmp] = useState<Employee | null>(null);
@@ -213,6 +217,13 @@ function RegularEmployeeView() {
       const { data } = await api.get('/employees', { params });
       setEmployees(data.data);
       setMeta(data.meta);
+      setPlanLimits({
+        maxActiveEmployees: data.meta?.max_active_employees ?? null,
+        activeEmployeeCount: data.meta?.active_employee_count ?? 0,
+        totalEmployeeCount: data.meta?.total_employee_count ?? 0,
+        planName: data.meta?.plan_name || 'Free Plan',
+        canCreateEmployee: data.meta?.can_create_employee ?? true,
+      });
     } catch (err) {
       console.error('Failed to fetch employees:', err);
     } finally {
@@ -291,20 +302,104 @@ function RegularEmployeeView() {
         />
       )}
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
           <div>
             <h1 className="text-2xl font-bold">Employee Master</h1>
-            <p className="text-muted-foreground">Manage employee records and lifecycle events</p>
+            <p className="text-sm text-muted-foreground mt-1">Manage all employees across the organization</p>
           </div>
-          {canCreateEmployee && (
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setShowBulkDrawer(true)}>
-                <Upload className="w-4 h-4 mr-2" />Bulk Import
-              </Button>
-              <Button onClick={() => router.push('/dashboard/hr/employees/new')}>+ Add Employee</Button>
-            </div>
-          )}
+          <div className="flex gap-2">
+            <ExportButton
+              config={{
+                module: 'employees',
+                title: 'Employee Master',
+                permission: PERMISSIONS.EMPLOYEES_EXPORT,
+                columns: [
+                  { key: 'employee_code', header: 'Code' },
+                  { key: 'full_name', header: 'Name' },
+                  { key: 'branch_name', header: 'Branch' },
+                  { key: 'department_name', header: 'Department' },
+                  { key: 'designation_name', header: 'Designation' },
+                  { key: 'status', header: 'Status' },
+                  { key: 'date_of_joining', header: 'Joining Date', type: 'date' },
+                  { key: 'first_name', header: 'First Name' },
+                  { key: 'last_name', header: 'Last Name' },
+                  { key: 'gender', header: 'Gender' },
+                  { key: 'personal_email', header: 'Email', sensitive: true },
+                  { key: 'personal_phone', header: 'Phone', sensitive: true },
+                ],
+                defaultColumns: ['employee_code', 'full_name', 'branch_name', 'department_name', 'designation_name', 'status', 'date_of_joining'],
+                filenamePrefix: 'employees',
+              }}
+              filters={{ search, status: statusFilter, branch_id: branchFilter }}
+              currentPageData={employees}
+              totalRecords={meta?.total}
+            />
+            <ImportButton
+              config={{
+                module: 'employees',
+                title: 'Employee Master',
+                permission: PERMISSIONS.EMPLOYEES_CREATE,
+              }}
+            />
+            {canCreateEmployee && (
+              <>
+                <Button variant="outline" onClick={() => setShowBulkDrawer(true)}>
+                  <Upload className="w-4 h-4 mr-2" />Bulk Import
+                </Button>
+                <Button
+                  onClick={() => router.push('/dashboard/hr/employees/new')}
+                  disabled={!planLimits.canCreateEmployee}
+                  title={!planLimits.canCreateEmployee ? "You've reached your plan limit for employees" : ""}
+                >
+                  + Add Employee
+                </Button>
+              </>
+            )}
+          </div>
         </div>
+
+        {/* Plan-based activation usage */}
+        {planLimits.maxActiveEmployees !== null && (() => {
+          const atLimit = planLimits.activeEmployeeCount >= planLimits.maxActiveEmployees;
+          return (
+            <div className={`mb-6 rounded-xl border px-5 py-3.5 flex items-center justify-between flex-wrap gap-3 ${atLimit
+                ? 'border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50'
+                : 'border-indigo-100 bg-gradient-to-r from-indigo-50 to-purple-50'
+              }`}>
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-white flex items-center justify-center shadow-sm shrink-0">
+                  {atLimit
+                    ? <AlertTriangle className="w-4.5 h-4.5 text-amber-600" />
+                    : <Users className="w-4.5 h-4.5 text-indigo-600" />
+                  }
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-foreground">
+                    {planLimits.activeEmployeeCount} of {planLimits.maxActiveEmployees} active employee{planLimits.maxActiveEmployees === 1 ? '' : 's'} used
+                    <span className="font-normal text-muted-foreground"> · {planLimits.planName}</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {atLimit
+                      ? `You've reached your ${planLimits.planName} limit — upgrade to add more employees`
+                      : `${planLimits.maxActiveEmployees - planLimits.activeEmployeeCount} more employee${planLimits.maxActiveEmployees - planLimits.activeEmployeeCount === 1 ? '' : 's'} can be added on your current plan`
+                    }
+                  </p>
+                </div>
+              </div>
+              {isAdmin && (
+                <Button
+                  size="sm"
+                  variant={atLimit ? 'default' : 'outline'}
+                  onClick={() => router.push('/dashboard/operations/billing')}
+                  className={atLimit ? 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white' : ''}
+                >
+                  <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+                  {atLimit ? 'Upgrade Plan' : 'Manage Plan'}
+                </Button>
+              )}
+            </div>
+          );
+        })()}
 
         <Card>
           <CardHeader>
@@ -410,10 +505,14 @@ function RegularEmployeeView() {
                       <TableCell>{emp.date_of_joining ? new Date(emp.date_of_joining).toLocaleDateString() : '-'}</TableCell>
                       <TableCell>
                         <div className="flex gap-2">
-                          <Button variant="ghost" size="sm" onClick={() => router.push(`/dashboard/hr/employees/${emp.id}`)}>View</Button>
+                          <Button variant="ghost" size="sm" title="View" onClick={() => router.push(`/dashboard/hr/employees/${emp.id}`)}>
+                            <Eye className="w-4 h-4" />
+                          </Button>
                           {canEditEmployee && (
                             <>
-                              <Button variant="ghost" size="sm" onClick={() => router.push(`/dashboard/hr/employees/${emp.id}/edit`)}>Edit</Button>
+                              <Button variant="ghost" size="sm" title="Edit" onClick={() => router.push(`/dashboard/hr/employees/${emp.id}/edit`)}>
+                                <Pencil className="w-4 h-4" />
+                              </Button>
                               <Button variant="ghost" size="sm" title="Transfer History" onClick={() => setTransferHistoryEmp(emp)}>
                                 <ArrowRightLeft className="w-3.5 h-3.5" />
                               </Button>
@@ -431,7 +530,7 @@ function RegularEmployeeView() {
                               title={emp.status === 'inactive' ? 'Permanently delete inactive employee' : 'Delete employee'}
                               onClick={() => handleDeleteEmployee(emp)}
                             >
-                              {deletingEmployeeId === emp.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Delete'}
+                              {deletingEmployeeId === emp.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                             </Button>
                           )}
                           {canDeactivateEmployee && emp.status !== 'inactive' && (
@@ -443,7 +542,7 @@ function RegularEmployeeView() {
                               title="Deactivate employee"
                               onClick={() => handleDeactivateEmployee(emp)}
                             >
-                              {statusUpdatingId === emp.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Deactivate'}
+                              {statusUpdatingId === emp.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <PowerOff className="w-4 h-4" />}
                             </Button>
                           )}
                         </div>

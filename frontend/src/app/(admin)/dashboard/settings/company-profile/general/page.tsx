@@ -45,9 +45,6 @@ const EMPTY: FormState = {
 };
 
 const PROTECTED_FIELD_DEFS: { key: keyof FormState; label: string }[] = [
-  { key: 'legalName', label: 'Legal Business Name' },
-  { key: 'tradeName', label: 'Trade Name' },
-  { key: 'companyType', label: 'Company Type' },
   { key: 'registrationNumber', label: 'Registration Number' },
   { key: 'gstin', label: 'GST / VAT Number' },
   { key: 'panNumber', label: 'PAN / TIN Number' },
@@ -56,7 +53,7 @@ const PROTECTED_FIELD_DEFS: { key: keyof FormState; label: string }[] = [
 
 export default function GeneralPage() {
   const { userType, activeOrganization } = useAuthStore();
-  const canEditProtectedFields = userType === 'org_admin' || !!activeOrganization?.isOrgAdmin;
+  const canEditProtectedFields = userType === 'super_admin';
   const [form, setForm] = useState<FormState>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -97,8 +94,16 @@ export default function GeneralPage() {
       // Org admins can't directly edit protected fields — omit them entirely
       // so the backend doesn't treat unchanged values as a change request.
       const payload = canEditProtectedFields
-        ? form
-        : { name: form.name, companyCode: form.companyCode, fiscalYearStart: form.fiscalYearStart };
+        ? {
+            registrationNumber: form.registrationNumber,
+            gstin: form.gstin,
+            panNumber: form.panNumber,
+            cinNumber: form.cinNumber,
+            fiscalYearStart: form.fiscalYearStart,
+          }
+        : { 
+            fiscalYearStart: form.fiscalYearStart,
+          };
       await profileApi.updateCore(payload);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -159,27 +164,30 @@ export default function GeneralPage() {
         <CardContent className="p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold">Business Identity</h2>
-            {!canEditProtectedFields && (
-              <Button size="sm" variant="outline" onClick={() => setShowRequestModal(true)}>
-                <Lock className="mr-1.5 h-3.5 w-3.5" /> Request Change
-              </Button>
-            )}
           </div>
 
-          <Field label="Company Name *">
-            <Input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Acme Corp" />
+          <Field label="Company Name">
+            <div className="px-3 py-2 bg-muted/50 rounded-md border text-sm text-foreground/80">{form.name || '—'}</div>
           </Field>
 
           <div className="grid grid-cols-2 gap-4">
-            {renderField('legalName', 'Legal Business Name', 'Acme Corporation Pvt Ltd', true)}
-            {renderField('tradeName', 'Trade Name', 'Acme', true)}
+            <Field label="Legal Business Name">
+              <div className="px-3 py-2 bg-muted/50 rounded-md border text-sm text-foreground/80">{form.legalName || '—'}</div>
+            </Field>
+            <Field label="Trade Name">
+              <div className="px-3 py-2 bg-muted/50 rounded-md border text-sm text-foreground/80">{form.tradeName || '—'}</div>
+            </Field>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <Field label="Company Code">
-              <Input value={form.companyCode ?? ''} onChange={(e) => set('companyCode', e.target.value)} placeholder="ACME001" />
+              <div className="px-3 py-2 bg-muted/50 rounded-md border text-sm text-foreground/80">{form.companyCode || '—'}</div>
             </Field>
-            {renderField('companyType', 'Company Type', '', true)}
+            <Field label="Company Type">
+              <div className="px-3 py-2 bg-muted/50 rounded-md border text-sm text-foreground/80">
+                {COMPANY_TYPES.find((t) => t.value === form.companyType)?.label || '—'}
+              </div>
+            </Field>
           </div>
         </CardContent>
       </Card>
@@ -187,7 +195,14 @@ export default function GeneralPage() {
       {/* Registration & Tax */}
       <Card>
         <CardContent className="p-6 space-y-4">
-          <h2 className="text-base font-semibold">Registration &amp; Tax Numbers</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold">Registration &amp; Tax Numbers</h2>
+            {!canEditProtectedFields && (
+              <Button size="sm" variant="outline" onClick={() => setShowRequestModal(true)}>
+                <Lock className="mr-1.5 h-3.5 w-3.5" /> Request Change
+              </Button>
+            )}
+          </div>
 
           <div className="grid grid-cols-2 gap-4">
             {renderField('registrationNumber', 'Registration Number', 'U12345MH2020PTC123456', true)}

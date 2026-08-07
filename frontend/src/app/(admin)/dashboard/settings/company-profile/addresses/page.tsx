@@ -5,7 +5,7 @@ import { profileApi } from '@/lib/company-profile-api';
 import type { AddressPayload } from '@/lib/company-profile-api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import AddressFields from '@/components/forms/AddressFields';
 import { Save, RefreshCw, Copy } from 'lucide-react';
 
 const EMPTY_ADDR: AddressPayload = {
@@ -26,12 +26,6 @@ export default function AddressesPage() {
       setOperational({ ...EMPTY_ADDR, ...(p.operational_address ?? {}) });
     }).catch(() => setError('Failed to load profile.')).finally(() => setLoading(false));
   }, []);
-
-  const setReg = (key: keyof AddressPayload, val: string) =>
-    setRegistered((a) => ({ ...a, [key]: val }));
-
-  const setOp = (key: keyof AddressPayload, val: string) =>
-    setOperational((a) => ({ ...a, [key]: val }));
 
   const copyRegistered = () => setOperational({ ...registered });
 
@@ -67,14 +61,14 @@ export default function AddressesPage() {
         title="Registered Address"
         subtitle="Legal registration address as per government records"
         addr={registered}
-        onChange={setReg}
+        onChange={setRegistered}
       />
 
       <AddressCard
         title="Operational Address"
         subtitle="Day-to-day business address"
         addr={operational}
-        onChange={setOp}
+        onChange={setOperational}
         extra={
           <Button variant="outline" size="sm" onClick={copyRegistered} className="gap-1.5">
             <Copy className="h-3.5 w-3.5" />
@@ -101,7 +95,7 @@ function AddressCard({
   title: string;
   subtitle: string;
   addr: AddressPayload;
-  onChange: (key: keyof AddressPayload, val: string) => void;
+  onChange: (value: AddressPayload) => void;
   extra?: React.ReactNode;
 }) {
   return (
@@ -115,40 +109,8 @@ function AddressCard({
           {extra}
         </div>
 
-        <Field label="Address Line 1">
-          <Input value={addr.line1 ?? ''} onChange={(e) => onChange('line1', e.target.value)} placeholder="Building / Street" />
-        </Field>
-        <Field label="Address Line 2">
-          <Input value={addr.line2 ?? ''} onChange={(e) => onChange('line2', e.target.value)} placeholder="Area / Locality (optional)" />
-        </Field>
-
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="City">
-            <Input value={addr.city ?? ''} onChange={(e) => onChange('city', e.target.value)} placeholder="Mumbai" />
-          </Field>
-          <Field label="State / Province">
-            <Input value={addr.state ?? ''} onChange={(e) => onChange('state', e.target.value)} placeholder="Maharashtra" />
-          </Field>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Country">
-            <Input value={addr.country ?? ''} onChange={(e) => onChange('country', e.target.value)} placeholder="India" />
-          </Field>
-          <Field label="Postal Code">
-            <Input value={addr.postal_code ?? ''} onChange={(e) => onChange('postal_code', e.target.value)} placeholder="400001" />
-          </Field>
-        </div>
+        <AddressFields value={addr} onChange={(value) => onChange(value as AddressPayload)} postalCodeKey="postal_code" />
       </CardContent>
     </Card>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label className="text-sm font-medium text-foreground">{label}</label>
-      {children}
-    </div>
   );
 }

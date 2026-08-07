@@ -14,8 +14,6 @@ import {
   UserCircle,
   LogOut,
   Building2,
-  Award,
-  DoorOpen,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/auth.store';
@@ -23,6 +21,8 @@ import { employeeApi } from '@/lib/employee-api';
 import { approvalsApi } from '@/lib/approvals-api';
 import { clearTenantScopedStorage } from '@/lib/org-switch';
 import { cn } from '@/lib/utils';
+import { getPostLogoutRedirectPath } from '@/lib/auth/logout-redirect';
+import { AdminContextBanner } from '@/components/employee/layout/admin-context-banner';
 
 const navGroups = [
   {
@@ -33,10 +33,8 @@ const navGroups = [
       { href: '/leave',      label: 'Leave',      Icon: CalendarDays    },
       { href: '/requests',   label: 'Requests',   Icon: Inbox           },
       { href: '/shifts',     label: 'Schedule',   Icon: CalendarCheck   },
-      { href: '/performance', label: 'Performance', Icon: Award         },
       { href: '/payslips',   label: 'Payroll',    Icon: CreditCard      },
       { href: '/documents',  label: 'Documents',  Icon: FileText        },
-      { href: '/exit',       label: 'My Exit',    Icon: DoorOpen        },
     ],
   },
   {
@@ -94,6 +92,11 @@ export function EmployeeWebSidebar() {
         </div>
       </div>
 
+      {/* Section switcher — only visible to admin / branch_admin users in My Space */}
+      <div className="px-3 pt-3 pb-1">
+        <AdminContextBanner />
+      </div>
+
       {/* Navigation */}
       <nav className="flex-1 px-3 py-3 space-y-5">
         {navGroups.map((group) => (
@@ -149,7 +152,12 @@ export function EmployeeWebSidebar() {
           </div>
         )}
         <button
-          onClick={() => { clearTenantScopedStorage(); logout(); window.location.href = '/login'; }}
+          onClick={() => {
+            const redirectPath = getPostLogoutRedirectPath();
+            clearTenantScopedStorage();
+            logout();
+            window.location.href = redirectPath;
+          }}
           className="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-[13px] font-medium text-gray-400 transition-colors hover:bg-gray-50 hover:text-red-600"
         >
           <LogOut className="h-[15px] w-[15px] shrink-0" />

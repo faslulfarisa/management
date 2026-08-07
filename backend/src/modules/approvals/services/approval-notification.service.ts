@@ -3,7 +3,7 @@ import { ApprovalGateway } from '../gateways/approval.gateway';
 import { ApprovalRequest } from '../dto/approval.dto';
 import { NotificationEmitterService, NotificationPriority } from '../../notifications/services/notification-emitter.service';
 
-const ACTION_REQUIRED_URL = '/dashboard/automation?tab=action-required';
+const ACTION_REQUIRED_URL = '/dashboard/notifications?tab=action-required';
 
 function mapPriority(priority: ApprovalRequest['priority']): NotificationPriority {
   switch (priority) {

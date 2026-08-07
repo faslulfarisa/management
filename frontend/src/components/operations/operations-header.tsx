@@ -2,12 +2,13 @@
 
 import { useAuthStore } from '@/store/auth.store';
 import { INTERNAL_ROLE_LABELS, type InternalRole } from '@/lib/internal-roles';
-import { LogOut, ChevronDown, Menu, Loader2 } from 'lucide-react';
+import { LogOut, ChevronDown, Menu, Loader2, UserCircle, Settings } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { getPostLogoutRedirectPath, rememberPostLogoutRedirectPath } from '@/lib/auth/logout-redirect';
 
 export function OperationsHeader({ onMenuClick }: { onMenuClick?: () => void }) {
-  const { user, logout, internalRole } = useAuthStore();
+  const { user, logout, internalRole, isInternalStaff } = useAuthStore();
   const router = useRouter();
   const [showUser, setShowUser] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -28,12 +29,19 @@ export function OperationsHeader({ onMenuClick }: { onMenuClick?: () => void }) 
     setIsLoggingOut(true);
     try {
       setShowUser(false);
+      const redirectPath = getPostLogoutRedirectPath({ isInternalStaff });
+      rememberPostLogoutRedirectPath(redirectPath);
       logout();
-      await router.push('/login');
+      await router.push(redirectPath);
     } catch (err) {
       console.error('Logout error:', err);
       setIsLoggingOut(false);
     }
+  };
+
+  const goToGlobalProfile = (target: '/profile' | '/account') => {
+    setShowUser(false);
+    router.push(target);
   };
 
   return (
@@ -76,6 +84,20 @@ export function OperationsHeader({ onMenuClick }: { onMenuClick?: () => void }) 
                 <p className="text-xs text-muted-foreground">{roleLabel}</p>
               </div>
               <div className="p-1.5">
+                <button
+                  onClick={() => goToGlobalProfile('/profile')}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted transition-colors"
+                >
+                  <UserCircle className="w-4 h-4 text-muted-foreground" />
+                  My Profile
+                </button>
+                <button
+                  onClick={() => goToGlobalProfile('/account')}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted transition-colors"
+                >
+                  <Settings className="w-4 h-4 text-muted-foreground" />
+                  Account Settings
+                </button>
                 <button
                   onClick={handleLogout}
                   disabled={isLoggingOut}

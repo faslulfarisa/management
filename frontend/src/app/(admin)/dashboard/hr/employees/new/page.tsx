@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
+import { applicationsApi, candidatesApi } from '@/lib/candidates-api';
+import { conversionApi } from '@/lib/onboarding-api';
 import { useAuthStore } from '@/store/auth.store';
 import { useCan } from '@/hooks/use-permissions';
 import { PERMISSIONS } from '@/lib/permissions';
@@ -75,6 +77,32 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle?: string })
 
 function Divider() {
   return <hr className="border-border my-6" />;
+}
+
+function toDateInput(value?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
+}
+
+function normalizeGender(value?: string | null) {
+  const gender = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return ['male', 'female', 'other', 'prefer_not_to_say'].includes(gender) ? gender : '';
+}
+
+function addressFromCandidate(value: Record<string, any> | null | undefined, fallback: AddressValue): AddressValue {
+  if (!value || typeof value !== 'object') return fallback;
+  return {
+    ...fallback,
+    line1: value.line1 || value.address_line1 || value.street || value.address || '',
+    line2: value.line2 || value.address_line2 || value.area || '',
+    country: value.country || fallback.country,
+    countryCode: value.countryCode || value.country_code || fallback.countryCode,
+    state: value.state || fallback.state,
+    stateCode: value.stateCode || value.state_code || fallback.stateCode,
+    city: value.city || fallback.city,
+    pincode: value.pincode || value.postal_code || value.zip || '',
+  };
 }
 
 function Field({
@@ -178,6 +206,7 @@ export default function AddEmployeePage() {
   const router = useRouter();
   const { selectedTenantId } = useAuthStore();
   const canUploadDocuments = useCan(PERMISSIONS.DOCUMENTS_UPLOAD);
+  const prefillAppliedRef = useRef(false);
   const [activeTab, setActiveTab] = useState(0);
   const [saving, setSaving]       = useState(false);
   const [errors, setErrors]       = useState<Record<string, string>>({});
@@ -237,6 +266,55 @@ export default function AddEmployeePage() {
     email: '', username: '', password: '', confirm_password: '', role: 'employee',
   });
 
+  useEffect(() => {
+    if (prefillAppliedRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const applicationId = params.get('applicationId');
+    if (params.get('source') !== 'recruitment' || !applicationId) return;
+
+    prefillAppliedRef.current = true;
+    Promise.all([
+      applicationsApi.get(applicationId),
+      conversionApi.preview(applicationId),
+    ])
+      .then(async ([application, preview]) => {
+        const candidate = await candidatesApi.get(application.candidate_id);
+        const personalEmail = preview.prefill.personal_email || candidate.email || application.candidate_email || '';
+        const personalPhone = preview.prefill.personal_phone || candidate.phone || application.candidate_phone || '';
+
+        setForm(prev => ({
+          ...prev,
+          first_name: prev.first_name || preview.prefill.first_name || candidate.first_name || application.first_name || '',
+          last_name: prev.last_name || preview.prefill.last_name || candidate.last_name || application.last_name || '',
+          gender: prev.gender || normalizeGender(candidate.gender),
+          date_of_birth: prev.date_of_birth || toDateInput(candidate.date_of_birth),
+          branch_id: prev.branch_id || preview.prefill.branch_id || '',
+          department_id: prev.department_id || preview.prefill.department_id || '',
+          position_id: prev.position_id || preview.prefill.position_id || '',
+          employment_type_id: prev.employment_type_id || preview.prefill.employment_type_id || '',
+          reporting_manager_id: prev.reporting_manager_id || preview.prefill.reporting_manager_id || '',
+          date_of_joining: prev.date_of_joining || toDateInput(preview.prefill.date_of_joining),
+          personal_email: prev.personal_email || personalEmail,
+          personal_phone: prev.personal_phone || personalPhone,
+          present_address: addressFromCandidate(candidate.address, prev.present_address),
+          bank_name: prev.bank_name || preview.prefill.bank_name || '',
+          bank_account_number: prev.bank_account_number || preview.prefill.bank_account_number || '',
+          ifsc_code: prev.ifsc_code || preview.prefill.ifsc_code || '',
+          account_type: prev.account_type || preview.prefill.account_type || 'savings',
+          upi_id: prev.upi_id || preview.prefill.upi_id || '',
+        }));
+
+        setLoginForm(prev => ({
+          ...prev,
+          email: prev.email || personalEmail,
+          username: prev.username || (personalEmail ? personalEmail.split('@')[0] : ''),
+        }));
+      })
+      .catch(() => {
+        prefillAppliedRef.current = false;
+      });
+  }, []);
+
   /* Fetch static dropdown data */
   useEffect(() => {
     Promise.all([
@@ -267,6 +345,34 @@ export default function AddEmployeePage() {
     setLoginForm(prev => ({ ...prev, [field]: value }));
   }, []);
 
+  /* Fetch IFSC Details */
+  const [ifscDetails, setIfscDetails] = useState<{ bank: string; branch: string } | null>(null);
+  const [isFetchingIfsc, setIsFetchingIfsc] = useState(false);
+
+  useEffect(() => {
+    const code = form.ifsc_code.trim().toUpperCase();
+    if (/^[A-Z]{4}0[A-Z0-9]{6}$/.test(code)) {
+      setIsFetchingIfsc(true);
+      fetch(`https://ifsc.razorpay.com/${code}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data && data.BANK && data.BRANCH) {
+            setIfscDetails({ bank: data.BANK, branch: data.BRANCH });
+            setForm((prev: any) => ({
+              ...prev,
+              bank_name: prev.bank_name || data.BANK
+            }));
+          } else {
+            setIfscDetails(null);
+          }
+        })
+        .catch(() => setIfscDetails(null))
+        .finally(() => setIsFetchingIfsc(false));
+    } else {
+      setIfscDetails(null);
+    }
+  }, [form.ifsc_code]);
+
   /* Document handling */
   const stageFiles = (files: FileList | null) => {
     if (!files) return;
@@ -295,6 +401,53 @@ export default function AddEmployeePage() {
     if (!form.department_id)     e.department_id   = 'Required';
     if (!form.branch_id)         e.branch_id       = 'Required';
     if (!form.position_id)       e.position_id     = 'Required';
+    
+    if (form.personal_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.personal_email)) {
+      e.personal_email = 'Invalid email format';
+    }
+    if (form.office_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.office_email)) {
+      e.office_email = 'Invalid email format';
+    }
+
+    // Identity validation
+    const rawAadhaar = form.aadhaar_number.replace(/\s/g, '');
+    if (!rawAadhaar) {
+      e.aadhaar_number = 'Required';
+    } else if (!/^\d{12}$/.test(rawAadhaar)) {
+      e.aadhaar_number = 'Aadhaar must be exactly 12 digits';
+    }
+
+    if (!form.pan_number.trim()) {
+      e.pan_number = 'Required';
+    } else if (!/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i.test(form.pan_number)) {
+      e.pan_number = 'Invalid PAN format (e.g., ABCDE1234F)';
+    }
+
+    if (form.passport_number.trim() && !/^[A-Z][0-9]{7}$/i.test(form.passport_number)) {
+      e.passport_number = 'Invalid Passport format (e.g., A1234567)';
+    }
+
+    if (form.driving_license_number.trim() && !/^[A-Z]{2}[0-9]{13}$/i.test(form.driving_license_number.replace(/[\s-]/g, ''))) {
+      e.driving_license_number = 'Invalid DL format (15 chars, e.g., MH0420230000001)';
+    }
+
+    if (form.voter_id.trim() && !/^[A-Z]{3}[0-9]{7}$/i.test(form.voter_id)) {
+      e.voter_id = 'Invalid Voter ID format (e.g., ABC1234567)';
+    }
+
+    // Payroll validation
+    if (form.bank_account_number.trim() && !/^\d{9,18}$/.test(form.bank_account_number)) {
+      e.bank_account_number = 'Account number must be 9-18 digits';
+    }
+
+    if (form.ifsc_code.trim() && !/^[A-Z]{4}0[A-Z0-9]{6}$/i.test(form.ifsc_code)) {
+      e.ifsc_code = 'Invalid IFSC format (e.g., SBIN0001234)';
+    }
+
+    if (form.uan_number.trim() && !/^\d{12}$/.test(form.uan_number)) {
+      e.uan_number = 'UAN must be exactly 12 digits';
+    }
+
     if (enableLogin) {
       if (!loginForm.email.trim())    e.login_email    = 'Required';
       if (!loginForm.password.trim()) e.login_password = 'Required';
@@ -311,8 +464,11 @@ export default function AddEmployeePage() {
     }
     setErrors(e);
     if (Object.keys(e).length > 0) {
-      const firstErrTab = e.first_name || e.last_name ? 0
+      const firstErrTab = e.first_name || e.last_name || e.date_of_birth ? 0
         : e.date_of_joining || e.department_id || e.branch_id || e.position_id || e.probation_end_date || e.end_date ? 1
+        : e.personal_email || e.office_email || e.personal_phone || e.alternate_phone ? 2
+        : e.aadhaar_number || e.pan_number || e.passport_number || e.driving_license_number || e.voter_id ? 3
+        : e.bank_account_number || e.ifsc_code || e.uan_number ? 4
         : e.login_email || e.login_password || e.login_confirm ? 7 : 0;
       setActiveTab(firstErrTab);
 
@@ -378,7 +534,37 @@ export default function AddEmployeePage() {
 
       router.push(orgId ? `/dashboard/hr/employees?org_id=${orgId}` : '/dashboard/hr/employees');
     } catch (err: any) {
-      alert(err.response?.data?.message || err.response?.data?.error || 'Failed to create employee');
+      let msg = err.response?.data?.message || err.response?.data?.error || 'Failed to create employee';
+      if (Array.isArray(msg)) msg = msg[0];
+      const msgLower = typeof msg === 'string' ? msg.toLowerCase() : '';
+
+      if (msgLower.includes('personal email')) {
+        setErrors({ personal_email: msg });
+        setActiveTab(2);
+      } else if (msgLower.includes('office email')) {
+        setErrors({ office_email: msg });
+        setActiveTab(2);
+      } else if (msgLower.includes('mobile number')) {
+        setErrors({ personal_phone: msg });
+        setActiveTab(2);
+      } else if (msgLower.includes('alternate number')) {
+        setErrors({ alternate_phone: msg });
+        setActiveTab(2);
+      } else if (msgLower.includes('aadhaar number')) {
+        setErrors({ aadhaar_number: msg });
+        setActiveTab(3);
+      } else if (msgLower.includes('pan number')) {
+        setErrors({ pan_number: msg });
+        setActiveTab(3);
+      } else if (msgLower.includes('passport number')) {
+        setErrors({ passport_number: msg });
+        setActiveTab(3);
+      } else if (msgLower.includes('18 years old')) {
+        setErrors({ date_of_birth: msg });
+        setActiveTab(0);
+      } else {
+        alert(msg);
+      }
     } finally {
       setSaving(false);
     }
@@ -430,8 +616,9 @@ export default function AddEmployeePage() {
         <Field label="Nickname / Preferred Name">
           <Input value={form.nickname} onChange={e => set('nickname', e.target.value)} placeholder="How they prefer to be called" />
         </Field>
-        <Field label="Date of Birth">
-          <Input type="date" value={form.date_of_birth} onChange={e => set('date_of_birth', e.target.value)} />
+        <Field label="Date of Birth" className={errors.date_of_birth ? 'ring-red-500' : ''}>
+          <Input type="date" id="date_of_birth" value={form.date_of_birth} onChange={e => set('date_of_birth', e.target.value)} className={errors.date_of_birth ? 'border-red-400' : ''} />
+          {errors.date_of_birth && <p className="text-xs text-red-500 mt-1">{errors.date_of_birth}</p>}
         </Field>
         <Field label="Gender">
           <select value={form.gender} onChange={e => set('gender', e.target.value)} className={SEL}>
@@ -568,18 +755,22 @@ export default function AddEmployeePage() {
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
         <Field label="Mobile Number">
           <PhoneNumberInput value={form.personal_phone} onChange={v => set('personal_phone', v)} />
+          {errors.personal_phone && <p className="text-xs text-red-500 mt-1">{errors.personal_phone}</p>}
         </Field>
         <Field label="Alternate Number">
-          <Input type="tel" value={form.alternate_phone} onChange={e => set('alternate_phone', e.target.value)} />
+          <PhoneNumberInput value={form.alternate_phone} onChange={v => set('alternate_phone', v)} />
+          {errors.alternate_phone && <p className="text-xs text-red-500 mt-1">{errors.alternate_phone}</p>}
         </Field>
         <Field label="Office Telephone">
-          <Input type="tel" value={form.office_telephone} onChange={e => set('office_telephone', e.target.value)} />
+          <PhoneNumberInput value={form.office_telephone} onChange={v => set('office_telephone', v)} />
         </Field>
         <Field label="Personal Email">
-          <Input type="email" value={form.personal_email} onChange={e => set('personal_email', e.target.value)} />
+          <Input id="personal_email" type="email" value={form.personal_email} onChange={e => set('personal_email', e.target.value)} className={errors.personal_email ? 'border-red-400' : ''} />
+          {errors.personal_email && <p className="text-xs text-red-500 mt-1">{errors.personal_email}</p>}
         </Field>
         <Field label="Office Email">
-          <Input type="email" value={form.office_email} onChange={e => set('office_email', e.target.value)} placeholder="name@company.com" />
+          <Input id="office_email" type="email" value={form.office_email} onChange={e => set('office_email', e.target.value)} placeholder="name@company.com" className={errors.office_email ? 'border-red-400' : ''} />
+          {errors.office_email && <p className="text-xs text-red-500 mt-1">{errors.office_email}</p>}
         </Field>
       </div>
 
@@ -620,22 +811,57 @@ export default function AddEmployeePage() {
 
   const renderIdentity = () => (
     <div>
-      <SectionTitle title="Government ID Numbers" subtitle="All fields are optional. Stored securely." />
+      <SectionTitle title="Government ID Numbers" subtitle="Aadhaar and PAN are mandatory for payroll compliance. Stored securely." />
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-        <Field label="Aadhaar Number">
-          <Input value={form.aadhaar_number} onChange={e => set('aadhaar_number', e.target.value)} placeholder="XXXX XXXX XXXX" maxLength={14} />
+        <Field label="Aadhaar Number" required className={errors.aadhaar_number ? 'ring-red-500' : ''}>
+          <Input 
+            id="aadhaar_number"
+            value={form.aadhaar_number} 
+            onChange={e => set('aadhaar_number', e.target.value)} 
+            placeholder="XXXX XXXX XXXX" 
+            maxLength={14} 
+            className={errors.aadhaar_number ? 'border-red-400' : ''}
+          />
+          {errors.aadhaar_number && <p className="text-xs text-red-500 mt-1">{errors.aadhaar_number}</p>}
         </Field>
-        <Field label="PAN Number">
-          <Input value={form.pan_number} onChange={e => set('pan_number', e.target.value.toUpperCase())} placeholder="ABCDE1234F" maxLength={10} />
+        <Field label="PAN Number" required className={errors.pan_number ? 'ring-red-500' : ''}>
+          <Input 
+            id="pan_number"
+            value={form.pan_number} 
+            onChange={e => set('pan_number', e.target.value.toUpperCase())} 
+            placeholder="ABCDE1234F" 
+            maxLength={10}
+            className={errors.pan_number ? 'border-red-400 uppercase' : 'uppercase'} 
+          />
+          {errors.pan_number && <p className="text-xs text-red-500 mt-1">{errors.pan_number}</p>}
         </Field>
-        <Field label="Passport Number">
-          <Input value={form.passport_number} onChange={e => set('passport_number', e.target.value.toUpperCase())} placeholder="A1234567" />
+        <Field label="Passport Number" className={errors.passport_number ? 'ring-red-500' : ''}>
+          <Input 
+            id="passport_number"
+            value={form.passport_number} 
+            onChange={e => set('passport_number', e.target.value.toUpperCase())} 
+            placeholder="A1234567" 
+            className={errors.passport_number ? 'border-red-400' : ''}
+          />
+          {errors.passport_number && <p className="text-xs text-red-500 mt-1">{errors.passport_number}</p>}
         </Field>
-        <Field label="Driving License">
-          <Input value={form.driving_license_number} onChange={e => set('driving_license_number', e.target.value.toUpperCase())} />
+        <Field label="Driving License" className={errors.driving_license_number ? 'ring-red-500' : ''}>
+          <Input 
+            id="driving_license_number"
+            value={form.driving_license_number} 
+            onChange={e => set('driving_license_number', e.target.value.toUpperCase())} 
+            className={errors.driving_license_number ? 'border-red-400' : ''}
+          />
+          {errors.driving_license_number && <p className="text-xs text-red-500 mt-1">{errors.driving_license_number}</p>}
         </Field>
-        <Field label="Voter ID">
-          <Input value={form.voter_id} onChange={e => set('voter_id', e.target.value.toUpperCase())} />
+        <Field label="Voter ID" className={errors.voter_id ? 'ring-red-500' : ''}>
+          <Input 
+            id="voter_id"
+            value={form.voter_id} 
+            onChange={e => set('voter_id', e.target.value.toUpperCase())} 
+            className={errors.voter_id ? 'border-red-400' : ''}
+          />
+          {errors.voter_id && <p className="text-xs text-red-500 mt-1">{errors.voter_id}</p>}
         </Field>
         <Field label="Employee Card Number" hint="Physical ID card / access card">
           <Input value={form.employee_card_number} onChange={e => set('employee_card_number', e.target.value)} />
@@ -651,11 +877,38 @@ export default function AddEmployeePage() {
         <Field label="Bank Name">
           <Input value={form.bank_name} onChange={e => set('bank_name', e.target.value)} placeholder="e.g. SBI, HDFC, ICICI" />
         </Field>
-        <Field label="Account Number">
-          <Input value={form.bank_account_number} onChange={e => set('bank_account_number', e.target.value)} placeholder="Bank account number" />
+        <Field label="Account Number" className={errors.bank_account_number ? 'ring-red-500' : ''}>
+          <Input 
+            id="bank_account_number"
+            value={form.bank_account_number} 
+            onChange={e => set('bank_account_number', e.target.value)} 
+            placeholder="Bank account number" 
+            className={errors.bank_account_number ? 'border-red-400' : ''}
+          />
+          {errors.bank_account_number && <p className="text-xs text-red-500 mt-1">{errors.bank_account_number}</p>}
         </Field>
-        <Field label="IFSC Code">
-          <Input value={form.ifsc_code} onChange={e => set('ifsc_code', e.target.value.toUpperCase())} placeholder="SBIN0001234" maxLength={11} />
+        <Field label="IFSC Code" className={errors.ifsc_code ? 'ring-red-500' : ''}>
+          <div className="relative">
+            <Input 
+              id="ifsc_code"
+              value={form.ifsc_code} 
+              onChange={e => set('ifsc_code', e.target.value.toUpperCase())} 
+              placeholder="SBIN0001234" 
+              maxLength={11} 
+              className={errors.ifsc_code ? 'border-red-400' : ''}
+            />
+            {isFetchingIfsc && (
+              <div className="absolute right-3 top-2.5">
+                <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+          </div>
+          {errors.ifsc_code && <p className="text-xs text-red-500 mt-1">{errors.ifsc_code}</p>}
+          {ifscDetails && !errors.ifsc_code && (
+            <p className="text-xs text-emerald-600 font-medium mt-1">
+              Branch: {ifscDetails.branch}
+            </p>
+          )}
         </Field>
         <Field label="Account Type">
           <select value={form.account_type} onChange={e => set('account_type', e.target.value)} className={SEL}>
@@ -667,14 +920,6 @@ export default function AddEmployeePage() {
         <Field label="UPI ID">
           <Input value={form.upi_id} onChange={e => set('upi_id', e.target.value)} placeholder="name@upi" />
         </Field>
-        <Field label="Salary Payment Method">
-          <select value={form.salary_payment_method} onChange={e => set('salary_payment_method', e.target.value)} className={SEL}>
-            <option value="bank_transfer">Bank Transfer (NEFT/IMPS)</option>
-            <option value="upi">UPI</option>
-            <option value="cash">Cash</option>
-            <option value="cheque">Cheque</option>
-          </select>
-        </Field>
       </div>
 
       <Divider />
@@ -683,8 +928,16 @@ export default function AddEmployeePage() {
         <Field label="PF Number">
           <Input value={form.pf_number} onChange={e => set('pf_number', e.target.value)} />
         </Field>
-        <Field label="UAN Number">
-          <Input value={form.uan_number} onChange={e => set('uan_number', e.target.value)} placeholder="12-digit UAN" maxLength={12} />
+        <Field label="UAN Number" className={errors.uan_number ? 'ring-red-500' : ''}>
+          <Input 
+            id="uan_number"
+            value={form.uan_number} 
+            onChange={e => set('uan_number', e.target.value)} 
+            placeholder="12-digit UAN" 
+            maxLength={12} 
+            className={errors.uan_number ? 'border-red-400' : ''}
+          />
+          {errors.uan_number && <p className="text-xs text-red-500 mt-1">{errors.uan_number}</p>}
         </Field>
         <Field label="ESIC Number">
           <Input value={form.esic_number} onChange={e => set('esic_number', e.target.value)} />

@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Put, Body, Param, Query, Req, UseGuards, HttpCode, HttpStatus,
+  Controller, Get, Post, Put, Body, Param, Query, Req, UseGuards, HttpCode, HttpStatus, BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
@@ -8,7 +8,7 @@ import { PermissionGuard } from '../../auth/guards/permission.guard';
 import { RequirePermission } from '../../auth/decorators/require-permission.decorator';
 import { PERMISSIONS } from '../../../shared/permissions.constants';
 import { PayrollService } from '../services/payroll.service';
-import { AttendanceSummaryService } from '../services/attendance-summary.service';
+import { AttendanceSummaryService, ManualAttendanceSummaryAdjustment } from '../services/attendance-summary.service';
 import { UserHierarchyService } from '../../platform/services/user-hierarchy.service';
 import { PayrollLockService, SummaryScope } from '../../platform/services/payroll-lock.service';
 import { NotificationEmitterService } from '../../notifications/services/notification-emitter.service';
@@ -78,7 +78,9 @@ export class PayrollController {
   async generatePayslips(@Req() req: Request, @Body() data: { month: number; year: number; branch_id?: string }) {
     const user = (req as any).user;
     const tenantId = user.tenantId || user.tenant_id;
-    const payslips = await this.service.generatePayslips(tenantId, data.month, data.year, data.branch_id);
+    const userId = user.id ?? user.sub ?? null;
+    const requestId = (req as any).headers?.['x-request-id'] ?? null;
+    const payslips = await this.service.generatePayslips(tenantId, data.month, data.year, data.branch_id, userId, requestId);
     return { success: true, data: payslips, error: null };
   }
 
@@ -126,6 +128,7 @@ export class PayrollController {
   async listAttendanceSummaries(@Req() req: Request, @Query() query: any) {
     const user = (req as any).user;
     const tenantId = user.tenantId || user.tenant_id;
+    const accessScope = await this.userHierarchyService.getAccessScope(user, tenantId);
     const data = await this.summaryService.listSummaries(
       tenantId,
       parseInt(query.year ?? new Date().getFullYear().toString(), 10),
@@ -133,7 +136,7 @@ export class PayrollController {
       {
         branch_id: query.branch_id, department_id: query.department_id, employee_id: query.employee_id,
         status: query.status, leave_type: query.leave_type, attendance_state: query.attendance_state,
-        search: query.search,
+        search: query.search, accessScope,
       },
     );
     return { success: true, data, error: null };
@@ -145,11 +148,12 @@ export class PayrollController {
   async getAttendanceSummaryKpis(@Req() req: Request, @Query() query: any) {
     const user = (req as any).user;
     const tenantId = user.tenantId || user.tenant_id;
+    const accessScope = await this.userHierarchyService.getAccessScope(user, tenantId);
     const data = await this.summaryService.getKpis(
       tenantId,
       parseInt(query.year ?? new Date().getFullYear().toString(), 10),
       parseInt(query.month ?? (new Date().getMonth() + 1).toString(), 10),
-      { branch_id: query.branch_id, department_id: query.department_id },
+      { branch_id: query.branch_id, department_id: query.department_id, accessScope },
     );
     return { success: true, data, error: null };
   }
@@ -179,7 +183,17 @@ export class PayrollController {
     const tenantId = user.tenantId || user.tenant_id;
     const userId = user.id ?? user.sub ?? null;
     const scope: SummaryScope = body.scope ?? { type: 'organization' };
-    const result = await this.summaryService.compute(tenantId, body.year, body.month, scope, userId);
+    let result: Awaited<ReturnType<AttendanceSummaryService['compute']>>;
+
+    try {
+      result = await this.summaryService.compute(tenantId, body.year, body.month, scope, userId);
+    } catch (err: any) {
+      throw new BadRequestException(
+        err?.message
+          ? `Attendance summaries could not be computed: ${err.message}`
+          : 'Attendance summaries could not be computed. Check payroll prerequisites and try again.',
+      );
+    }
 
     await this.notifications.emit(tenantId, {
       title: 'Attendance Summary Generated',
@@ -201,6 +215,31 @@ export class PayrollController {
     const tenantId = user.tenantId || user.tenant_id;
     const userId = user.id ?? user.sub ?? 'unknown';
     const data = await this.summaryService.recompute(tenantId, id, userId);
+    return { success: true, data, error: null };
+  }
+
+  @Put('attendance-summary/:id/manual-adjustment')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission(PERMISSIONS.PAYROLL_EDIT)
+  @ApiOperation({ summary: 'Manually edit attendance summary day/hour figures for review' })
+  @ApiParam({ name: 'id', description: 'payroll_attendance_summary UUID' })
+  async manuallyAdjustAttendanceSummary(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: { adjustments?: ManualAttendanceSummaryAdjustment },
+  ) {
+    const user = (req as any).user;
+    const tenantId = user.tenantId || user.tenant_id;
+    const userId = user.id ?? user.sub ?? 'unknown';
+    const data = await this.summaryService.applyManualAdjustment(tenantId, id, userId, body?.adjustments ?? {});
+
+    await this.notifications.emit(tenantId, {
+      title: 'Attendance Summary Manually Adjusted',
+      message: `Attendance summary for ${data.period_start} – ${data.period_end} was manually adjusted and is pending review.`,
+      type: 'info', priority: 'medium', sourceModule: 'payroll',
+      entityType: 'attendance_summary', entityId: id, branchId: data.branch_id ?? undefined, departmentId: data.department_id ?? undefined,
+    }).catch(() => {});
+
     return { success: true, data, error: null };
   }
 

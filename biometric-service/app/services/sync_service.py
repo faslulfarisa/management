@@ -3,8 +3,8 @@ Sync service — pulls raw punch data from ZKTeco devices via pyzk,
 stores it locally, and forwards it to NestJS for attendance processing.
 
 This service is intentionally thin: it is a pyzk TCP adapter only.
-All attendance calculation (shift lookup, late minutes, UPSERT) lives
-exclusively in the NestJS AttendanceEngineService.
+All attendance calculation and HRMS attendance writes live
+exclusively in the NestJS HRMS backend.
 """
 
 import logging

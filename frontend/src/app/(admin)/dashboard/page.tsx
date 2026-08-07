@@ -1173,7 +1173,7 @@ function InlineEmpty({ label }: { label: string }) {
   );
 }
 
-/* ─── organization platform overview — browser-tab layout ───────── */
+/* ─── organization platform overview ───────── */
 interface OrgSummary {
   id: string; name: string; slug: string; status: string;
   emp_code_prefix?: string; timezone: string;
@@ -1221,6 +1221,14 @@ function PlatformDashboard() {
 
   useEffect(() => { fetchOrgs(); }, []);
 
+  useEffect(() => {
+    if (!orgs.length) return;
+    const headerOrg = selectedTenantId && orgs.find(o => o.id === selectedTenantId);
+    setSelectedId(headerOrg ? headerOrg.id : orgs[0].id);
+    setSubTab('overview');
+    setEmployeeFilter(null);
+  }, [orgs, selectedTenantId]);
+
   const selectedOrg = orgs.find(o => o.id === selectedId);
 
   const orgColor = (i: number) =>
@@ -1255,43 +1263,9 @@ function PlatformDashboard() {
         </div>
       ) : (
         <>
-          {/* ── Browser-style org tab bar ── */}
-          <div className="flex items-end overflow-x-auto gap-0.5 border-b border-border pb-0 scrollbar-hide">
-            {orgs.map((org, i) => {
-              const active = org.id === selectedId;
-              return (
-                <button
-                  key={org.id}
-                  onClick={() => { setSelectedId(org.id); setSubTab('overview'); setEmployeeFilter(null); }}
-                  className={`
-                    group relative flex items-center gap-2 px-4 py-2.5 text-sm whitespace-nowrap
-                    border border-b-0 rounded-t-lg transition-all min-w-0 shrink-0
-                    ${active
-                      ? 'bg-white border-border text-foreground font-semibold shadow-sm -mb-px z-10'
-                      : 'bg-muted/50 border-transparent text-muted-foreground hover:bg-muted hover:text-foreground'
-                    }
-                  `}
-                >
-                  <div
-                    className="w-4 h-4 rounded-sm shrink-0 flex items-center justify-center text-white text-[9px] font-bold"
-                    style={{ background: orgColor(i) }}
-                  >
-                    {org.name[0]?.toUpperCase()}
-                  </div>
-                  <span className="max-w-[140px] truncate">{org.name}</span>
-                  {org.status !== 'active' && (
-                    <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 shrink-0">
-                      {org.status}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
           {/* ── Content panel for selected org ── */}
           {selectedOrg && (
-            <div className="bg-white border border-border border-t-0 rounded-b-2xl overflow-hidden">
+            <div className="bg-white border border-border rounded-2xl overflow-hidden shadow-sm">
               {/* Org info bar */}
               <div className="flex items-center justify-between px-5 py-3 border-b border-border bg-muted/20">
                 <div className="flex items-center gap-3">
@@ -1367,7 +1341,6 @@ export default function DashboardPage() {
   const [financeMetrics, setFinanceMetrics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const usePlatformDashboard =
-    userType === 'super_admin' ||
     userType === 'org_admin' ||
     !!activeOrganization?.isOrgAdmin;
 

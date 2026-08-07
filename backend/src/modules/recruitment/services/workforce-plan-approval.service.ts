@@ -3,6 +3,7 @@ import { DatabaseService } from '../../../shared/database.service';
 import { ApprovalEngineService } from '../../approvals/services/approval-engine.service';
 import { AuditLogService } from '../../platform/services/audit-log.service';
 import { WorkforcePlanService } from './workforce-plan.service';
+import { isOrganizationAdmin } from './recruitment-approval-bypass.util';
 
 const WORKFLOW_TYPE = 'workforce_plan';
 
@@ -27,6 +28,29 @@ export class WorkforcePlanApprovalService {
     const plan = await this.plans.getRaw(planId, tenantId);
     if (!['draft', 'rejected'].includes(plan.status)) {
       throw new BadRequestException(`Cannot submit a workforce plan with status '${plan.status}' for approval`);
+    }
+
+    if (await isOrganizationAdmin(this.db, tenantId, submittedById)) {
+      await this.db.query(
+        `UPDATE workforce_plans
+         SET approval_status = 'approved',
+             approved_by = $3,
+             approved_at = now(),
+             approval_reason = 'Auto-approved by organization admin',
+             updated_at = now()
+         WHERE id = $1 AND tenant_id = $2`,
+        [planId, tenantId, submittedById],
+      );
+      const activePlan = await this.plans.activate(planId, tenantId);
+      await this.auditLog.log({
+        tenantId,
+        userId: submittedById,
+        entityType: 'workforce_plan',
+        entityId: planId,
+        action: 'auto_approve',
+        newValues: { reason: 'Organization admin action' },
+      });
+      return activePlan;
     }
 
     await this.db.query(

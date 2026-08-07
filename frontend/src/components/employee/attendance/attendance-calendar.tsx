@@ -15,16 +15,43 @@ interface CalendarProps {
   onDayPress?: (date: string) => void;
 }
 
+type CalendarStatus = 'present' | 'absent' | 'late' | 'half_day' | 'holiday';
+
+const CALENDAR_STATUS_STYLES: Record<CalendarStatus, string> = {
+  present: 'bg-emerald-50 text-emerald-700 border-emerald-100 hover:bg-emerald-100',
+  absent: 'bg-red-600 text-white border-red-600 hover:bg-red-700',
+  late: 'bg-white text-slate-700 border-red-300 hover:bg-red-50',
+  half_day: 'bg-orange-50 text-orange-700 border-orange-100 hover:bg-orange-100',
+  holiday: 'bg-cyan-50 text-cyan-700 border-cyan-100 hover:bg-cyan-100',
+};
+
+function getRecordDateKey(date: string) {
+  try {
+    return format(parseISO(date), 'yyyy-MM-dd');
+  } catch {
+    return date.split('T')[0];
+  }
+}
+
+function resolveCalendarStatus(record: EmployeeAttendanceRecord | undefined, inferredAbsent: boolean): CalendarStatus | null {
+  if (!record?.status) return inferredAbsent ? 'absent' : null;
+  if (record.status === 'absent' || record.status === 'half_day') return record.status;
+  if (record.status === 'late' || record.late_minutes > 0) return 'late';
+  return 'present';
+}
+
 export function AttendanceCalendar({ onDayPress }: CalendarProps) {
   const today = new Date();
   const [viewDate, setViewDate] = useState(today);
 
-  const month = viewDate.getMonth() + 1;
-  const year = viewDate.getFullYear();
+  const monthStart = useMemo(() => startOfMonth(viewDate), [viewDate]);
+  const monthEnd = useMemo(() => endOfMonth(viewDate), [viewDate]);
+  const dateFrom = format(monthStart, 'yyyy-MM-dd');
+  const dateTo = format(monthEnd, 'yyyy-MM-dd');
 
   const { data: historyData, isLoading } = useQuery({
-    queryKey: ['employee-attendance-history', month, year],
-    queryFn: () => employeeApi.getAttendanceHistory({ month, year, limit: 31 }),
+    queryKey: ['employee-attendance-history', dateFrom, dateTo],
+    queryFn: () => employeeApi.getAttendanceHistory({ date_from: dateFrom, date_to: dateTo, limit: 31 }),
     staleTime: 5 * 60_000,
   });
 
@@ -34,21 +61,26 @@ export function AttendanceCalendar({ onDayPress }: CalendarProps) {
     staleTime: 5 * 60_000,
   });
 
+  const { data: holidaysData, isLoading: isHolidaysLoading } = useQuery({
+    queryKey: ['employee-holidays', dateFrom, dateTo],
+    queryFn: () => employeeApi.getHolidays({ date_from: dateFrom, date_to: dateTo }),
+    staleTime: 5 * 60_000,
+  });
+
   const recordsByDate = useMemo(() => {
     const map: Record<string, EmployeeAttendanceRecord> = {};
-    (historyData?.data ?? []).forEach((r) => { map[r.date] = r; });
+    (historyData?.data ?? []).forEach((r) => { map[getRecordDateKey(r.date)] = r; });
     return map;
   }, [historyData]);
 
-  const days = eachDayOfInterval({ start: startOfMonth(viewDate), end: endOfMonth(viewDate) });
-  const startPad = getDay(startOfMonth(viewDate)); // 0 = Sun
+  const holidaysByDate = useMemo(() => {
+    const map: Record<string, { name: string; type: string }> = {};
+    (holidaysData ?? []).forEach((holiday) => { map[getRecordDateKey(holiday.date)] = holiday; });
+    return map;
+  }, [holidaysData]);
 
-  const statusStyle: Record<string, string> = {
-    present:  'bg-emerald-500 text-white',
-    late:     'bg-orange-400 text-white',
-    half_day: 'bg-amber-400 text-white',
-    absent:   'bg-red-400 text-white',
-  };
+  const days = useMemo(() => eachDayOfInterval({ start: monthStart, end: monthEnd }), [monthStart, monthEnd]);
+  const startPad = getDay(monthStart); // 0 = Sun
 
   const joiningDate = useMemo(() => {
     if (!employeeProfile?.date_of_joining) return null;
@@ -63,16 +95,50 @@ export function AttendanceCalendar({ onDayPress }: CalendarProps) {
   const prev = () => setViewDate((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1));
   const next = () => setViewDate((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1));
 
-  // Summary counts
   const summary = useMemo(() => {
-    const list = historyData?.data ?? [];
-    return {
-      present: list.filter(r => r.status === 'present').length,
-      late:    list.filter(r => r.status === 'late').length,
-      absent:  list.filter(r => r.status === 'absent').length,
-      half:    list.filter(r => r.status === 'half_day').length,
-    };
-  }, [historyData]);
+    return days.reduce(
+      (acc, day) => {
+        const dateStr = format(day, 'yyyy-MM-dd');
+        const record = recordsByDate[dateStr];
+        const holiday = holidaysByDate[dateStr];
+        const weeklyOff = getDay(day) === 0; // Only Sundays are Weekly Off
+        const future = isFuture(day) && !isToday(day);
+        const todayDay = isToday(day);
+        const beforeJoining = joiningDate ? isBefore(startOfDay(day), joiningDate) : false;
+
+        let status: CalendarStatus | null = null;
+        
+        if (record?.status) {
+          // 1. Present (Green): Attendance record exists
+          status = resolveCalendarStatus(record, false);
+        } else if (future || beforeJoining) {
+          // 5. Future/Inactive: Should remain faded/null and not affect stats
+          status = null;
+        } else if (holiday) {
+          // 2. Holiday (Cyan): No record, but exists in Holiday Policy
+          status = 'holiday';
+        } else if (weeklyOff) {
+          // 3. Weekly Off (Cyan): Only Sundays
+          status = 'holiday';
+        } else if (!todayDay) {
+          // 4. Absent (Red): Past working day (Mon-Sat), not holiday, after joining, no record
+          status = 'absent';
+        } else {
+          // Today, no record yet
+          status = null;
+        }
+
+        if (status === 'present' || status === 'late') acc.present += 1;
+        if (status === 'late') acc.late += 1;
+        if (status === 'absent') acc.absent += 1;
+        if (status === 'half_day') acc.half += 1;
+        if (status === 'holiday') acc.holiday += 1;
+
+        return acc;
+      },
+      { present: 0, late: 0, absent: 0, half: 0, holiday: 0 },
+    );
+  }, [days, holidaysByDate, joiningDate, recordsByDate]);
 
   return (
     <div className="rounded-2xl border border-border bg-card overflow-hidden">
@@ -99,7 +165,7 @@ export function AttendanceCalendar({ onDayPress }: CalendarProps) {
       </div>
 
       {/* Calendar grid */}
-      {isLoading || isProfileLoading ? (
+      {isLoading || isProfileLoading || isHolidaysLoading ? (
         <div className="h-40 flex items-center justify-center">
           <div className="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
         </div>
@@ -111,18 +177,37 @@ export function AttendanceCalendar({ onDayPress }: CalendarProps) {
           {days.map((day) => {
             const dateStr = format(day, 'yyyy-MM-dd');
             const record = recordsByDate[dateStr];
+            const holiday = holidaysByDate[dateStr];
+            const weeklyOff = getDay(day) === 0; // Only Sundays are Weekly Off
             const future = isFuture(day) && !isToday(day);
             const todayDay = isToday(day);
             const beforeJoining = joiningDate ? isBefore(startOfDay(day), joiningDate) : false;
-            const inferredAbsent = !record?.status && !future && !todayDay && !beforeJoining;
+            
+            let calendarStatus: CalendarStatus | null = null;
+            if (record?.status) {
+              calendarStatus = resolveCalendarStatus(record, false);
+            } else if (future || beforeJoining) {
+              calendarStatus = null;
+            } else if (holiday) {
+              calendarStatus = 'holiday';
+            } else if (weeklyOff) {
+              calendarStatus = 'holiday';
+            } else if (!todayDay) {
+              calendarStatus = 'absent';
+            } else {
+              calendarStatus = null;
+            }
+
             const disabled = future || beforeJoining;
             const ariaLabel = beforeJoining
               ? `${format(day, 'd MMM yyyy')} - before joining`
-              : record?.status
-                ? `${format(day, 'd MMM yyyy')} - ${record.status.replace('_', ' ')}`
-                : inferredAbsent
-                  ? `${format(day, 'd MMM yyyy')} - absent`
-                  : format(day, 'd MMM yyyy');
+              : holiday && !record?.status
+                ? `${format(day, 'd MMM yyyy')} - ${holiday.name}`
+              : weeklyOff && !record?.status
+                ? `${format(day, 'd MMM yyyy')} - weekly off`
+              : calendarStatus
+                ? `${format(day, 'd MMM yyyy')} - ${calendarStatus.replace('_', ' ')}`
+                : format(day, 'd MMM yyyy');
 
             return (
               <button
@@ -132,11 +217,10 @@ export function AttendanceCalendar({ onDayPress }: CalendarProps) {
                 aria-label={ariaLabel}
                 title={ariaLabel}
                 className={cn(
-                  'relative flex items-center justify-center h-8 w-full rounded-lg text-xs font-medium transition-colors',
-                  record?.status ? statusStyle[record.status] : '',
-                  inferredAbsent ? 'bg-red-50 text-red-500 hover:bg-red-100' : '',
+                  'relative flex items-center justify-center h-8 w-full rounded-lg border-2 border-transparent text-xs font-medium transition-colors',
+                  calendarStatus ? CALENDAR_STATUS_STYLES[calendarStatus] : '',
                   !record?.status && todayDay ? 'ring-2 ring-primary text-primary' : '',
-                  !record?.status && !inferredAbsent && !future && !todayDay && !beforeJoining ? 'text-foreground hover:bg-muted' : '',
+                  !calendarStatus && !disabled && !todayDay ? 'text-foreground hover:bg-muted' : '',
                   disabled ? 'text-muted-foreground/30 cursor-default bg-muted/30' : '',
                 )}
               >
@@ -148,12 +232,13 @@ export function AttendanceCalendar({ onDayPress }: CalendarProps) {
       )}
 
       {/* Summary row */}
-      <div className="grid grid-cols-4 border-t border-border divide-x divide-border">
+      <div className="grid grid-cols-5 border-t border-border divide-x divide-border">
         {[
           { label: 'Present', value: summary.present, color: 'text-emerald-600' },
-          { label: 'Late',    value: summary.late,    color: 'text-orange-500'  },
-          { label: 'Absent',  value: summary.absent,  color: 'text-red-500'     },
-          { label: 'Half',    value: summary.half,    color: 'text-amber-500'   },
+          { label: 'Late',    value: summary.late,    color: 'text-red-600'     },
+          { label: 'Absent',  value: summary.absent,  color: 'text-red-700'     },
+          { label: 'Half',    value: summary.half,    color: 'text-orange-600'  },
+          { label: 'Holiday', value: summary.holiday, color: 'text-cyan-600'    },
         ].map(({ label, value, color }) => (
           <div key={label} className="flex flex-col items-center py-2.5">
             <p className={cn('text-base font-bold', color)}>{value}</p>

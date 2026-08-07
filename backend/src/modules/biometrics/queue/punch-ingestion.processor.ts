@@ -4,8 +4,8 @@ import { Job } from 'bull';
 import { AttendanceEngineService } from '../engine/attendance-engine.service';
 import { PunchEventDto, PunchDirection, VerifyMethod, AttendanceSource } from '../dto/punch-event.dto';
 import { PUNCH_INGESTION_QUEUE, PUNCH_INGESTION_JOB, PunchIngestionJobData } from './punch-ingestion.types';
-import { BiometricsGateway } from '../gateways/biometrics.gateway';
 import { BiometricsMetricsService } from '../../../shared/metrics/biometrics-metrics.service';
+import { OfflineBufferService } from '../services/offline-buffer.service';
 
 @Processor(PUNCH_INGESTION_QUEUE)
 export class PunchIngestionProcessor {
@@ -13,8 +13,8 @@ export class PunchIngestionProcessor {
 
   constructor(
     private readonly engine: AttendanceEngineService,
-    private readonly gateway: BiometricsGateway,
     private readonly metrics: BiometricsMetricsService,
+    private readonly offlineBuffer: OfflineBufferService,
   ) {}
 
   @Process({ name: PUNCH_INGESTION_JOB, concurrency: 10 })
@@ -42,12 +42,48 @@ export class PunchIngestionProcessor {
       verifyMethod: e.verifyMethod as VerifyMethod,
       providerName: e.providerName,
       deviceId: e.deviceId,
+      terminalSerialNumber: e.terminalSerialNumber,
+      workCode: e.workCode,
+      punchState: e.punchState,
+      rawVerifyType: e.rawVerifyType,
+      gps: e.gps
+        ? {
+            latitude: e.gps.latitude,
+            longitude: e.gps.longitude,
+            accuracyMeters: e.gps.accuracyMeters,
+            recordedAt: e.gps.recordedAt ? new Date(e.gps.recordedAt) : undefined,
+          }
+        : undefined,
+      photo: e.photo
+        ? {
+            url: e.photo.url,
+            objectKey: e.photo.objectKey,
+            sha256: e.photo.sha256,
+            capturedAt: e.photo.capturedAt ? new Date(e.photo.capturedAt) : undefined,
+          }
+        : undefined,
+      locationMetadata: e.locationMetadata,
+      requestId: e.requestId ?? requestId,
+      correlationId: e.correlationId ?? correlationId,
+      syncBatchId: e.syncBatchId,
+      sourceIp: e.sourceIp,
+      sourceUserAgent: e.sourceUserAgent,
       terminalId: e.terminalId,
       attendanceSource: e.attendanceSource as AttendanceSource | undefined,
-      rawPayload: e.rawPayload,
+      rawPayload: {
+        ...(e.rawPayload ?? {}),
+        queue: {
+          name: PUNCH_INGESTION_QUEUE,
+          job_id: String(job.id),
+          attempt: job.attemptsMade + 1,
+          request_id: requestId,
+          submitted_at: job.data.submittedAt,
+        },
+      },
     }));
 
     const result = await this.engine.processPunchEvents(tenantId, integrationId, dtos);
+    await this.offlineBuffer.markProcessed(job.data).catch(() => undefined);
 
     timer();
 
@@ -77,18 +113,6 @@ export class PunchIngestionProcessor {
       }),
     );
 
-    // Broadcast each processed punch to connected WebSocket clients
-    for (const dto of dtos) {
-      this.gateway.broadcastPunch({
-        tenantId,
-        employeeCode: dto.employeeCode,
-        timestamp: dto.timestamp.toISOString(),
-        punchType: dto.punchType,
-        provider: providerName,
-        deviceId: dto.deviceId,
-      });
-    }
-
     return result;
   }
 
@@ -111,12 +135,7 @@ export class PunchIngestionProcessor {
 
     if (job.attemptsMade >= (job.opts.attempts ?? 3)) {
       this.metrics.dlqTotal.inc();
-      this.gateway.broadcastAlert(tenantId, {
-        type: 'dlq_spike',
-        jobId: job.id,
-        provider: providerName,
-        error: error.message,
-      });
+      this.offlineBuffer.markFailed(job.data, error).catch(() => undefined);
     }
   }
 }

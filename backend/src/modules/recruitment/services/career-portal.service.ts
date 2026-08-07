@@ -7,6 +7,25 @@ import { NotificationEmitterService } from '../../notifications/services/notific
 import { CandidateService, CandidateContactInput } from './candidate.service';
 import { ApplicationService } from './application.service';
 
+const PUBLIC_APPLICATION_SOURCES = new Set([
+  'career_portal',
+  'linkedin',
+  'indeed',
+  'naukri',
+  'monster',
+  'glassdoor',
+  'foundit',
+  'ziprecruiter',
+  'other_job_board',
+]);
+
+function normalizeApplicationSource(source?: string | null) {
+  if (!source) return 'career_portal';
+  const normalized = source.trim().toLowerCase();
+  if (normalized === 'other') return 'other_job_board';
+  return PUBLIC_APPLICATION_SOURCES.has(normalized) ? normalized : 'career_portal';
+}
+
 @Injectable()
 export class CareerPortalService {
   constructor(
@@ -68,39 +87,46 @@ export class CareerPortalService {
   async apply(
     tenantId: string,
     jobIdOrToken: string,
-    input: CandidateContactInput & { cover_note?: string },
+    input: CandidateContactInput & { cover_note?: string; source?: string },
     file?: { buffer: Buffer; mimetype: string; originalname: string },
     campaignId?: string,
   ) {
     const job = await this.getJob(tenantId, jobIdOrToken);
+    const source = normalizeApplicationSource(input.source);
 
     let resumeDocumentId: string | undefined;
     if (file) {
       this.fileUpload.validateDocumentFile(file.buffer, file.mimetype);
       const { url, sizeBytes } = await this.fileUpload.uploadDocument(file.buffer, file.mimetype, 'candidates', tenantId, file.originalname);
-      const { candidate } = await this.candidates.findOrCreateByContact(tenantId, input, null);
+      const { candidate } = await this.candidates.findOrCreateByContact(tenantId, { ...input, source }, null);
       const doc = await this.documents.create(tenantId, null as any, {
         entity_type: 'candidate', entity_id: candidate.id, document_type: 'resume',
         name: file.originalname, file_url: url, file_size_bytes: sizeBytes, mime_type: file.mimetype,
       });
       resumeDocumentId = doc.id;
-      return this.finishApplication(tenantId, candidate.id, job.id, input.cover_note, resumeDocumentId, campaignId);
+      return this.finishApplication(tenantId, candidate.id, job.id, input.cover_note, resumeDocumentId, campaignId, source);
     }
 
-    const { candidate } = await this.candidates.findOrCreateByContact(tenantId, input, null);
-    return this.finishApplication(tenantId, candidate.id, job.id, input.cover_note, resumeDocumentId, campaignId);
+    const { candidate } = await this.candidates.findOrCreateByContact(tenantId, { ...input, source }, null);
+    return this.finishApplication(tenantId, candidate.id, job.id, input.cover_note, resumeDocumentId, campaignId, source);
   }
 
-  private async finishApplication(tenantId: string, candidateId: string, jobPostingId: string, coverNote?: string, resumeDocumentId?: string, campaignId?: string) {
+  private async finishApplication(tenantId: string, candidateId: string, jobPostingId: string, coverNote?: string, resumeDocumentId?: string, campaignId?: string, source = 'career_portal') {
     const application = await this.applications.create(tenantId, {
-      candidateId, jobPostingId, source: 'career_portal', resumeDocumentId, coverNote, campaignId,
+      candidateId, jobPostingId, source, resumeDocumentId, coverNote, campaignId,
     });
 
     await this.auditLog.log({ tenantId, userId: null, entityType: 'application', entityId: application.id, action: 'submitted_via_career_portal' });
 
-    const { rows: jpRows } = await this.db.query('SELECT vacancy_id, title FROM job_postings WHERE id = $1', [jobPostingId]);
+    const { rows: jpRows } = await this.db.query(
+      'SELECT vacancy_id, title FROM job_postings WHERE id = $1 AND tenant_id = $2',
+      [jobPostingId, tenantId],
+    );
     if (jpRows[0]?.vacancy_id) {
-      const { rows: vacancyRows } = await this.db.query('SELECT recruiter_id, hiring_manager_id FROM vacancies WHERE id = $1', [jpRows[0].vacancy_id]);
+      const { rows: vacancyRows } = await this.db.query(
+        'SELECT recruiter_id, hiring_manager_id FROM vacancies WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL',
+        [jpRows[0].vacancy_id, tenantId],
+      );
       const vacancy = vacancyRows[0];
       if (vacancy) {
         const userIds = (await Promise.all(

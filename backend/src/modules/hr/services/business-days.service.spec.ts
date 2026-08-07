@@ -40,6 +40,24 @@ describe('BusinessDaysService', () => {
       expect(result.get('2026-01-03')).toBe('holiday'); // holiday wins over weekly-off
       expect(result.get('2026-01-04')).toBe('weekly_off'); // plain Sunday, no holiday
     });
+
+    it('uses resolved holiday policy templates before the legacy holidays table', async () => {
+      const holidayPolicy = {
+        getHolidaySetForEmployee: jest.fn().mockResolvedValue({
+          hasTemplate: true,
+          dates: new Set(['2026-01-02']),
+        }),
+      };
+      service = new BusinessDaysService(db as any, holidayPolicy as any);
+
+      db.query.mockResolvedValueOnce({ rows: [{ work_week_config: null }] });
+
+      const result = await service.classifyPeriod('t1', 'b1', '2026-01-01', '2026-01-03', 'emp-1');
+
+      expect(result.get('2026-01-02')).toBe('holiday');
+      expect(holidayPolicy.getHolidaySetForEmployee).toHaveBeenCalledWith('t1', 'emp-1', '2026-01-01', '2026-01-03');
+      expect(db.query).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('countBusinessDays()', () => {

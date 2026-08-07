@@ -7,7 +7,7 @@ import { useQueueHealth } from '@/hooks/use-queue-health';
 export default function DlqPage() {
   useBiometricsSocket();
   const { queueHealth } = useQueueHealth();
-  const dlqCount = queueHealth?.failed ?? 0;
+  const failedCount = queueHealth?.failed ?? 0;
 
   return (
     <div className="space-y-4">
@@ -15,12 +15,12 @@ export default function DlqPage() {
         <div>
           <h2 className="text-sm font-semibold text-slate-800">Dead Letter Queue</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Failed punch ingestion jobs — inspect payload, retry, or permanently discard
+            Punches that still need retry, review, or safe removal from processing
           </p>
         </div>
-        {dlqCount > 0 && (
+        {failedCount > 0 && (
           <span className="badge-offline px-3 py-1 rounded-full text-xs font-bold tabular-nums">
-            {dlqCount} failed
+            {failedCount} need review
           </span>
         )}
       </div>

@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import {
-  ArrowLeft, Loader2, Pencil, Send, CheckCircle2, XCircle, Mail, Ban, History as HistoryIcon,
+  ArrowLeft, Ban, CheckCircle2, Circle, Clock, Eye, FileSignature, History as HistoryIcon,
+  Loader2, Mail, MessageSquare, Pencil, Send, UserCheck, XCircle,
 } from 'lucide-react';
 import { offersApi, Offer, OfferVersion, OfferNegotiation } from '@/lib/offers-api';
 import { applicationsApi, CandidateVerification, VerificationType } from '@/lib/candidates-api';
@@ -21,6 +23,84 @@ const VERIFICATION_TYPES: VerificationType[] = ['reference', 'employment', 'educ
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (<div><p className="text-xs text-muted-foreground">{label}</p><p className="text-sm text-foreground font-medium">{value ?? '—'}</p></div>);
+}
+
+type OfferStageKey = 'draft' | 'approval' | 'sent' | 'viewed' | 'negotiation' | 'accepted' | 'declined' | 'preboarding';
+
+const OFFER_STAGES: Array<{ key: OfferStageKey; label: string; icon: any }> = [
+  { key: 'draft', label: 'Draft', icon: FileSignature },
+  { key: 'approval', label: 'Approval', icon: Clock },
+  { key: 'sent', label: 'Sent', icon: Send },
+  { key: 'viewed', label: 'Viewed', icon: Eye },
+  { key: 'negotiation', label: 'Negotiation', icon: MessageSquare },
+  { key: 'accepted', label: 'Accepted', icon: CheckCircle2 },
+  { key: 'declined', label: 'Declined', icon: XCircle },
+  { key: 'preboarding', label: 'Preboarding', icon: UserCheck },
+];
+
+function stageState(stage: OfferStageKey, offer: Offer, negotiations: OfferNegotiation[]) {
+  if (offer.status === 'declined') {
+    if (stage === 'declined') return 'current';
+    if (['draft', 'approval', 'sent', 'viewed', 'negotiation'].includes(stage)) return offer.sent_at ? 'complete' : stage === 'draft' ? 'complete' : 'pending';
+    return 'pending';
+  }
+  if (offer.status === 'accepted') {
+    if (stage === 'declined') return 'pending';
+    if (stage === 'preboarding') return 'current';
+    return 'complete';
+  }
+  if (stage === 'draft') return ['draft', 'rejected'].includes(offer.status) ? 'current' : 'complete';
+  if (stage === 'approval') return offer.status === 'pending_approval' ? 'current' : ['approved', 'sent'].includes(offer.status) ? 'complete' : 'pending';
+  if (stage === 'sent') return offer.status === 'sent' ? 'current' : offer.sent_at ? 'complete' : 'pending';
+  if (stage === 'viewed') return offer.sent_at ? (negotiations.length || offer.responded_at ? 'complete' : 'current') : 'pending';
+  if (stage === 'negotiation') return negotiations.length ? 'current' : 'pending';
+  return 'pending';
+}
+
+function offerNextAction(offer: Offer, negotiations: OfferNegotiation[]) {
+  if (['draft', 'rejected'].includes(offer.status)) return 'Review compensation, joining date, and offer letter, then submit for approval.';
+  if (offer.status === 'pending_approval') return 'Approval is pending. Approvers can approve or reject from this workspace.';
+  if (offer.status === 'approved') return 'Offer is approved. Send it to the candidate to start the response workflow.';
+  if (offer.status === 'sent' && negotiations.length) return 'Negotiation is active. Capture recruiter responses and revise the offer if needed.';
+  if (offer.status === 'sent') return 'Offer is with the candidate. Track response, expiry, and negotiation notes here.';
+  if (offer.status === 'accepted') return 'Offer accepted. Continue into preboarding and employee conversion.';
+  if (offer.status === 'declined') return 'Offer declined. Review the reason and close or restart the hiring decision.';
+  return 'Review the offer history before taking the next action.';
+}
+
+function OfferStageRail({ offer, negotiations }: { offer: Offer; negotiations: OfferNegotiation[] }) {
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h2 className="text-base font-bold text-foreground">Guided Offer Workflow</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{offerNextAction(offer, negotiations)}</p>
+          </div>
+          {offer.status === 'accepted' && (
+            <Link href={`/dashboard/hr/recruitment/onboarding/${offer.application_id}`} className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-primary/90">
+              <UserCheck className="h-3.5 w-3.5" /> Open Preboarding
+            </Link>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
+          {OFFER_STAGES.map((stage) => {
+            const state = stageState(stage.key, offer, negotiations);
+            const Icon = stage.icon;
+            return (
+              <div key={stage.key} className={`rounded-lg border p-3 ${state === 'complete' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : state === 'current' ? 'border-primary/30 bg-primary/5 text-primary' : 'border-border bg-muted/20 text-muted-foreground'}`}>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <Icon className="h-4 w-4" />
+                  {state === 'complete' ? <CheckCircle2 className="h-3.5 w-3.5" /> : state === 'current' ? <Clock className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5" />}
+                </div>
+                <p className="text-xs font-semibold">{stage.label}</p>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function OfferDetailPage() {
@@ -125,6 +205,8 @@ export default function OfferDetailPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
+          <OfferStageRail offer={offer} negotiations={negotiations} />
+
           <Card>
             <CardContent className="p-5 grid grid-cols-2 md:grid-cols-3 gap-4">
               <Field label="Designation" value={offer.designation} />
@@ -161,7 +243,7 @@ export default function OfferDetailPage() {
 
           <Card>
             <CardContent className="p-5">
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5"><HistoryIcon className="w-3.5 h-3.5" /> Version History</h3>
+              <h3 className="text-base font-bold text-foreground mb-3 flex items-center gap-1.5"><HistoryIcon className="w-3.5 h-3.5" /> Version History</h3>
               <div className="space-y-2">
                 {versions.map((v) => (
                   <div key={v.id} className="flex items-center justify-between bg-muted/30 rounded-xl p-2.5">
@@ -185,7 +267,7 @@ export default function OfferDetailPage() {
           {offer.approval_status !== 'not_required' && (
             <Card>
               <CardContent className="p-5">
-                <h3 className="text-sm font-semibold text-foreground mb-3">Approval Timeline</h3>
+                <h3 className="text-base font-bold text-foreground mb-3">Approval Timeline</h3>
                 <ApprovalTimeline
                   request={{ approval_log: offer.approval_log, current_step: offer.approval_step, total_steps: null, status: offer.approval_status } as any}
                 />
@@ -222,7 +304,7 @@ function VerificationSection({ applicationId, verifications, onSaved }: { applic
   return (
     <Card>
       <CardContent className="p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Verification Checklist</h3>
+        <h3 className="text-base font-bold text-foreground mb-3">Verification Checklist</h3>
         <div className="space-y-2">
           {VERIFICATION_TYPES.map((type) => {
             const v = verifications.find((x) => x.verification_type === type);
@@ -272,7 +354,7 @@ function NegotiationSection({ offerId, negotiations, currency, onSaved }: { offe
   return (
     <Card>
       <CardContent className="p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Negotiation</h3>
+        <h3 className="text-base font-bold text-foreground mb-3">Negotiation</h3>
         {negotiations.length === 0 ? <p className="text-xs text-muted-foreground mb-3">No negotiation notes yet.</p> : (
           <div className="space-y-2 mb-3">
             {negotiations.map((n) => (

@@ -121,6 +121,24 @@ const TAB_CONFIG: Record<string, TabCfg> = {
     exportCols: ['Date','Code','Employee','Branch','Shift','Start','End','Total Hrs','OT Hrs'],
     exportKeys: ['date','employee_code','employee_name','branch','shift_name','clock_in','clock_out','total_hours','overtime_hours'],
   },
+  'overrides': {
+    label: 'Shift Overrides',
+    filterFields: ['date_range', 'branch', 'department', 'employee'],
+    columns: [
+      col('Date',          'date',            fmtDate),
+      col('Code',          'employee_code'),
+      col('Employee',      'employee_name'),
+      col('Branch',        'branch'),
+      col('Department',    'department'),
+      col('Type',          'override_type',   (v) => <span className="font-semibold capitalize text-amber-600">{String(v ?? '').replace(/_/g, ' ')}</span>),
+      col('Resolved Shift','shift_name'),
+      col('Start',         'start_time',      fmtTime),
+      col('End',           'end_time',        fmtTime),
+      col('Reason',        'reason'),
+    ],
+    exportCols: ['Date','Code','Employee','Branch','Department','Type','Resolved Shift','Start','End','Reason'],
+    exportKeys: ['date','employee_code','employee_name','branch','department','override_type','shift_name','start_time','end_time','reason'],
+  },
 };
 
 const TABS: TabDef[] = Object.entries(TAB_CONFIG).map(([key, cfg]) => ({ key, label: cfg.label }));

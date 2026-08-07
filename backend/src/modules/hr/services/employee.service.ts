@@ -6,8 +6,32 @@ import { mapAttendanceStatus } from '../../../shared/attendance-status.util';
 import { attendanceFilterSql } from '../../../shared/attendance-filter.util';
 import { AuditLogService } from '../../platform/services/audit-log.service';
 import { DependencyCheckService } from '../../platform/services/dependency-check.service';
+import { BillingEngineService } from '../../billing/services/billing-engine.service';
 import { BreakSessionService } from './break-session.service';
+import { CredentialEncryptionService } from '../../../shared/crypto/credential-encryption.service';
 import * as bcrypt from 'bcrypt';
+
+const EMPLOYEE_ENCRYPTED_FIELDS = [
+  'personal_email',
+  'personal_phone',
+  'alternate_phone',
+  'office_email',
+  'office_telephone',
+  'present_address',
+  'permanent_address',
+  'emergency_contact',
+  'bank_account_number',
+  'upi_id',
+  'pf_number',
+  'uan_number',
+  'esic_number',
+  'pan_number',
+  'aadhaar_number',
+  'passport_number',
+  'driving_license_number',
+  'voter_id',
+  'card_number',
+];
 
 @Injectable()
 export class EmployeeService {
@@ -15,8 +39,27 @@ export class EmployeeService {
     private db: DatabaseService,
     private auditLogService: AuditLogService,
     private dependencyCheckService: DependencyCheckService,
+    private billingEngineService: BillingEngineService,
     private breakSessionService: BreakSessionService,
+    private cryptoService: CredentialEncryptionService = new CredentialEncryptionService(),
   ) {}
+
+  private decryptEmployee(row: any) {
+    return this.cryptoService.decryptRow(row, EMPLOYEE_ENCRYPTED_FIELDS);
+  }
+
+  private decryptEmployees(rows: any[]) {
+    return rows.map((row) => this.decryptEmployee(row));
+  }
+
+  private piiBlindIndex(tenantId: string, value: unknown) {
+    return this.cryptoService.blindIndex(value, tenantId);
+  }
+
+  private encryptJsonb(value: unknown): string | null {
+    const encrypted = this.cryptoService.encryptNullable(value);
+    return encrypted === null ? null : JSON.stringify(encrypted);
+  }
 
   async findManagerCandidates(tenantId: string, filters: any) {
     const { search, branch_id, limit = 50 } = filters;
@@ -55,7 +98,7 @@ export class EmployeeService {
       q += ` ORDER BY e.first_name ASC, e.last_name ASC LIMIT $${idx}`;
       params.push(parseInt(limit));
       const { rows } = await this.db.query(q, params);
-      return rows;
+      return this.decryptEmployees(rows);
     }
 
     // Default: employees who have a manager-level app role OR are already someone's reporting manager
@@ -144,13 +187,50 @@ export class EmployeeService {
       countQuery += ` AND ${scopeClause.clause}`; countParams.push(...scopeClause.params); cIdx += scopeClause.params.length;
     }
 
-    const [{ rows }, { rows: countRows }] = await Promise.all([
+    const [{ rows }, { rows: countRows }, planRes, activeCountRes, totalCountRes] = await Promise.all([
       this.db.query(query, params),
       this.db.query(countQuery, countParams),
+      this.db.query(
+        `SELECT COALESCE(sp.name, ts.custom_plan_name, 'Custom plan') AS name
+         FROM tenant_subscriptions ts
+         LEFT JOIN saas_base_plans sp ON sp.id = ts.plan_id
+         WHERE ts.tenant_id = $1 AND ts.status = 'active'
+         ORDER BY ts.created_at DESC LIMIT 1`,
+        [tenantId],
+      ),
+      this.db.query(`SELECT COUNT(*) FROM employees WHERE tenant_id = $1 AND status = 'active' AND deleted_at IS NULL`, [tenantId]),
+      this.db.query(`SELECT COUNT(*) FROM employees WHERE tenant_id = $1 AND deleted_at IS NULL`, [tenantId]),
     ]);
     const total = parseInt(countRows[0].count);
 
-    return { data: rows, meta: { page: parseInt(page), limit: parseInt(limit), total, total_pages: Math.ceil(total / parseInt(limit)) } };
+    const planName = planRes.rows[0]?.name || 'Free Plan';
+    const active_employee_count = parseInt(activeCountRes.rows[0].count, 10);
+    const total_employee_count = parseInt(totalCountRes.rows[0].count, 10);
+
+    const limits = await this.billingEngineService.getResourceLimit(tenantId, 'employees');
+    let max_active_employees = limits.allocated !== null ? limits.allocated : limits.maxAllowed;
+    if (max_active_employees !== null && max_active_employees !== undefined) {
+      max_active_employees = Number(max_active_employees);
+    } else {
+      max_active_employees = null;
+    }
+
+    const can_create_employee = total_employee_count === 0 || max_active_employees === null || total_employee_count < max_active_employees;
+
+    return { 
+      data: this.decryptEmployees(rows), 
+      meta: { 
+        page: parseInt(page), 
+        limit: parseInt(limit), 
+        total, 
+        total_pages: Math.ceil(total / parseInt(limit)),
+        plan_name: planName,
+        max_active_employees,
+        active_employee_count,
+        total_employee_count,
+        can_create_employee
+      } 
+    };
   }
 
   async findOne(id: string, tenantId: string) {
@@ -172,10 +252,11 @@ export class EmployeeService {
       [id, tenantId],
     );
     if (!rows.length) throw new NotFoundException('Employee not found');
-    return rows[0];
+    return this.decryptEmployee(rows[0]);
   }
 
   async findMeByEmail(email: string, tenantId: string) {
+    const emailBlindIndex = this.piiBlindIndex(tenantId, email);
     const { rows } = await this.db.query(
       `SELECT e.*, d.name as department_name, des.name as designation_name,
         p.name as property_name, et.name as employment_type_name,
@@ -190,11 +271,12 @@ export class EmployeeService {
         LEFT JOIN employees rm ON e.reporting_manager_id = rm.id
         LEFT JOIN positions pos ON e.position_id = pos.id
         LEFT JOIN branches b ON e.branch_id = b.id
-        WHERE e.personal_email = $1 AND e.tenant_id = $2 AND e.deleted_at IS NULL`,
-      [email, tenantId],
+        WHERE (e.personal_email = $1 OR e.personal_email_blind_index = $3)
+          AND e.tenant_id = $2 AND e.deleted_at IS NULL`,
+      [email, tenantId, emailBlindIndex],
     );
     if (!rows.length) throw new NotFoundException('Employee profile not found');
-    return rows[0];
+    return this.decryptEmployee(rows[0]);
   }
 
   async generateEmployeeCode(tenantId: string): Promise<string> {
@@ -231,12 +313,82 @@ export class EmployeeService {
 
   async create(tenantId: string, createdById: string, data: any) {
     const employeeCode = data.employee_code || await this.generateEmployeeCode(tenantId);
+    const employeeStatus = data.status || 'active';
 
     const existing = await this.db.query(
       'SELECT 1 FROM employees WHERE tenant_id = $1 AND employee_code = $2 AND deleted_at IS NULL',
       [tenantId, employeeCode],
     );
     if (existing.rows.length) throw new BadRequestException('Employee code already exists');
+
+    if (data.date_of_birth) {
+      const dob = new Date(data.date_of_birth);
+      const today = new Date();
+      let age = today.getFullYear() - dob.getFullYear();
+      const m = today.getMonth() - dob.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+        age--;
+      }
+      if (age < 18) {
+        throw new BadRequestException('Employee must be at least 18 years old');
+      }
+    }
+
+    if (data.personal_email) {
+      const emailCheck = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (personal_email ILIKE $2 OR personal_email_blind_index = $3) AND deleted_at IS NULL',
+        [tenantId, data.personal_email, this.piiBlindIndex(tenantId, data.personal_email)],
+      );
+      if (emailCheck.rows.length) throw new BadRequestException('Personal email address already in use by another employee');
+    }
+
+    if (data.office_email) {
+      const officeEmailCheck = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (office_email ILIKE $2 OR office_email_blind_index = $3) AND deleted_at IS NULL',
+        [tenantId, data.office_email, this.piiBlindIndex(tenantId, data.office_email)],
+      );
+      if (officeEmailCheck.rows.length) throw new BadRequestException('Office email address already in use by another employee');
+    }
+
+    if (data.personal_phone) {
+      const phoneCheck = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (personal_phone = $2 OR personal_phone_blind_index = $3) AND deleted_at IS NULL',
+        [tenantId, data.personal_phone, this.piiBlindIndex(tenantId, data.personal_phone)],
+      );
+      if (phoneCheck.rows.length) throw new BadRequestException('Mobile number already in use by another employee');
+    }
+
+    if (data.alternate_phone) {
+      const altPhoneCheck = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (alternate_phone = $2 OR alternate_phone_blind_index = $3) AND deleted_at IS NULL',
+        [tenantId, data.alternate_phone, this.piiBlindIndex(tenantId, data.alternate_phone)],
+      );
+      if (altPhoneCheck.rows.length) throw new BadRequestException('Alternate number already in use by another employee');
+    }
+
+    if (data.aadhaar_number) {
+      const check = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (aadhaar_number = $2 OR aadhaar_number_blind_index = $3) AND deleted_at IS NULL',
+        [tenantId, data.aadhaar_number, this.piiBlindIndex(tenantId, data.aadhaar_number)],
+      );
+      if (check.rows.length) throw new BadRequestException('Aadhaar number already in use by another employee');
+    }
+
+    if (data.pan_number) {
+      const check = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (pan_number = $2 OR pan_number_blind_index = $3) AND deleted_at IS NULL',
+        [tenantId, data.pan_number, this.piiBlindIndex(tenantId, data.pan_number)],
+      );
+      if (check.rows.length) throw new BadRequestException('PAN number already in use by another employee');
+    }
+
+    if (data.passport_number) {
+      const check = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (passport_number = $2 OR passport_number_blind_index = $3) AND deleted_at IS NULL',
+        [tenantId, data.passport_number, this.piiBlindIndex(tenantId, data.passport_number)],
+      );
+      if (check.rows.length) throw new BadRequestException('Passport number already in use by another employee');
+    }
 
     if (data.biometric_employee_id) {
       const bioCheck = await this.db.query(
@@ -252,6 +404,10 @@ export class EmployeeService {
         [data.reporting_manager_id, tenantId],
       );
       if (!mgr.length) throw new BadRequestException('Selected reporting manager does not belong to this organization');
+    }
+
+    if (employeeStatus === 'active') {
+      await this.ensureActiveEmployeeLimitAllowsCreate(tenantId);
     }
 
     const presentAddr = data.present_address
@@ -277,7 +433,10 @@ export class EmployeeService {
           pf_number, uan_number, esic_number, pan_number, aadhaar_number,
           passport_number, driving_license_number, voter_id, employee_card_number,
           biometric_employee_id, device_code, card_number,
-          created_by
+          created_by,
+          personal_email_blind_index, office_email_blind_index,
+          personal_phone_blind_index, alternate_phone_blind_index,
+          aadhaar_number_blind_index, pan_number_blind_index, passport_number_blind_index
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,
           $8,$9,$10,$11,$12,$13,$14,
@@ -291,33 +450,39 @@ export class EmployeeService {
           $44,$45,$46,$47,$48,
           $49,$50,$51,$52,
           $53,$54,$55,
-          $56
+          $56,
+          $57,$58,
+          $59,$60,
+          $61,$62,$63
         ) RETURNING *`,
       [
-        tenantId, employeeCode, data.status || 'active',
+        tenantId, employeeCode, employeeStatus,
         data.first_name, data.last_name, data.middle_name || null, data.nickname || null,
         data.date_of_birth || null, data.gender || null, data.marital_status || null,
         data.blood_group || null, data.nationality || 'Indian', data.religion || null, data.photo_url || null,
-        data.personal_email || null, data.personal_phone || null,
-        data.alternate_phone || null, data.office_email || null, data.office_telephone || null,
-        presentAddr, permanentAddr, data.emergency_contact || null,
+        this.cryptoService.encryptNullable(data.personal_email), this.cryptoService.encryptNullable(data.personal_phone),
+        this.cryptoService.encryptNullable(data.alternate_phone), this.cryptoService.encryptNullable(data.office_email), this.cryptoService.encryptNullable(data.office_telephone),
+        this.encryptJsonb(presentAddr), this.encryptJsonb(permanentAddr), this.encryptJsonb(data.emergency_contact),
         loc.city, loc.state, loc.country, loc.pincode,
         data.property_id || null, data.department_id || null, data.designation_id || null,
         data.employment_type_id || null, data.cost_center_id || null,
         data.reporting_manager_id || null, data.position_id || null, data.branch_id || null,
         data.date_of_joining, data.probation_end_date || null, data.confirmation_date || null,
-        data.bank_name || null, data.bank_account_number || null, data.ifsc_code || null,
-        data.account_type || null, data.upi_id || null, data.salary_payment_method || null,
-        data.pf_number || null, data.uan_number || null, data.esic_number || null,
-        data.pan_number || null, data.aadhaar_number || null,
-        data.passport_number || null, data.driving_license_number || null,
-        data.voter_id || null, data.employee_card_number || null,
-        data.biometric_employee_id || null, data.device_code || null, data.card_number || null,
+        data.bank_name || null, this.cryptoService.encryptNullable(data.bank_account_number), data.ifsc_code || null,
+        data.account_type || null, this.cryptoService.encryptNullable(data.upi_id), data.salary_payment_method || null,
+        this.cryptoService.encryptNullable(data.pf_number), this.cryptoService.encryptNullable(data.uan_number), this.cryptoService.encryptNullable(data.esic_number),
+        this.cryptoService.encryptNullable(data.pan_number), this.cryptoService.encryptNullable(data.aadhaar_number),
+        this.cryptoService.encryptNullable(data.passport_number), this.cryptoService.encryptNullable(data.driving_license_number),
+        this.cryptoService.encryptNullable(data.voter_id), data.employee_card_number || null,
+        data.biometric_employee_id || null, data.device_code || null, this.cryptoService.encryptNullable(data.card_number),
         createdById,
+        this.piiBlindIndex(tenantId, data.personal_email), this.piiBlindIndex(tenantId, data.office_email),
+        this.piiBlindIndex(tenantId, data.personal_phone), this.piiBlindIndex(tenantId, data.alternate_phone),
+        this.piiBlindIndex(tenantId, data.aadhaar_number), this.piiBlindIndex(tenantId, data.pan_number), this.piiBlindIndex(tenantId, data.passport_number),
       ],
     );
 
-    const employee = rows[0];
+    const employee = this.decryptEmployee(rows[0]);
 
     await this.db.query(
       'INSERT INTO employee_lifecycle_events (tenant_id, employee_id, event_type, effective_date, new_values, created_by) VALUES ($1,$2,$3,$4,$5,$6)',
@@ -375,7 +540,44 @@ export class EmployeeService {
       }
     }
 
-    return employee;
+    return this.decryptEmployee(employee);
+  }
+
+  private async ensureActiveEmployeeLimitAllowsCreate(tenantId: string) {
+    const { rows } = await this.db.query(
+      `SELECT COUNT(*)::int AS count
+       FROM employees
+       WHERE tenant_id = $1 AND status = 'active' AND deleted_at IS NULL`,
+      [tenantId],
+    );
+    const activeEmployeeCount = Number(rows[0]?.count || 0);
+    const requestedConsumption = activeEmployeeCount + 1;
+    const isAllowed = await this.billingEngineService.validateResourceConsumption(
+      tenantId,
+      'employees',
+      requestedConsumption,
+    );
+
+    if (!isAllowed) {
+      const limits = await this.billingEngineService.getResourceLimit(tenantId, 'employees');
+      const employeeLimit = limits.allocated !== null ? limits.allocated : limits.maxAllowed;
+
+      throw new ForbiddenException({
+        code: 'EMPLOYEE_CREATION_LIMIT_REACHED',
+        title: 'Upgrade to add more employees',
+        message:
+          `Your current subscription allows up to ${employeeLimit} active employee${employeeLimit === 1 ? '' : 's'}. ` +
+          `Upgrade your subscription to create additional active employees.`,
+        upgradeFeatures: [
+          'Create more active employees',
+          'Manage a larger workforce',
+          'Scale attendance and payroll coverage',
+          'Expand employee reporting',
+        ],
+        employeeLimit,
+        activeEmployeeCount,
+      });
+    }
   }
 
   async addDocument(employeeId: string, tenantId: string, createdById: string, data: any) {
@@ -391,6 +593,62 @@ export class EmployeeService {
 
   async update(id: string, tenantId: string, data: any, changedById?: string) {
     const existing = await this.findOne(id, tenantId);
+
+    if (data.personal_email && data.personal_email !== existing.personal_email) {
+      const emailCheck = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (personal_email ILIKE $2 OR personal_email_blind_index = $4) AND deleted_at IS NULL AND id != $3',
+        [tenantId, data.personal_email, id, this.piiBlindIndex(tenantId, data.personal_email)],
+      );
+      if (emailCheck.rows.length) throw new BadRequestException('Personal email address already in use by another employee');
+    }
+
+    if (data.office_email && data.office_email !== existing.office_email) {
+      const officeEmailCheck = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (office_email ILIKE $2 OR office_email_blind_index = $4) AND deleted_at IS NULL AND id != $3',
+        [tenantId, data.office_email, id, this.piiBlindIndex(tenantId, data.office_email)],
+      );
+      if (officeEmailCheck.rows.length) throw new BadRequestException('Office email address already in use by another employee');
+    }
+
+    if (data.personal_phone && data.personal_phone !== existing.personal_phone) {
+      const phoneCheck = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (personal_phone = $2 OR personal_phone_blind_index = $4) AND deleted_at IS NULL AND id != $3',
+        [tenantId, data.personal_phone, id, this.piiBlindIndex(tenantId, data.personal_phone)],
+      );
+      if (phoneCheck.rows.length) throw new BadRequestException('Mobile number already in use by another employee');
+    }
+
+    if (data.alternate_phone && data.alternate_phone !== existing.alternate_phone) {
+      const altPhoneCheck = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (alternate_phone = $2 OR alternate_phone_blind_index = $4) AND deleted_at IS NULL AND id != $3',
+        [tenantId, data.alternate_phone, id, this.piiBlindIndex(tenantId, data.alternate_phone)],
+      );
+      if (altPhoneCheck.rows.length) throw new BadRequestException('Alternate number already in use by another employee');
+    }
+
+    if (data.aadhaar_number && data.aadhaar_number !== existing.aadhaar_number) {
+      const check = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (aadhaar_number = $2 OR aadhaar_number_blind_index = $4) AND deleted_at IS NULL AND id != $3',
+        [tenantId, data.aadhaar_number, id, this.piiBlindIndex(tenantId, data.aadhaar_number)],
+      );
+      if (check.rows.length) throw new BadRequestException('Aadhaar number already in use by another employee');
+    }
+
+    if (data.pan_number && data.pan_number !== existing.pan_number) {
+      const check = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (pan_number = $2 OR pan_number_blind_index = $4) AND deleted_at IS NULL AND id != $3',
+        [tenantId, data.pan_number, id, this.piiBlindIndex(tenantId, data.pan_number)],
+      );
+      if (check.rows.length) throw new BadRequestException('PAN number already in use by another employee');
+    }
+
+    if (data.passport_number && data.passport_number !== existing.passport_number) {
+      const check = await this.db.query(
+        'SELECT 1 FROM employees WHERE tenant_id = $1 AND (passport_number = $2 OR passport_number_blind_index = $4) AND deleted_at IS NULL AND id != $3',
+        [tenantId, data.passport_number, id, this.piiBlindIndex(tenantId, data.passport_number)],
+      );
+      if (check.rows.length) throw new BadRequestException('Passport number already in use by another employee');
+    }
 
     if (data.reporting_manager_id) {
       const { rows: mgr } = await this.db.query(
@@ -411,6 +669,19 @@ export class EmployeeService {
       );
       if (dup.length) throw new BadRequestException('Employee code already exists');
       employeeCodeParam = data.employee_code;
+    }
+
+    if (data.date_of_birth) {
+      const dob = new Date(data.date_of_birth);
+      const today = new Date();
+      let age = today.getFullYear() - dob.getFullYear();
+      const m = today.getMonth() - dob.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+        age--;
+      }
+      if (age < 18) {
+        throw new BadRequestException('Employee must be at least 18 years old');
+      }
     }
 
     const loc = this.deriveLegacyLocation(data);
@@ -439,16 +710,28 @@ export class EmployeeService {
         branch_id = COALESCE($38, branch_id),
         city = COALESCE($39, city), state = COALESCE($40, state),
         country = COALESCE($41, country), pincode = COALESCE($42, pincode),
+        personal_email_blind_index = COALESCE($43, personal_email_blind_index),
+        office_email_blind_index = COALESCE($44, office_email_blind_index),
+        personal_phone_blind_index = COALESCE($45, personal_phone_blind_index),
+        alternate_phone_blind_index = COALESCE($46, alternate_phone_blind_index),
+        aadhaar_number_blind_index = COALESCE($47, aadhaar_number_blind_index),
+        pan_number_blind_index = COALESCE($48, pan_number_blind_index),
+        passport_number_blind_index = COALESCE($49, passport_number_blind_index),
         updated_at = now()
         WHERE id = $1 AND tenant_id = $2 RETURNING *`,
       [id, tenantId, data.first_name, data.last_name, data.middle_name, data.date_of_birth,
         data.gender, data.marital_status, data.blood_group, data.nationality, data.photo_url,
-        data.personal_email, data.personal_phone, data.present_address, data.permanent_address, data.emergency_contact,
+        this.cryptoService.encryptNullable(data.personal_email), this.cryptoService.encryptNullable(data.personal_phone),
+        this.encryptJsonb(data.present_address), this.encryptJsonb(data.permanent_address), this.encryptJsonb(data.emergency_contact),
         data.property_id, data.department_id, data.designation_id, data.employment_type_id, data.cost_center_id,
         data.reporting_manager_id, data.position_id || null, data.date_of_joining, data.probation_end_date, data.confirmation_date,
-        data.bank_name, data.bank_account_number, data.ifsc_code, data.account_type,
-        data.pf_number, data.uan_number, data.esic_number, data.pan_number, data.aadhaar_number, data.status,
-        employeeCodeParam, data.branch_id || null, loc.city, loc.state, loc.country, loc.pincode],
+        data.bank_name, this.cryptoService.encryptNullable(data.bank_account_number), data.ifsc_code, data.account_type,
+        this.cryptoService.encryptNullable(data.pf_number), this.cryptoService.encryptNullable(data.uan_number), this.cryptoService.encryptNullable(data.esic_number),
+        this.cryptoService.encryptNullable(data.pan_number), this.cryptoService.encryptNullable(data.aadhaar_number), data.status,
+        employeeCodeParam, data.branch_id || null, loc.city, loc.state, loc.country, loc.pincode,
+        this.piiBlindIndex(tenantId, data.personal_email), this.piiBlindIndex(tenantId, data.office_email),
+        this.piiBlindIndex(tenantId, data.personal_phone), this.piiBlindIndex(tenantId, data.alternate_phone),
+        this.piiBlindIndex(tenantId, data.aadhaar_number), this.piiBlindIndex(tenantId, data.pan_number), this.piiBlindIndex(tenantId, data.passport_number)],
     );
 
     if (employeeCodeParam) {
@@ -458,7 +741,7 @@ export class EmployeeService {
       );
     }
 
-    const updated = rows[0];
+    const updated = this.decryptEmployee(rows[0]);
     if (data.branch_id && updated.branch_id) {
       await this.backfillPendingLeaveApprovalBranches(tenantId, id, updated.branch_id);
     }

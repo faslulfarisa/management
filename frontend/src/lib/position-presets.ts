@@ -68,7 +68,6 @@ const MODULE_GROUP_LABELS: Record<string, string> = {
   'platform.roles':      'Roles & Permissions',
   'platform.templates':  'Policy Templates',
   'platform.organizations': 'Organization',
-  'automation.rules':    'Automation',
   'billing.plans':       'Billing Plans',
   'billing.invoices':    'Billing Invoices',
   'developer.api_keys':  'API Keys',
@@ -188,7 +187,6 @@ export const PERMISSION_GROUP_CARDS = [
   { key: 'payroll',    label: 'Payroll Permissions',   color: 'violet' },
   { key: 'gst',        label: 'GST / Compliance',      color: 'orange' },
   { key: 'platform',   label: 'Platform Settings',     color: 'gray'   },
-  { key: 'automation', label: 'Automation',            color: 'cyan'   },
   { key: 'billing',    label: 'Billing (Sensitive)',    color: 'red'    },
   { key: 'developer',  label: 'Developer (Sensitive)',  color: 'red'    },
 ] as const;

@@ -11,11 +11,11 @@ export class CreateVacancyDto {
   @IsOptional() @IsString() recruiter_id?: string;
   @IsOptional() @IsString() reporting_manager_id?: string;
   @IsOptional() @IsString() employment_type_id?: string;
-  @IsOptional() @IsNumber() experience_min_years?: number;
-  @IsOptional() @IsNumber() experience_max_years?: number;
+  @IsNumber() experience_min_years!: number;
+  @IsNumber() experience_max_years!: number;
   @IsOptional() @IsString() qualification?: string;
-  @IsOptional() @IsNumber() salary_min?: number;
-  @IsOptional() @IsNumber() salary_max?: number;
+  @IsNumber() salary_min!: number;
+  @IsNumber() salary_max!: number;
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsInt() @Min(1) number_of_positions?: number;
   @IsOptional() @IsDateString() target_start_date?: string;

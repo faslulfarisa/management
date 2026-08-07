@@ -25,6 +25,7 @@ export function InterviewDrawer({
     duration_minutes: String(rescheduling?.duration_minutes || 60),
     location: rescheduling?.location || '',
     meeting_link: rescheduling?.meeting_link || '',
+    notes: '',
   });
   const [panelMemberIds, setPanelMemberIds] = useState<string[]>(rescheduling?.panel_member_ids || []);
   const [reason, setReason] = useState('');
@@ -51,7 +52,7 @@ export function InterviewDrawer({
           interview_type: form.interview_type, scheduled_at: new Date(form.scheduled_at).toISOString(),
           duration_minutes: parseInt(form.duration_minutes, 10) || 60,
           location: form.location || undefined, meeting_link: form.meeting_link || undefined,
-          panel_member_ids: panelMemberIds,
+          panel_member_ids: panelMemberIds, notes: form.notes || undefined,
         });
       }
       onSaved();
@@ -134,6 +135,10 @@ export function InterviewDrawer({
                     </label>
                   ))}
                 </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Notes</label>
+                <textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} rows={2} className="w-full border border-border rounded-xl px-3 py-2 text-sm resize-none" placeholder="Add any instructions or notes for the interviewer(s)…" />
               </div>
             </>
           )}

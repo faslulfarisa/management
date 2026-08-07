@@ -10,6 +10,8 @@
 export enum PunchDirection {
   IN = 'IN',
   OUT = 'OUT',
+  BREAK_OUT = 'BREAK_OUT',
+  BREAK_IN = 'BREAK_IN',
   UNKNOWN = 'UNKNOWN',
 }
 
@@ -29,11 +31,17 @@ export enum AttendanceSource {
   FINGERPRINT_DEVICE = 'fingerprint_device',
   CARD_DEVICE        = 'card_device',
   MOBILE_TERMINAL    = 'mobile_terminal',
+  TABLET_TERMINAL    = 'tablet_terminal',
+  WEB_KIOSK          = 'web_kiosk',
   LAPTOP_TERMINAL    = 'laptop_terminal',
   KIOSK_TERMINAL     = 'kiosk_terminal',
+  MANUAL_ATTENDANCE  = 'manual_attendance',
 }
 
 export class PunchEventDto {
+  tenantId?: string;
+  integrationId?: string | null;
+
   /** Ai-HRMS employee code — must match `employees.employee_code` */
   employeeCode: string;
 
@@ -51,6 +59,33 @@ export class PunchEventDto {
 
   /** Device serial / provider-assigned device ID, if the provider exposes one */
   deviceId?: string;
+
+  terminalSerialNumber?: string;
+  workCode?: string;
+  punchState?: string;
+  rawVerifyType?: string;
+
+  gps?: {
+    latitude: number;
+    longitude: number;
+    accuracyMeters?: number;
+    recordedAt?: Date;
+  };
+
+  photo?: {
+    url?: string;
+    objectKey?: string;
+    sha256?: string;
+    capturedAt?: Date;
+  };
+
+  locationMetadata?: Record<string, unknown>;
+
+  requestId?: string;
+  correlationId?: string;
+  syncBatchId?: string;
+  sourceIp?: string;
+  sourceUserAgent?: string;
 
   /** Normalized source category — written to attendance_records.attendance_source */
   attendanceSource?: AttendanceSource;

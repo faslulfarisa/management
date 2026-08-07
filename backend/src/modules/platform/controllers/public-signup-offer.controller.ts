@@ -15,7 +15,7 @@ export class PublicSignupOfferController {
 
   @Get('active')
   @Throttle({ default: { limit: 30, ttl: 60000 } })
-  @ApiOperation({ summary: 'List currently active, auto-applied signup offers (public)' })
+  @ApiOperation({ summary: 'List currently active signup offers for organization registration (public)' })
   async listActive() {
     const data = await this.service.getPublicActiveOffers();
     return { success: true, data, meta: null, error: null };

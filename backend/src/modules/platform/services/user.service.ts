@@ -4,8 +4,8 @@ import { DatabaseService } from '../../../shared/database.service';
 import { AccessScope, GLOBAL_ACCESS_SCOPE, branchScopeClause } from '../../../shared/scope.util';
 import { AuthService } from '../../auth/auth.service';
 import { AuditLogService } from './audit-log.service';
-import { PermissionsCacheService } from '../../../shared/permissions-cache.service';
 import { slugifyUsername, generateDefaultPassword, validatePasswordPolicy } from '../../../shared/credential-generator.util';
+import { ActorContext, RoleAssignmentInput, UserAccessService } from './user-access.service';
 
 @Injectable()
 export class UserService {
@@ -13,7 +13,7 @@ export class UserService {
     private db: DatabaseService,
     private authService: AuthService,
     private auditLog: AuditLogService,
-    private permissionsCache: PermissionsCacheService,
+    private userAccessService: UserAccessService,
   ) {}
 
   async findAll(tenantId: string, page = 1, limit = 20, accessScope: AccessScope = GLOBAL_ACCESS_SCOPE) {
@@ -254,7 +254,8 @@ export class UserService {
     return results;
   }
 
-  async create(tenantId: string, data: any, createdById?: string) {
+  async create(tenantId: string, data: any, actor?: ActorContext) {
+    const createdById = actor?.sub;
     const existing = await this.findByEmail(data.email, tenantId);
     if (existing) throw new BadRequestException('Email already exists');
 
@@ -360,26 +361,24 @@ export class UserService {
     const newUser = rows[0];
 
     const userType = data.userType || data.user_type || 'employee';
-    await this.db.query(
-      `INSERT INTO user_tenants (user_id, tenant_id, user_type, is_org_admin)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (user_id, tenant_id) DO UPDATE SET user_type = $3, is_org_admin = $4`,
-      [newUser.id, tenantId, userType, userType === 'org_admin'],
-    );
+    const roleAssignments: RoleAssignmentInput[] | undefined = Array.isArray(data.roles)
+      ? data.roles
+      : data.role_id
+        ? [{ roleId: data.role_id }]
+        : undefined;
 
-    // Save multiple branch associations for Branch Admin / Admin
-    if ((userType === 'branch_admin' || userType === 'admin') && Array.isArray(data.branch_ids)) {
-      const validBranches = data.branch_ids.filter(Boolean);
-      for (const branchId of validBranches) {
-        await this.db.query(
-          `INSERT INTO branch_user_access (tenant_id, branch_id, user_id, role, granted_by)
-           VALUES ($1, $2, $3, 'branch_admin', $4)
-           ON CONFLICT (tenant_id, branch_id, user_id)
-           DO UPDATE SET role = 'branch_admin', is_active = TRUE, revoked_at = NULL, revoked_by = NULL, updated_at = now()`,
-          [tenantId, branchId, newUser.id, createdById || null],
-        );
-      }
-    }
+    await this.userAccessService.setUserAccess(
+      actor || { sub: newUser.id, isSuperAdmin: true, userType: 'super_admin' },
+      newUser.id,
+      tenantId,
+      {
+        userType,
+        branchIds: Array.isArray(data.branch_ids) ? data.branch_ids.filter(Boolean) : undefined,
+        positionId: data.position_id ?? data.positionId ?? null,
+        reportingManagerId: data.reporting_manager_id ?? data.reports_to ?? null,
+        roles: roleAssignments,
+      },
+    );
 
     return newUser;
   }
@@ -476,6 +475,14 @@ export class UserService {
       await this.db.query(
         'UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL',
         [id],
+      );
+    }
+
+    if (data.reporting_manager_id !== undefined || data.reports_to !== undefined) {
+      await this.userAccessService.assignReportingManager(
+        tenantId,
+        id,
+        data.reporting_manager_id ?? data.reports_to ?? null,
       );
     }
 
@@ -644,20 +651,7 @@ export class UserService {
 
   async assignRoles(userId: string, tenantId: string, roles: { roleId: string; scopeType?: string; scopeId?: string }[]) {
     await this.findOne(userId, tenantId);
-
-    await this.db.query('DELETE FROM user_roles WHERE user_id = $1 AND tenant_id = $2', [userId, tenantId]);
-
-    if (roles.length > 0) {
-      for (const r of roles) {
-        await this.db.query(
-          'INSERT INTO user_roles (tenant_id, user_id, role_id, scope_type, scope_id) VALUES ($1, $2, $3, $4, $5)',
-          [tenantId, userId, r.roleId, r.scopeType, r.scopeId],
-        );
-      }
-    }
-
-    await this.permissionsCache.invalidateUser(tenantId, userId);
-
+    await this.userAccessService.assignRoles(tenantId, userId, roles);
     return this.findOne(userId, tenantId);
   }
 

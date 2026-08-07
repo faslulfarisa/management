@@ -22,9 +22,9 @@ export class BranchReportsService {
         b.branch_type,
         COUNT(DISTINCT ar.employee_id)                                 AS unique_employees,
         COUNT(*)                                                       AS total_records,
-        COUNT(*) FILTER (WHERE ar.status = 'present')                 AS present,
+        COUNT(*) FILTER (WHERE ar.status IN ('present', 'late'))                 AS present,
         COUNT(*) FILTER (WHERE ar.status = 'absent')                  AS absent,
-        COUNT(*) FILTER (WHERE ar.status = 'late')                    AS late,
+        COUNT(*) FILTER (WHERE ar.status = 'late' OR ar.late_minutes > 0)                    AS late,
         COUNT(*) FILTER (WHERE ar.status = 'half_day')                AS half_day,
         ROUND(
           COUNT(*) FILTER (WHERE ar.status IN ('present', 'late')) * 100.0
@@ -195,7 +195,7 @@ export class BranchReportsService {
           COUNT(*)                                               AS total_records,
           COUNT(*) FILTER (WHERE ar.status IN ('present','late')) AS present,
           COUNT(*) FILTER (WHERE ar.status = 'absent')          AS absent,
-          COUNT(*) FILTER (WHERE ar.status = 'late')            AS late,
+          COUNT(*) FILTER (WHERE ar.status = 'late' OR ar.late_minutes > 0)            AS late,
           ROUND(
             COUNT(*) FILTER (WHERE ar.status IN ('present','late')) * 100.0
               / NULLIF(COUNT(*), 0)::numeric, 1

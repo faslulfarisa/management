@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Optional } from '@nestjs/common';
 import { DatabaseService } from '../../../shared/database.service';
 import { assertUniqueCode, translateUniqueViolation } from '../../../shared/unique-code.validator';
 import { BranchApprovalChainService } from '../../platform/services/branch-approval-chain.service';
 import { ApprovalEngineService } from '../../approvals/services/approval-engine.service';
 import { PayrollLockService } from '../../platform/services/payroll-lock.service';
+import { HolidayPolicyTemplateService } from '../../platform/services/holiday-policy-template.service';
 
 @Injectable()
 export class LeaveService {
@@ -14,6 +15,7 @@ export class LeaveService {
     @Inject(forwardRef(() => ApprovalEngineService))
     private approvalEngine: ApprovalEngineService,
     private payrollLock: PayrollLockService,
+    @Optional() private holidayPolicy?: HolidayPolicyTemplateService,
   ) {}
 
   // ── Leave Types ──────────────────────────────────────────────────────────────
@@ -28,7 +30,8 @@ export class LeaveService {
       await this.seedDefaultLeaveTypes(tenantId);
     }
 
-    // When an employeeId is provided, filter leave types by the employee's gender and their assigned leave policy
+    // Keep the dropdown discoverable: employees can see active leave types,
+    // while request validation and balances enforce the assigned policy.
     if (employeeId) {
       const { rows: empRows } = await this.db.query(
         'SELECT gender FROM employees WHERE id = $1 AND tenant_id = $2',
@@ -77,7 +80,11 @@ export class LeaveService {
 
   async getBalances(tenantId: string, employeeId?: string) {
     if (employeeId) {
-      await this.syncEmployeeBalances(tenantId, employeeId);
+      const policy = await this.resolveLeavePolicy(tenantId, employeeId);
+      if (!policy || Object.keys(policy).length === 0) {
+        return [];
+      }
+      await this.syncEmployeeBalances(tenantId, employeeId, policy);
     } else {
       const { rows: emps } = await this.db.query(
         `SELECT id FROM employees WHERE tenant_id = $1 AND status = 'active' AND deleted_at IS NULL`,
@@ -94,7 +101,7 @@ export class LeaveService {
       FROM leave_balances lb
       JOIN leave_types lt ON lb.leave_type_id = lt.id
       JOIN employees e ON lb.employee_id = e.id
-      WHERE lb.tenant_id = $1 AND (lb.allocated > 0 OR lb.used > 0)`;
+      WHERE lb.tenant_id = $1 AND lb.allocated > 0`;
     const params: any[] = [tenantId];
     let idx = 2;
     if (employeeId) { query += ` AND lb.employee_id = $${idx++}`; params.push(employeeId); }
@@ -104,8 +111,8 @@ export class LeaveService {
     return rows;
   }
 
-  private async syncEmployeeBalances(tenantId: string, employeeId: string) {
-    const policy = await this.resolveLeavePolicy(tenantId, employeeId);
+  private async syncEmployeeBalances(tenantId: string, employeeId: string, policyConfig?: any) {
+    const policy = policyConfig ?? await this.resolveLeavePolicy(tenantId, employeeId);
     if (!policy || Object.keys(policy).length === 0) {
       return; // No template policy resolved, skip sync
     }
@@ -136,8 +143,8 @@ export class LeaveService {
   }
 
   private getLimitFromPolicy(config: any, code: string, name: string): number {
-    const c = code.toUpperCase();
-    const n = name.toLowerCase();
+    const c = (code ?? '').toUpperCase();
+    const n = (name ?? '').toLowerCase();
 
     if (c === 'CL' || n.includes('casual')) {
       return config.casual_leave_days || 0;
@@ -188,13 +195,20 @@ export class LeaveService {
   async createRequest(tenantId: string, employeeId: string, data: any) {
     await this.payrollLock.assertPeriodUnlocked(tenantId, employeeId, data.start_date, data.end_date);
 
-    const days = this.calculateDays(data.start_date, data.end_date);
+    let days = this.calculateDays(data.start_date, data.end_date);
+
+    if (data.duration === 'half_day') {
+      if (days !== 1) {
+        throw new BadRequestException('Half day leave can only be requested for a single day.');
+      }
+      days = 0.5;
+    }
 
     // Sync employee balances with the assigned policy template first
     await this.syncEmployeeBalances(tenantId, employeeId);
 
     // Centralized validation against the policy
-    await this.validateLeaveAgainstPolicy(tenantId, employeeId, data.leave_type_id, days);
+    await this.validateLeaveAgainstPolicy(tenantId, employeeId, data.leave_type_id, days, 0, data.start_date, data.end_date);
 
     // BUG FIX: resolve submitter user ID and branch BEFORE the INSERT so
     // that a failed lookup never leaves an orphaned leave_requests row
@@ -226,6 +240,7 @@ export class LeaveService {
       branchId,
       title: `Leave request: ${data.start_date} – ${data.end_date} (${days} day${days !== 1 ? 's' : ''})`,
       description: data.reason,
+      priority: data.priority,
       metadata: { leave_type_id: data.leave_type_id, days, employee_id: employeeId },
     });
 
@@ -258,7 +273,7 @@ export class LeaveService {
 
     if (req.leave_type_id) {
       // Re-validate against policy to prevent race conditions during approval
-      await this.validateLeaveAgainstPolicy(tenantId, req.employee_id, req.leave_type_id, req.days);
+      await this.validateLeaveAgainstPolicy(tenantId, req.employee_id, req.leave_type_id, req.days, 0, req.start_date, req.end_date);
     }
 
     const result = await this.approvalEngine.approveByEntity(
@@ -297,7 +312,7 @@ export class LeaveService {
     return rows;
   }
 
-  /** Cascading leave_policy resolution: employee → designation → department → property → tenant default. */
+  /** Cascading leave_policy resolution: employee -> designation -> department -> property. */
   private async resolveLeavePolicy(tenantId: string, employeeId: string): Promise<any> {
     const { rows: tplRows } = await this.db.query(
       `SELECT t.config FROM template_assignments ta
@@ -318,12 +333,7 @@ export class LeaveService {
     );
 
     if (tplRows.length) return tplRows[0].config ?? null;
-
-    const { rows: defRows } = await this.db.query(
-      `SELECT config FROM templates WHERE tenant_id = $1 AND template_type = 'leave_policy' AND is_default = true AND deleted_at IS NULL LIMIT 1`,
-      [tenantId],
-    );
-    return defRows[0]?.config ?? null;
+    return null;
   }
 
   private async dailyRateForEmployee(tenantId: string, employeeId: string, basis: 'basic' | 'gross'): Promise<number> {
@@ -351,7 +361,7 @@ export class LeaveService {
    */
   async getExitEncashmentPreview(tenantId: string, employeeId: string): Promise<Array<{ leave_type_id: string; leave_type_name: string; days: number; daily_rate: number; amount: number }>> {
     const policyConfig = await this.resolveLeavePolicy(tenantId, employeeId);
-    if (!policyConfig.encashment_enabled) return [];
+    if (!policyConfig?.encashment_enabled) return [];
 
     const basis: 'basic' | 'gross' = policyConfig.encashment_basis === 'gross' ? 'gross' : 'basic';
     const dailyRate = await this.dailyRateForEmployee(tenantId, employeeId, basis);
@@ -539,7 +549,15 @@ export class LeaveService {
     );
   }
 
-  private async validateLeaveAgainstPolicy(tenantId: string, employeeId: string, leaveTypeId: string, days: number, checkMinimumRetain: number = 0) {
+  private async validateLeaveAgainstPolicy(
+    tenantId: string,
+    employeeId: string,
+    leaveTypeId: string,
+    days: number,
+    checkMinimumRetain: number = 0,
+    startDate?: string,
+    endDate?: string,
+  ) {
     const year = new Date().getFullYear();
     const policy = await this.resolveLeavePolicy(tenantId, employeeId);
     if (!policy || Object.keys(policy).length === 0) {
@@ -547,10 +565,25 @@ export class LeaveService {
     }
 
     const { rows: typeRows } = await this.db.query(
-      'SELECT gender_eligibility, paid FROM leave_types WHERE id = $1',
+      'SELECT code, name, gender_eligibility, paid FROM leave_types WHERE id = $1',
       [leaveTypeId],
     );
     if (!typeRows.length) throw new BadRequestException('Invalid leave type');
+
+    const policyLimit = this.getLimitFromPolicy(policy, typeRows[0].code, typeRows[0].name);
+    if (policyLimit <= 0) {
+      throw new BadRequestException(
+        'This leave type is not available under your assigned leave policy template.',
+      );
+    }
+
+    if (startDate && endDate && this.holidayPolicy) {
+      const blockedHolidays = await this.holidayPolicy.blocksLeaveRequest(tenantId, employeeId, startDate, endDate);
+      if (blockedHolidays.length) {
+        const names = blockedHolidays.map((holiday) => `${holiday.name} (${holiday.date})`).join(', ');
+        throw new BadRequestException(`Leave is not required on paid holidays: ${names}`);
+      }
+    }
 
     const ge: string = typeRows[0].gender_eligibility;
     if (ge !== 'all') {

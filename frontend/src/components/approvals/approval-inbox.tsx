@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { approvalsApi, ApprovalRequest, InboxFilters } from '@/lib/approvals-api';
 import { ApprovalReasonModal } from './approval-reason-modal';
+import { ShiftOverrideApprovalModal } from './shift-override-approval-modal';
 import { ApprovalTimeline } from './approval-timeline';
 import { ApprovalChainViz } from './approval-chain-viz';
 import { useCan } from '@/hooks/use-permissions';
@@ -155,7 +156,7 @@ function ApprovalRow({ request, onExpand, expanded, onApprove, onReject, onCance
 /* ── Main component ─────────────────────────────────────────────────────── */
 
 interface ApprovalInboxProps {
-  mode: 'inbox' | 'submitted';
+  mode: 'inbox' | 'submitted' | 'history';
 }
 
 export function ApprovalInbox({ mode }: ApprovalInboxProps) {
@@ -170,13 +171,19 @@ export function ApprovalInbox({ mode }: ApprovalInboxProps) {
     request: ApprovalRequest | null;
   }>({ open: false, action: 'approve', request: null });
 
-  const queryKey = mode === 'inbox' ? ['approvals-inbox', filters] : ['approvals-submitted', filters];
+  const queryKey = mode === 'inbox' 
+    ? ['approvals-inbox', filters] 
+    : mode === 'submitted' 
+      ? ['approvals-submitted', filters]
+      : ['approvals-history', filters];
 
   const { data, isLoading, isRefetching, refetch } = useQuery({
     queryKey,
     queryFn: () => mode === 'inbox'
       ? approvalsApi.getInbox(filters)
-      : approvalsApi.getSubmitted(filters),
+      : mode === 'submitted'
+        ? approvalsApi.getSubmitted(filters)
+        : approvalsApi.getHistory(filters),
   });
 
   const requests = data?.data ?? [];
@@ -238,6 +245,7 @@ export function ApprovalInbox({ mode }: ApprovalInboxProps) {
           <option value="payroll">Payroll</option>
           <option value="payroll_payment">Payroll Payment</option>
           <option value="shift_change">Shift Change</option>
+          <option value="shift_override">Shift Override</option>
           <option value="biometric_device">Biometric Device</option>
           <option value="exit_request">Exit Request</option>
           <option value="exit_clearance">Exit Clearance</option>
@@ -249,6 +257,7 @@ export function ApprovalInbox({ mode }: ApprovalInboxProps) {
           <option value="probation_confirmation">Probation Confirmation</option>
           <option value="workforce_plan">Workforce Plan</option>
           <option value="fine_deduction">Fine & Deduction</option>
+          <option value="fine_appeal">Fine Appeal</option>
         </select>
 
         <select
@@ -283,7 +292,11 @@ export function ApprovalInbox({ mode }: ApprovalInboxProps) {
         <div className="flex flex-col items-center justify-center py-16 text-slate-400">
           <CheckCircle2 className="w-10 h-10 mb-3 text-slate-300" />
           <p className="text-sm font-medium">No requests found</p>
-          <p className="text-xs mt-1">{mode === 'inbox' ? "You're all caught up." : 'No submitted requests.'}</p>
+          <p className="text-xs mt-1">
+            {mode === 'inbox' ? "You're all caught up." 
+              : mode === 'submitted' ? 'No submitted requests.'
+              : 'No approval history found.'}
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -330,13 +343,28 @@ export function ApprovalInbox({ mode }: ApprovalInboxProps) {
       )}
 
       {/* Reason modal */}
-      <ApprovalReasonModal
-        isOpen={modal.open}
-        action={modal.action}
-        requestTitle={modal.request?.title ?? ''}
-        onConfirm={handleConfirm}
-        onClose={closeModal}
-      />
+      {modal.open && modal.request?.workflow_type === 'shift_override' && modal.action === 'approve' ? (
+        <ShiftOverrideApprovalModal
+          isOpen={modal.open}
+          request={modal.request}
+          onClose={closeModal}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['approvals-inbox'] });
+            queryClient.invalidateQueries({ queryKey: ['approvals-submitted'] });
+            queryClient.invalidateQueries({ queryKey: ['approvals-count'] });
+            setExpandedId(null);
+            closeModal();
+          }}
+        />
+      ) : (
+        <ApprovalReasonModal
+          isOpen={modal.open}
+          action={modal.action}
+          requestTitle={modal.request?.title ?? ''}
+          onConfirm={handleConfirm}
+          onClose={closeModal}
+        />
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Plus, X, Loader2, Pencil, Power, PowerOff, MoreHorizontal, Check } from 'lucide-react';
+import { X, Loader2, Pencil, Power, PowerOff, MoreHorizontal, Check } from 'lucide-react';
 import api from '@/lib/api';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 
@@ -27,8 +27,6 @@ type ModuleFormState = {
   is_standalone_allowed: boolean;
 };
 
-const EMPTY_FORM: ModuleFormState = { name: '', slug: '', description: '', price_monthly: 0, price_yearly: 0, setup_fee: 0, is_standalone_allowed: false };
-
 function moduleToForm(mod: Module): ModuleFormState {
   return {
     name: mod.name,
@@ -41,15 +39,22 @@ function moduleToForm(mod: Module): ModuleFormState {
   };
 }
 
-function ModuleFormModal({ title, initial, onClose, onSaved }: { title: string; initial: ModuleFormState; onClose: () => void; onSaved: (payload: ModuleFormState) => Promise<void>; }) {
+function ModuleFormModal({ title, initial, onClose, onSaved }: { title: string; initial: ModuleFormState; onClose: () => void; onSaved: (payload: Partial<ModuleFormState>) => Promise<void>; }) {
   const [form, setForm] = useState<ModuleFormState>(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const save = async () => {
-    if (!form.name.trim() || !form.slug.trim()) { setError('Name and slug are required'); return; }
     setSaving(true); setError('');
-    try { await onSaved(form); onClose(); }
+    try {
+      await onSaved({
+        price_monthly: form.price_monthly,
+        price_yearly: form.price_yearly,
+        setup_fee: form.setup_fee,
+        is_standalone_allowed: form.is_standalone_allowed,
+      });
+      onClose();
+    }
     catch (err: any) { setError(err.response?.data?.error?.message ?? err.response?.data?.message ?? 'Failed to save'); }
     finally { setSaving(false); }
   };
@@ -68,17 +73,17 @@ function ModuleFormModal({ title, initial, onClose, onSaved }: { title: string; 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Module Name</label>
-              <input placeholder="e.g. Leave Management" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-background" />
+              <input value={form.name} disabled className="w-full border border-border rounded-xl px-3 py-2.5 text-sm bg-muted/40 text-muted-foreground cursor-not-allowed" />
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Slug</label>
-              <input placeholder="e.g. leave-management" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-background" />
+              <input value={form.slug} disabled className="w-full border border-border rounded-xl px-3 py-2.5 text-sm bg-muted/40 text-muted-foreground cursor-not-allowed" />
             </div>
           </div>
 
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Description</label>
-            <input placeholder="Short description of the module" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-background" />
+            <input value={form.description} disabled className="w-full border border-border rounded-xl px-3 py-2.5 text-sm bg-muted/40 text-muted-foreground cursor-not-allowed" />
           </div>
 
           <div className="grid grid-cols-3 gap-4">
@@ -137,7 +142,6 @@ function RowActions({ module, onEdit, onToggleActive }: { module: Module; onEdit
 export default function ModulesTab() {
   const [modules, setModules] = useState<Module[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
   const [editModule, setEditModule] = useState<Module | null>(null);
 
   const load = async () => {
@@ -153,13 +157,11 @@ export default function ModulesTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 bg-primary text-primary-foreground rounded-lg px-4 py-2 text-sm font-semibold hover:bg-primary/90 transition-colors">
-          <Plus className="w-4 h-4" /> Add Module
-        </button>
+      <div className="rounded-xl border border-border bg-background px-4 py-3">
+        <p className="text-sm font-medium text-foreground">Platform modules</p>
+        <p className="text-sm text-muted-foreground">These modules are available for plan setup and custom subscription assignments. Use edit to set prices or temporarily deactivate a module.</p>
       </div>
 
-      {showCreate && <ModuleFormModal title="Add Module" initial={EMPTY_FORM} onClose={() => setShowCreate(false)} onSaved={async (payload) => { await api.post('/billing/modules', payload); load(); }} />}
       {editModule && <ModuleFormModal title={`Edit ${editModule.name}`} initial={moduleToForm(editModule)} onClose={() => setEditModule(null)} onSaved={async (payload) => { await api.put(`/billing/modules/${editModule.id}`, payload); load(); }} />}
 
       <div className="border border-border rounded-xl overflow-hidden bg-background">
@@ -175,7 +177,7 @@ export default function ModulesTab() {
           </TableHeader>
           <TableBody className="divide-y divide-border/60">
             {loading ? ( <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">Loading…</TableCell></TableRow> ) 
-            : modules.length === 0 ? ( <TableRow><TableCell colSpan={5} className="text-center py-10">No modules defined.</TableCell></TableRow> )
+            : modules.length === 0 ? ( <TableRow><TableCell colSpan={5} className="text-center py-10">No platform modules found. Run the latest backend migrations to seed the module catalog.</TableCell></TableRow> )
             : modules.map((module) => (
                 <TableRow key={module.id} className="hover:bg-muted/30">
                   <TableCell className="py-3.5 px-3 font-medium">{module.name}</TableCell>

@@ -152,7 +152,7 @@ export default function JobDescriptionDetailPage() {
           <Can permission={PERMISSIONS.RECRUITMENT_EDIT}>
             <Card>
               <CardContent className="p-5">
-                <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><Rocket className="w-4 h-4" /> Job Publishing</h3>
+                <h3 className="text-base font-bold text-foreground mb-3 flex items-center gap-2"><Rocket className="w-4 h-4" /> Job Publishing</h3>
                 {!jd.vacancy_id ? (
                   <p className="text-xs text-muted-foreground">Link this job description to a vacancy before it can be published.</p>
                 ) : !canPublish && !posting ? (
@@ -194,7 +194,7 @@ export default function JobDescriptionDetailPage() {
         <div>
           <Card>
             <CardContent className="p-5">
-              <h3 className="text-sm font-semibold text-foreground mb-3">Version History</h3>
+              <h3 className="text-base font-bold text-foreground mb-3">Version History</h3>
               <div className="space-y-3">
                 {versions.map((v) => (
                   <div key={v.id} className="text-sm flex items-start justify-between gap-2">

@@ -8,10 +8,9 @@ interface Job {
   tenant: string;
   punchCount: number;
   failedReason: string;
-  stacktrace: string[];
   attemptsMade: number;
   timestamp: string;
-  data: Record<string, unknown>;
+  data?: Record<string, unknown>;
 }
 
 interface Props {
@@ -22,48 +21,34 @@ interface Props {
 export function JobInspectorDrawer({ job, onClose }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex">
-      {/* Backdrop */}
       <div className="flex-1 bg-black/40" onClick={onClose} />
-
-      {/* Panel */}
-      <div className="w-full max-w-xl bg-white shadow-xl flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h3 className="font-semibold text-gray-900">Job Inspector</h3>
+      <div className="flex w-full max-w-xl flex-col overflow-hidden bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+          <h3 className="font-semibold text-gray-900">Punch Processing Review</h3>
           <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-5 text-sm">
+        <div className="flex-1 space-y-5 overflow-y-auto p-6 text-sm">
           <section className="space-y-2">
             <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Summary</h4>
-            <Row label="Job ID" value={String(job.id)} mono />
             <Row label="Provider" value={job.provider} />
-            <Row label="Tenant" value={job.tenant} mono />
             <Row label="Punch count" value={String(job.punchCount)} />
             <Row label="Attempts" value={String(job.attemptsMade)} />
             <Row label="Failed at" value={new Date(job.timestamp).toLocaleString()} />
           </section>
 
           <section className="space-y-2">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Error</h4>
-            <p className="font-mono text-xs bg-red-50 text-red-800 rounded-md p-3 break-words">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Failure Reason</h4>
+            <p className="break-words rounded-md bg-red-50 p-3 text-xs text-red-800">
               {job.failedReason}
             </p>
           </section>
 
-          {job.stacktrace?.length > 0 && (
-            <section className="space-y-2">
-              <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Stack trace</h4>
-              <pre className="font-mono text-xs bg-gray-900 text-gray-100 rounded-md p-3 overflow-x-auto whitespace-pre-wrap">
-                {job.stacktrace.join('\n')}
-              </pre>
-            </section>
-          )}
-
           <section className="space-y-2">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Payload</h4>
-            <pre className="font-mono text-xs bg-gray-50 text-gray-800 rounded-md p-3 overflow-x-auto whitespace-pre-wrap border border-gray-200">
-              {JSON.stringify(job.data, null, 2)}
-            </pre>
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Recommended Action</h4>
+            <p className="rounded-md border border-gray-200 bg-gray-50 p-3 text-xs leading-relaxed text-gray-700">
+              Retry this punch after checking employee mapping, device connectivity, and sync status. If it fails again, share the failure reason with support.
+            </p>
           </section>
         </div>
       </div>
@@ -71,11 +56,11 @@ export function JobInspectorDrawer({ job, onClose }: Props) {
   );
 }
 
-function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex gap-3">
-      <span className="w-28 text-gray-500 shrink-0">{label}</span>
-      <span className={`text-gray-900 break-all ${mono ? 'font-mono text-xs' : ''}`}>{value}</span>
+      <span className="w-28 shrink-0 text-gray-500">{label}</span>
+      <span className="break-all text-gray-900">{value}</span>
     </div>
   );
 }

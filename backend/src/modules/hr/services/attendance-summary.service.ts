@@ -1,6 +1,8 @@
 import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { DatabaseService } from '../../../shared/database.service';
+import { SchedulerControlService } from '../../../shared/scheduler-control.service';
+import { AccessScope, GLOBAL_ACCESS_SCOPE, branchScopeClause } from '../../../shared/scope.util';
 import { AuditLogService } from '../../platform/services/audit-log.service';
 import { BusinessDaysService } from './business-days.service';
 import { OvertimeService } from './overtime.service';
@@ -31,6 +33,11 @@ export interface AttendanceSummaryRow {
   total_hours: number;
   overtime_hours: number;
   approved_ot_hours: number;
+  overtime_policy_snapshot?: Record<string, any>;
+  overtime_multiplier?: number | null;
+  overtime_rate?: number | null;
+  overtime_formula?: string | null;
+  overtime_approved_at?: string | null;
   status: string;
   payroll_locked: boolean;
   generation_version: number;
@@ -49,6 +56,22 @@ export interface AttendanceSummaryRow {
   updated_at: string;
 }
 
+export interface ManualAttendanceSummaryAdjustment {
+  business_working_days?: number;
+  present_days?: number;
+  half_day_count?: number;
+  absent_days?: number;
+  holiday_days?: number;
+  weekly_off_days?: number;
+  paid_leave_days?: number;
+  unpaid_leave_days?: number;
+  payable_days?: number;
+  late_count?: number;
+  total_hours?: number;
+  overtime_hours?: number;
+  approved_ot_hours?: number;
+}
+
 const COMPARABLE_FIELDS = [
   'business_working_days', 'present_days', 'half_day_count', 'absent_days',
   'holiday_days', 'weekly_off_days', 'paid_leave_days', 'unpaid_leave_days',
@@ -65,26 +88,29 @@ export class AttendanceSummaryService {
     private readonly overtimeService: OvertimeService,
     private readonly auditLog: AuditLogService,
     private readonly attendanceBehaviourEngine: AttendanceBehaviourEngineService,
+    private readonly schedulerControl: SchedulerControlService = new SchedulerControlService(),
   ) {}
 
   /**
    * Runs on the 1st of every month at 01:00 AM — auto-computes last month's
    * attendance org-wide for every tenant (unlocked summaries only).
    */
-  @Cron('0 1 1 * *')
+  @Cron('31 1 1 1 * *', { name: 'attendance-summary-monthly-compute' })
   async autoComputeLastMonth() {
-    const now = new Date();
-    const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-    const month = now.getMonth() === 0 ? 12 : now.getMonth();
+    await this.schedulerControl.run('attendance-summary-monthly-compute', async () => {
+      const now = new Date();
+      const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+      const month = now.getMonth() === 0 ? 12 : now.getMonth();
 
-    const { rows: tenants } = await this.db.query(`SELECT DISTINCT tenant_id FROM employees WHERE deleted_at IS NULL`);
-    for (const { tenant_id } of tenants) {
-      try {
-        await this.compute(tenant_id, year, month, { type: 'organization' }, null);
-      } catch (err: any) {
-        this.logger.error(`[AutoCompute] Failed for tenant ${tenant_id}: ${err?.message}`);
+      const { rows: tenants } = await this.db.query(`SELECT DISTINCT tenant_id FROM employees WHERE deleted_at IS NULL`);
+      for (const { tenant_id } of tenants) {
+        try {
+          await this.compute(tenant_id, year, month, { type: 'organization' }, null);
+        } catch (err: any) {
+          this.logger.error(`[AutoCompute] Failed for tenant ${tenant_id}: ${err?.message}`);
+        }
       }
-    }
+    });
   }
 
   /**
@@ -97,74 +123,93 @@ export class AttendanceSummaryService {
     month: number,
     scope: SummaryScope,
     userId: string | null,
-  ): Promise<{ computed: number; skippedLocked: number; skippedNoStructureChange: number }> {
+  ): Promise<{ computed: number; skippedLocked: number; skippedNoStructureChange: number; skippedFailed: number; failures: { employeeId: string; reason: string }[] }> {
     const { periodStart, periodEnd } = this._periodFor(year, month);
     const employees = await this._resolveScopeEmployees(tenantId, scope);
 
     let computed = 0;
     let skippedLocked = 0;
     let skippedNoStructureChange = 0;
+    let skippedFailed = 0;
+    const failures: { employeeId: string; reason: string }[] = [];
 
     for (const emp of employees) {
-      const existing = await this._getExisting(tenantId, emp.id, periodStart, periodEnd);
-      if (existing && ['payroll_locked', 'payroll_processed'].includes(existing.status)) {
-        skippedLocked++;
-        continue;
-      }
+      try {
+        const existing = await this._getExisting(tenantId, emp.id, periodStart, periodEnd);
+        if (existing && ['payroll_locked', 'payroll_processed'].includes(existing.status)) {
+          skippedLocked++;
+          continue;
+        }
 
-      const figures = await this._computeFigures(tenantId, emp, periodStart, periodEnd, month, year);
-      const changed = !existing || COMPARABLE_FIELDS.some((f) => Number(existing[f] ?? 0) !== Number((figures as any)[f] ?? 0));
+        const figures = await this._computeFigures(tenantId, emp, periodStart, periodEnd, month, year);
+        const changed = !existing || COMPARABLE_FIELDS.some((f) => Number(existing[f] ?? 0) !== Number((figures as any)[f] ?? 0));
 
-      const nextVersion = existing ? (changed ? existing.generation_version + 1 : existing.generation_version) : 1;
-      // A real change to the figures invalidates any prior review decision —
-      // including an existing 'approved' status — and sends it back to the
-      // review queue. An idempotent re-run with no diff leaves status alone.
-      const nextStatus = changed ? 'pending_review' : (existing?.status ?? 'pending_review');
+        const nextVersion = existing ? (changed ? existing.generation_version + 1 : existing.generation_version) : 1;
+        // A real change to the figures invalidates any prior review decision —
+        // including an existing 'approved' status — and sends it back to the
+        // review queue. An idempotent re-run with no diff leaves status alone.
+        const nextStatus = changed ? 'pending_review' : (existing?.status ?? 'pending_review');
 
-      const { rows } = await this.db.query(
-        `INSERT INTO payroll_attendance_summary (
-           tenant_id, employee_id, branch_id, department_id, period_start, period_end,
-           total_working_days, business_working_days, present_days, half_day_count, absent_days,
-           holiday_days, weekly_off_days, paid_leave_days, unpaid_leave_days, leave_days, payable_days,
-           late_count, total_hours, overtime_hours, approved_ot_hours,
-           status, generation_version, generated_by, generated_at, updated_at
-         ) VALUES (
-           $1,$2,$3,$4,$5,$6, $7,$8,$9,$10,$11, $12,$13,$14,$15,$16,$17, $18,$19,$20,$21,
-           $22,$23,$24,now(),now()
-         )
-         ON CONFLICT (tenant_id, employee_id, period_start, period_end) DO UPDATE SET
-           branch_id = EXCLUDED.branch_id, department_id = EXCLUDED.department_id,
-           total_working_days = EXCLUDED.total_working_days,
-           business_working_days = EXCLUDED.business_working_days,
-           present_days = EXCLUDED.present_days, half_day_count = EXCLUDED.half_day_count,
-           absent_days = EXCLUDED.absent_days, holiday_days = EXCLUDED.holiday_days,
-           weekly_off_days = EXCLUDED.weekly_off_days, paid_leave_days = EXCLUDED.paid_leave_days,
-           unpaid_leave_days = EXCLUDED.unpaid_leave_days, leave_days = EXCLUDED.leave_days,
-           payable_days = EXCLUDED.payable_days, late_count = EXCLUDED.late_count,
-           total_hours = EXCLUDED.total_hours, overtime_hours = EXCLUDED.overtime_hours,
-           approved_ot_hours = EXCLUDED.approved_ot_hours,
-           status = EXCLUDED.status, generation_version = EXCLUDED.generation_version,
-           generated_by = EXCLUDED.generated_by, generated_at = now(), updated_at = now()
-         RETURNING *`,
-        [
-          tenantId, emp.id, emp.branch_id ?? null, emp.department_id ?? null, periodStart, periodEnd,
-          figures.calendarDays, figures.business_working_days, figures.present_days, figures.half_day_count, figures.absent_days,
-          figures.holiday_days, figures.weekly_off_days, figures.paid_leave_days, figures.unpaid_leave_days,
-          figures.paid_leave_days + figures.unpaid_leave_days, figures.payable_days,
-          figures.late_count, figures.total_hours, figures.overtime_hours, figures.approved_ot_hours,
-          nextStatus, nextVersion, userId,
-        ],
-      );
+        const { rows } = await this.db.query(
+          `INSERT INTO payroll_attendance_summary (
+             tenant_id, employee_id, branch_id, department_id, period_start, period_end,
+             total_working_days, business_working_days, present_days, half_day_count, absent_days,
+             holiday_days, weekly_off_days, paid_leave_days, unpaid_leave_days, leave_days, payable_days,
+             late_count, total_hours, overtime_hours, approved_ot_hours,
+             overtime_policy_snapshot, overtime_multiplier, overtime_rate, overtime_formula, overtime_approved_at,
+             status, generation_version, generated_by, generated_at, updated_at
+           ) VALUES (
+             $1,$2,$3,$4,$5,$6, $7,$8,$9,$10,$11, $12,$13,$14,$15,$16,$17, $18,$19,$20,$21,
+             $22::jsonb,$23,$24,$25,$26, $27,$28,$29,now(),now()
+           )
+           ON CONFLICT (tenant_id, employee_id, period_start, period_end) DO UPDATE SET
+             branch_id = EXCLUDED.branch_id, department_id = EXCLUDED.department_id,
+             total_working_days = EXCLUDED.total_working_days,
+             business_working_days = EXCLUDED.business_working_days,
+             present_days = EXCLUDED.present_days, half_day_count = EXCLUDED.half_day_count,
+             absent_days = EXCLUDED.absent_days, holiday_days = EXCLUDED.holiday_days,
+             weekly_off_days = EXCLUDED.weekly_off_days, paid_leave_days = EXCLUDED.paid_leave_days,
+             unpaid_leave_days = EXCLUDED.unpaid_leave_days, leave_days = EXCLUDED.leave_days,
+             payable_days = EXCLUDED.payable_days, late_count = EXCLUDED.late_count,
+             total_hours = EXCLUDED.total_hours, overtime_hours = EXCLUDED.overtime_hours,
+             approved_ot_hours = EXCLUDED.approved_ot_hours,
+             overtime_policy_snapshot = EXCLUDED.overtime_policy_snapshot,
+             overtime_multiplier = EXCLUDED.overtime_multiplier,
+             overtime_rate = EXCLUDED.overtime_rate,
+             overtime_formula = EXCLUDED.overtime_formula,
+             overtime_approved_at = EXCLUDED.overtime_approved_at,
+             status = EXCLUDED.status, generation_version = EXCLUDED.generation_version,
+             generated_by = EXCLUDED.generated_by, generated_at = now(), updated_at = now()
+           RETURNING *`,
+          [
+            tenantId, emp.id, emp.branch_id ?? null, emp.department_id ?? null, periodStart, periodEnd,
+            figures.calendarDays, figures.business_working_days, figures.present_days, figures.half_day_count, figures.absent_days,
+            figures.holiday_days, figures.weekly_off_days, figures.paid_leave_days, figures.unpaid_leave_days,
+            figures.paid_leave_days + figures.unpaid_leave_days, figures.payable_days,
+            figures.late_count, figures.total_hours, figures.overtime_hours, figures.approved_ot_hours,
+            JSON.stringify(figures.overtime_policy_snapshot ?? {}),
+            figures.overtime_multiplier,
+            figures.overtime_rate,
+            figures.overtime_formula,
+            figures.overtime_approved_at,
+            nextStatus, nextVersion, userId,
+          ],
+        );
 
-      if (changed) {
-        await this._writeVersion(rows[0], userId, existing ? 'recompute' : 'initial_compute');
-        computed++;
-      } else {
-        skippedNoStructureChange++;
+        if (changed) {
+          await this._writeVersion(rows[0], userId, existing ? 'recompute' : 'initial_compute');
+          computed++;
+        } else {
+          skippedNoStructureChange++;
+        }
+      } catch (err: any) {
+        skippedFailed++;
+        failures.push({ employeeId: emp.id, reason: err?.message ?? 'Attendance summary could not be computed for this employee' });
+        this.logger.error(`[Compute] Skipped employee ${emp.id}: ${err?.message}`);
       }
     }
 
-    return { computed, skippedLocked, skippedNoStructureChange };
+    return { computed, skippedLocked, skippedNoStructureChange, skippedFailed, failures };
   }
 
   /** Explicit single-row recompute (always writes a version-history entry). */
@@ -173,10 +218,14 @@ export class AttendanceSummaryService {
     if (['payroll_locked', 'payroll_processed'].includes(existing.status)) {
       throw new BadRequestException('Cannot recompute a locked or processed summary');
     }
-    await this.compute(tenantId, this._yearOf(existing.period_start), this._monthOf(existing.period_start), {
+    const result = await this.compute(tenantId, this._yearOf(existing.period_start), this._monthOf(existing.period_start), {
       type: 'employee', employeeIds: [existing.employee_id],
     }, userId);
-    const updated = await this._getById(tenantId, summaryId);
+    if (result.skippedFailed > 0) {
+      throw new BadRequestException(result.failures[0]?.reason ?? 'Attendance summary could not be recomputed');
+    }
+
+    const updated = await this._markRecomputedForReview(tenantId, summaryId, userId);
     await this._writeVersion(updated, userId, 'manual_recompute');
     return updated;
   }
@@ -243,6 +292,100 @@ export class AttendanceSummaryService {
     return rows[0];
   }
 
+  async applyManualAdjustment(
+    tenantId: string,
+    summaryId: string,
+    userId: string,
+    adjustment: ManualAttendanceSummaryAdjustment,
+  ): Promise<AttendanceSummaryRow> {
+    const existing = await this._getById(tenantId, summaryId);
+    if (['payroll_locked', 'payroll_processed'].includes(existing.status)) {
+      throw new BadRequestException('Cannot edit a locked or processed summary');
+    }
+
+    const normalized = this._normalizeManualAdjustment(adjustment);
+    const next = {
+      business_working_days: normalized.business_working_days ?? Number(existing.business_working_days ?? 0),
+      present_days: normalized.present_days ?? Number(existing.present_days ?? 0),
+      half_day_count: normalized.half_day_count ?? Number(existing.half_day_count ?? 0),
+      absent_days: normalized.absent_days ?? Number(existing.absent_days ?? 0),
+      holiday_days: normalized.holiday_days ?? Number(existing.holiday_days ?? 0),
+      weekly_off_days: normalized.weekly_off_days ?? Number(existing.weekly_off_days ?? 0),
+      paid_leave_days: normalized.paid_leave_days ?? Number(existing.paid_leave_days ?? 0),
+      unpaid_leave_days: normalized.unpaid_leave_days ?? Number(existing.unpaid_leave_days ?? 0),
+      late_count: normalized.late_count ?? Number(existing.late_count ?? 0),
+      total_hours: normalized.total_hours ?? Number(existing.total_hours ?? 0),
+      overtime_hours: normalized.overtime_hours ?? Number(existing.overtime_hours ?? 0),
+      approved_ot_hours: normalized.approved_ot_hours ?? Number(existing.approved_ot_hours ?? 0),
+    };
+    const payableDays = this._calculatePayableDays(next);
+
+    const { rows } = await this.db.query(
+      `UPDATE payroll_attendance_summary
+       SET total_working_days = $3,
+           business_working_days = $4,
+           present_days = $5,
+           half_day_count = $6,
+           absent_days = $7,
+           holiday_days = $8,
+           weekly_off_days = $9,
+           paid_leave_days = $10,
+           unpaid_leave_days = $11,
+           leave_days = $12,
+           payable_days = $13,
+           late_count = $14,
+           total_hours = $15,
+           overtime_hours = $16,
+           approved_ot_hours = $17,
+           status = 'pending_review',
+           generation_version = generation_version + 1,
+           generated_by = $18,
+           generated_at = now(),
+           reviewed_by = NULL,
+           reviewed_at = NULL,
+           approval_notes = NULL,
+           rejection_reason = NULL,
+           correction_notes = NULL,
+           updated_at = now()
+       WHERE id = $1 AND tenant_id = $2
+       RETURNING *`,
+      [
+        summaryId,
+        tenantId,
+        next.business_working_days + next.holiday_days + next.weekly_off_days,
+        next.business_working_days,
+        next.present_days,
+        next.half_day_count,
+        next.absent_days,
+        next.holiday_days,
+        next.weekly_off_days,
+        next.paid_leave_days,
+        next.unpaid_leave_days,
+        next.paid_leave_days + next.unpaid_leave_days,
+        payableDays,
+        next.late_count,
+        next.total_hours,
+        next.overtime_hours,
+        next.approved_ot_hours,
+        userId,
+      ],
+    );
+    if (!rows.length) throw new NotFoundException('Attendance summary not found');
+
+    const updated = rows[0];
+    await this._writeVersion(updated, userId, 'manual_adjustment');
+    await this.auditLog.log({
+      tenantId,
+      userId,
+      entityType: 'attendance_summary',
+      entityId: summaryId,
+      action: 'attendance_summary_manual_adjusted',
+      oldValues: this._pickAdjustmentSnapshot(existing),
+      newValues: this._pickAdjustmentSnapshot(updated),
+    });
+    return updated;
+  }
+
   async cancel(tenantId: string, summaryId: string, userId: string, reason: string): Promise<AttendanceSummaryRow> {
     if (!reason?.trim()) throw new BadRequestException('A cancellation reason is required');
     const { rows } = await this.db.query(
@@ -262,9 +405,10 @@ export class AttendanceSummaryService {
 
   async listSummaries(tenantId: string, year: number, month: number, filters: {
     branch_id?: string; department_id?: string; employee_id?: string; status?: string;
-    leave_type?: string; attendance_state?: string; search?: string;
+    leave_type?: string; attendance_state?: string; search?: string; accessScope?: AccessScope;
   } = {}): Promise<AttendanceSummaryRow[]> {
     const { periodStart, periodEnd } = this._periodFor(year, month);
+    const { accessScope = GLOBAL_ACCESS_SCOPE } = filters;
     const params: any[] = [tenantId, periodStart, periodEnd];
     let where = 's.tenant_id = $1 AND s.period_start = $2 AND s.period_end = $3';
 
@@ -289,6 +433,9 @@ export class AttendanceSummaryService {
           AND (lt.code = $${params.length} OR lt.name = $${params.length})
       )`;
     }
+    const scopeClause = branchScopeClause(accessScope, 's.branch_id', params.length + 1);
+    where += ` AND ${scopeClause.clause}`;
+    params.push(...scopeClause.params);
 
     const { rows } = await this.db.query(
       `SELECT s.*, e.first_name, e.last_name, e.employee_code, b.name AS branch_name, d.name AS department_name
@@ -303,12 +450,16 @@ export class AttendanceSummaryService {
     return rows;
   }
 
-  async getKpis(tenantId: string, year: number, month: number, filters: { branch_id?: string; department_id?: string } = {}) {
+  async getKpis(tenantId: string, year: number, month: number, filters: { branch_id?: string; department_id?: string; accessScope?: AccessScope } = {}) {
     const { periodStart, periodEnd } = this._periodFor(year, month);
+    const { accessScope = GLOBAL_ACCESS_SCOPE } = filters;
     const params: any[] = [tenantId, periodStart, periodEnd];
     let where = 'tenant_id = $1 AND period_start = $2 AND period_end = $3';
     if (filters.branch_id) { params.push(filters.branch_id); where += ` AND branch_id = $${params.length}`; }
     if (filters.department_id) { params.push(filters.department_id); where += ` AND department_id = $${params.length}`; }
+    const scopeClause = branchScopeClause(accessScope, 'branch_id', params.length + 1);
+    where += ` AND ${scopeClause.clause}`;
+    params.push(...scopeClause.params);
 
     const { rows: statusRows } = await this.db.query(
       `SELECT status, COUNT(*) AS count FROM payroll_attendance_summary WHERE ${where} GROUP BY status`,
@@ -385,7 +536,7 @@ export class AttendanceSummaryService {
     month: number,
     year: number,
   ) {
-    const classification = await this.businessDays.classifyPeriod(tenantId, emp.branch_id, periodStart, periodEnd);
+    const classification = await this.businessDays.classifyPeriod(tenantId, emp.branch_id, periodStart, periodEnd, emp.id);
 
     const { rows: attRows } = await this.db.query(
       `SELECT date, status, late_minutes,
@@ -472,6 +623,11 @@ export class AttendanceSummaryService {
       total_hours: totalHours,
       overtime_hours: overtimeHours,
       approved_ot_hours: otResult.eligible ? otResult.approvedHours : 0,
+      overtime_policy_snapshot: otResult.policySnapshot ?? {},
+      overtime_multiplier: otResult.policyMultiplier ?? 1.5,
+      overtime_rate: otResult.policyRate ?? null,
+      overtime_formula: otResult.policyFormula ?? 'hourly_rate * approved_ot_hours * multiplier',
+      overtime_approved_at: otResult.approvalTimestamp ?? null,
     };
   }
 
@@ -498,16 +654,116 @@ export class AttendanceSummaryService {
     return rows[0];
   }
 
+  private async _markRecomputedForReview(tenantId: string, id: string, userId: string): Promise<AttendanceSummaryRow> {
+    const { rows } = await this.db.query(
+      `UPDATE payroll_attendance_summary
+       SET status = CASE WHEN status IN ('draft', 'rejected') THEN 'pending_review' ELSE status END,
+           generated_by = $3,
+           generated_at = now(),
+           reviewed_by = NULL,
+           reviewed_at = NULL,
+           approval_notes = NULL,
+           rejection_reason = NULL,
+           correction_notes = NULL,
+           updated_at = now()
+       WHERE id = $1 AND tenant_id = $2
+       RETURNING *`,
+      [id, tenantId, userId],
+    );
+    if (!rows.length) throw new NotFoundException('Attendance summary not found');
+    return rows[0];
+  }
+
+  private _normalizeManualAdjustment(adjustment: ManualAttendanceSummaryAdjustment): ManualAttendanceSummaryAdjustment {
+    const allowedIntegerFields = [
+      'business_working_days', 'present_days', 'half_day_count', 'absent_days', 'holiday_days',
+      'weekly_off_days', 'paid_leave_days', 'unpaid_leave_days', 'late_count',
+    ] as const;
+    const allowedDecimalFields = ['payable_days', 'total_hours', 'overtime_hours', 'approved_ot_hours'] as const;
+    const normalized: Record<string, number> = {};
+
+    for (const field of allowedIntegerFields) {
+      const value = adjustment[field];
+      if (value === undefined || value === null) continue;
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        throw new BadRequestException(`${field.replace(/_/g, ' ')} must be a non-negative whole number`);
+      }
+      normalized[field] = parsed;
+    }
+
+    for (const field of allowedDecimalFields) {
+      const value = adjustment[field];
+      if (value === undefined || value === null) continue;
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new BadRequestException(`${field.replace(/_/g, ' ')} must be a non-negative number`);
+      }
+      normalized[field] = parsed;
+    }
+
+    if (Object.keys(normalized).length === 0) {
+      throw new BadRequestException('At least one attendance summary field is required');
+    }
+
+    return normalized;
+  }
+
+  private _calculatePayableDays(values: {
+    present_days: number;
+    half_day_count: number;
+    paid_leave_days: number;
+    holiday_days: number;
+    weekly_off_days: number;
+  }): number {
+    return values.present_days
+      + 0.5 * values.half_day_count
+      + values.paid_leave_days
+      + values.holiday_days
+      + values.weekly_off_days;
+  }
+
+  private _pickAdjustmentSnapshot(row: AttendanceSummaryRow) {
+    return {
+      business_working_days: row.business_working_days,
+      present_days: row.present_days,
+      half_day_count: row.half_day_count,
+      absent_days: row.absent_days,
+      holiday_days: row.holiday_days,
+      weekly_off_days: row.weekly_off_days,
+      paid_leave_days: row.paid_leave_days,
+      unpaid_leave_days: row.unpaid_leave_days,
+      payable_days: row.payable_days,
+      late_count: row.late_count,
+      total_hours: row.total_hours,
+      overtime_hours: row.overtime_hours,
+      approved_ot_hours: row.approved_ot_hours,
+      status: row.status,
+      generation_version: row.generation_version,
+    };
+  }
+
   private _periodFor(year: number, month: number): { periodStart: string; periodEnd: string } {
     const periodStart = `${year}-${String(month).padStart(2, '0')}-01`;
     const periodEnd = new Date(Date.UTC(year, month, 0)).toISOString().split('T')[0];
     return { periodStart, periodEnd };
   }
 
-  private _yearOf(date: string): number { return new Date(`${date}T00:00:00Z`).getUTCFullYear(); }
-  private _monthOf(date: string): number { return new Date(`${date}T00:00:00Z`).getUTCMonth() + 1; }
+  private _yearOf(date: string | Date): number { return new Date(`${this._iso(date)}T00:00:00Z`).getUTCFullYear(); }
+  private _monthOf(date: string | Date): number { return new Date(`${this._iso(date)}T00:00:00Z`).getUTCMonth() + 1; }
 
   private _iso(value: string | Date): string {
-    return value instanceof Date ? value.toISOString().split('T')[0] : String(value).split('T')[0];
+    if (value instanceof Date) return this._localDate(value);
+
+    const raw = String(value);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    return this._localDate(new Date(raw));
+  }
+
+  private _localDate(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 }

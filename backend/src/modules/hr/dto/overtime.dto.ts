@@ -1,4 +1,4 @@
-import { IsString, IsDateString, IsUUID, IsNumber, IsOptional, Min, Max } from 'class-validator';
+import { IsString, IsDateString, IsUUID, IsNumber, IsOptional, Min, Max, IsIn } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateOtRequestDto {
@@ -29,6 +29,11 @@ export class CreateOtRequestDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({ description: 'Priority level', enum: ['low', 'normal', 'high', 'urgent'] })
+  @IsOptional()
+  @IsIn(['low', 'normal', 'high', 'urgent'])
+  priority?: 'low' | 'normal' | 'high' | 'urgent';
 }
 
 export class OtRequestFiltersDto {

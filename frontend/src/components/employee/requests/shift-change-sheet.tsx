@@ -15,6 +15,7 @@ const schema = z.object({
   date: z.string().min(1, 'Date is required'),
   requested_shift: z.string().min(1, 'Requested shift is required'),
   reason: z.string().min(5, 'Please provide a reason'),
+  priority: z.enum(['low', 'normal', 'high']).optional(),
 });
 
 type FormData = z.infer<typeof schema>;
@@ -30,7 +31,7 @@ export function ShiftChangeSheet({ open, onClose }: ShiftChangeSheetProps) {
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { date: '', requested_shift: '', reason: '' },
+    defaultValues: { date: '', requested_shift: '', reason: '', priority: 'normal' },
   });
 
   const submit = useMutation({
@@ -92,6 +93,18 @@ export function ShiftChangeSheet({ open, onClose }: ShiftChangeSheetProps) {
                 className="w-full px-3 py-2.5 text-sm rounded-lg border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring"
               />
               {errors.reason && <p className="text-xs text-destructive">{errors.reason.message}</p>}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Priority</label>
+              <select
+                {...register('priority')}
+                className="w-full h-11 px-3 text-sm rounded-lg border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="low">Low</option>
+                <option value="normal">Medium</option>
+                <option value="high">High</option>
+              </select>
             </div>
 
             {submit.isError && (

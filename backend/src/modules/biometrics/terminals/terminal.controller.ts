@@ -64,6 +64,8 @@ export class TerminalController {
       terminal,
       body,
       req.correlationId as string | undefined,
+      req.terminalRawToken as string | undefined,
+      req,
     );
     return { success: true, data: result, error: null };
   }

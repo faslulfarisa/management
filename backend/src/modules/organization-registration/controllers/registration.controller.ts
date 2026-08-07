@@ -4,7 +4,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { RegistrationService } from '../services/registration.service';
 import {
-  CreateAccountDto, RegistrationSessionDto, VerifyEmailDto, VerifyMobileDto, SubmitOrganizationDto,
+  CreateAccountDto, RegistrationSessionDto, VerifyMobileDto, SubmitOrganizationDto,
 } from '../dto/registration.dto';
 
 /**
@@ -23,24 +23,6 @@ export class RegistrationController {
   @ApiOperation({ summary: 'Step 1: create the registration owner\'s account (public)' })
   async createAccount(@Body() dto: CreateAccountDto) {
     const data = await this.registrationService.createAccount(dto);
-    return { success: true, data, meta: null, error: null };
-  }
-
-  @Post('verify-email')
-  @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
-  @ApiOperation({ summary: 'Confirm the email verification link/token (public)' })
-  async verifyEmail(@Body() dto: VerifyEmailDto) {
-    const data = await this.registrationService.verifyEmail(dto);
-    return { success: true, data, meta: null, error: null };
-  }
-
-  @Post('resend-verification')
-  @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
-  @ApiOperation({ summary: 'Resend the email verification link (public)' })
-  async resendVerification(@Body() dto: RegistrationSessionDto) {
-    const data = await this.registrationService.resendVerification(dto);
     return { success: true, data, meta: null, error: null };
   }
 
@@ -65,7 +47,7 @@ export class RegistrationController {
   @Post('account/status')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 20, ttl: 60000 } })
-  @ApiOperation({ summary: 'Check email/mobile verification status for the current registration session (public)' })
+  @ApiOperation({ summary: 'Check mobile verification status for the current registration session (public)' })
   async getAccountStatus(@Body() dto: RegistrationSessionDto) {
     const data = await this.registrationService.getAccountStatus(dto.registrationId, dto.accessToken);
     return { success: true, data, meta: null, error: null };

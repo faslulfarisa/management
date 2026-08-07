@@ -8,6 +8,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { DeleteWarningModal } from '@/components/ui/delete-warning-modal';
 import { useDependencyCheck } from '@/hooks/useDependencyCheck';
+import { ExportButton } from '@/components/export';
+import { ImportButton } from '@/components/import';
+import { PERMISSIONS } from '@/lib/permissions';
 
 interface Area {
   id: string;
@@ -345,9 +348,35 @@ export default function AreasPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-foreground">Areas</h1>
-            <p className="text-sm text-muted-foreground mt-1">Physical zones with biometric device and employee assignments</p>
+            <p className="text-sm text-muted-foreground mt-1">Manage physical areas and tracking zones</p>
           </div>
-          <Button onClick={() => { setEditArea(null); setShowDrawer(true); }}>Add Area</Button>
+          <div className="flex items-center gap-2">
+            <ExportButton
+              config={{
+                module: 'areas',
+                title: 'Areas',
+                permission: PERMISSIONS.PLATFORM_AREAS_VIEW,
+                columns: [
+                  { key: 'name', header: 'Area Name' },
+                  { key: 'code', header: 'Code' },
+                  { key: 'is_active', header: 'Active' },
+                  { key: 'created_at', header: 'Created At', type: 'date' },
+                ],
+                defaultColumns: ['name', 'code', 'is_active', 'created_at'],
+                filenamePrefix: 'areas',
+              }}
+              filters={{ search, branch_id: branchFilter }}
+              currentPageData={filtered}
+            />
+            <ImportButton
+              config={{
+                module: 'areas',
+                title: 'Areas',
+                permission: PERMISSIONS.PLATFORM_ORGANIZATIONS_CREATE,
+              }}
+            />
+            <Button onClick={() => { setEditArea(null); setShowDrawer(true); }}>Add Area</Button>
+          </div>
         </div>
 
         {/* Stats */}

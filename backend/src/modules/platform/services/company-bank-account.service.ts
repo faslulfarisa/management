@@ -215,8 +215,8 @@ export class CompanyBankAccountService {
     const existing = await this._findOneRaw(tenantId, accountId);
 
     await this.db.query(
-      `UPDATE company_bank_accounts SET deleted_at = now(), updated_at = now() WHERE id = $1`,
-      [accountId],
+      `UPDATE company_bank_accounts SET deleted_at = now(), updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+      [accountId, tenantId],
     );
 
     await this.auditLog.log({

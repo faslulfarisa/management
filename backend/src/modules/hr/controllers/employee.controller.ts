@@ -16,7 +16,7 @@ import { PayrollService } from '../services/payroll.service';
 import { PayslipService } from '../services/payslip.service';
 import { BankAccountService } from '../services/bank-account.service';
 import { UserHierarchyService } from '../../platform/services/user-hierarchy.service';
-import { getPunchOutReason } from '../constants/punch-out-reasons';
+import { HolidayPolicyTemplateService } from '../../platform/services/holiday-policy-template.service';
 
 @ApiTags('Employees')
 @ApiBearerAuth()
@@ -33,6 +33,7 @@ export class EmployeeController {
     private readonly payslipService: PayslipService,
     private readonly bankAccountService: BankAccountService,
     private readonly userHierarchyService: UserHierarchyService,
+    private readonly holidayPolicy: HolidayPolicyTemplateService,
   ) {}
 
   @Get()
@@ -98,16 +99,31 @@ export class EmployeeController {
     const user = (req as any).user;
     const tenantId = user.tenantId || user.tenant_id;
     const employeeId = user.employeeId || user.employee_id;
-    const [breaks, limits] = await Promise.all([
+    const [breaks, limits, policy] = await Promise.all([
       this.breakSessionService.getTodayBreaks(tenantId, employeeId),
       this.breakSessionService.getResolvedLimits(tenantId, employeeId),
+      this.breakSessionService.getResolvedPolicy(tenantId, employeeId),
     ]);
-    return { success: true, data: { breaks, limits }, error: null };
+    return { success: true, data: { breaks, limits, policy }, error: null };
   }
 
   @Post('me/attendance/punch')
   @ApiOperation({ summary: 'Clock in / Clock out (punch), with optional punch-out reason' })
-  async myAttendancePunch(@Req() req: Request, @Body() body: { type: 'in' | 'out'; reason_code?: string; note?: string }) {
+  async myAttendancePunch(@Req() req: Request, @Body() body: {
+    type: 'in' | 'out';
+    reason_code?: string;
+    note?: string;
+    source?: 'mobile_app' | 'web_kiosk' | 'tablet' | 'trusted_terminal' | 'web' | 'manual';
+    timestamp?: string;
+    deviceId?: string;
+    deviceToken?: string;
+    requestId?: string;
+    nonce?: string;
+    gps?: any;
+    photo?: any;
+    locationMetadata?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+  }) {
     const user = (req as any).user;
     const tenantId = user.tenantId || user.tenant_id;
     const employeeId = user.employeeId || user.employee_id;
@@ -117,16 +133,19 @@ export class EmployeeController {
       if (activeBreak) {
         record = await this.breakSessionService.endBreak(tenantId, employeeId);
       } else {
-        await this.attendanceService.clockIn(tenantId, employeeId, {});
-        record = await this.breakSessionService.getTodayStatus(tenantId, employeeId);
+        record = await this.attendanceService.clockIn(tenantId, employeeId, body, user.sub, this.requestMeta(req));
       }
     } else {
-      const reason = getPunchOutReason(body.reason_code);
-      if (reason && reason.category !== 'final_logout') {
+      if (body.reason_code && body.reason_code !== 'end_of_shift') {
         record = await this.breakSessionService.startBreak(tenantId, employeeId, body.reason_code!, body.note);
       } else {
-        await this.attendanceService.clockOut(tenantId, employeeId, { reason_code: body.reason_code, note: body.note });
-        record = await this.breakSessionService.getTodayStatus(tenantId, employeeId);
+        record = await this.attendanceService.clockOut(
+          tenantId,
+          employeeId,
+          { ...body, reason: { reason_code: body.reason_code, note: body.note } },
+          user.sub,
+          this.requestMeta(req),
+        );
       }
     }
     return { success: true, data: record, error: null };
@@ -172,14 +191,43 @@ export class EmployeeController {
     return { success: true, data: requests, error: null };
   }
 
-  @Get('me/shifts/today')
-  @ApiOperation({ summary: 'Current employee today shift' })
-  async getMyTodayShift(@Req() req: Request) {
+  @Get('me/holidays')
+  @ApiOperation({ summary: 'Current employee resolved holiday calendar' })
+  async getMyHolidays(@Req() req: Request, @Query() query: any) {
     const user = (req as any).user;
     const tenantId = user.tenantId || user.tenant_id;
     const employeeId = user.employeeId || user.employee_id;
-    const row = await this.shiftService.getTodayShiftForEmployee(tenantId, employeeId);
+    const holidays = await this.holidayPolicy.listEmployeeHolidays(tenantId, employeeId, {
+      date_from: query.date_from,
+      date_to: query.date_to,
+      upcoming: query.upcoming === 'true',
+      limit: query.limit ? Number(query.limit) : undefined,
+    });
+    return { success: true, data: holidays, meta: { count: holidays.length }, error: null };
+  }
+
+  @Get('me/holidays/upcoming')
+  @ApiOperation({ summary: 'Current employee upcoming holidays' })
+  async getMyUpcomingHolidays(@Req() req: Request, @Query() query: any) {
+    const user = (req as any).user;
+    const tenantId = user.tenantId || user.tenant_id;
+    const employeeId = user.employeeId || user.employee_id;
+    const holidays = await this.holidayPolicy.listEmployeeHolidays(tenantId, employeeId, {
+      upcoming: true,
+      limit: query.limit ? Number(query.limit) : 10,
+    });
+    return { success: true, data: holidays, meta: { count: holidays.length }, error: null };
+  }
+
+  @Get('me/shifts/today')
+  @ApiOperation({ summary: 'Current employee today shift or shift for custom date' })
+  async getMyTodayShift(@Req() req: Request, @Query('date') date?: string) {
+    const user = (req as any).user;
+    const tenantId = user.tenantId || user.tenant_id;
+    const employeeId = user.employeeId || user.employee_id;
+    const row = await this.shiftService.getTodayShiftForEmployee(tenantId, employeeId, date);
     const shift = row ? {
+      shift_id: row.shift_id || null,
       shift_name: row.shift_name,
       shift_code: row.shift_code,
       start_time: row.start_time,
@@ -196,7 +244,7 @@ export class EmployeeController {
     const user = (req as any).user;
     const tenantId = user.tenantId || user.tenant_id;
     const employeeId = user.employeeId || user.employee_id;
-    const schedule = await this.shiftService.getSchedules(tenantId, { ...query, employee_id: employeeId });
+    const schedule = await this.shiftService.getEmployeeScheduleRange(tenantId, employeeId, query);
     return { success: true, data: schedule, error: null };
   }
 
@@ -376,5 +424,17 @@ export class EmployeeController {
     const tenantId = user.tenantId || user.tenant_id;
     const doc = await this.service.addDocument(id, tenantId, user.sub, body);
     return { success: true, data: doc, meta: null, error: null };
+  }
+
+  private requestMeta(req: Request): { ip?: string; userAgent?: string } {
+    const anyReq = req as any;
+    return {
+      ip:
+        (anyReq.headers?.['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim()
+        ?? (anyReq.headers?.['x-real-ip'] as string | undefined)
+        ?? anyReq.ip
+        ?? anyReq.socket?.remoteAddress,
+      userAgent: anyReq.headers?.['user-agent'],
+    };
   }
 }

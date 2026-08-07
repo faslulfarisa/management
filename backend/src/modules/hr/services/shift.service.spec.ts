@@ -5,8 +5,23 @@ describe('ShiftService - today shift resolution', () => {
   let templateService: { getResolved: jest.Mock };
   let service: ShiftService;
 
+  let overrideRows: any[] = [];
+  let scheduleRows: any[] = [];
+  let assignmentRows: any[] = [];
+
   beforeEach(() => {
-    db = { query: jest.fn() };
+    overrideRows = [];
+    scheduleRows = [];
+    assignmentRows = [];
+
+    db = {
+      query: jest.fn().mockImplementation(async (sql) => {
+        if (sql.includes('shift_overrides')) return { rows: overrideRows };
+        if (sql.includes('shift_schedules')) return { rows: scheduleRows };
+        if (sql.includes('shift_assignments')) return { rows: assignmentRows };
+        return { rows: [] };
+      })
+    };
     templateService = { getResolved: jest.fn() };
     service = new ShiftService(db as any, templateService as any);
     service['getLocalDate'] = jest.fn().mockReturnValue('2026-06-29');
@@ -21,18 +36,15 @@ describe('ShiftService - today shift resolution', () => {
       break_minutes: 30,
       grace_period_minutes: 10,
     };
-    db.query.mockResolvedValueOnce({ rows: [schedule] });
+    scheduleRows = [schedule];
 
     await expect(service.getTodayShiftForEmployee('tenant-1', 'emp-1')).resolves.toBe(schedule);
 
-    expect(db.query).toHaveBeenCalledTimes(1);
+    expect(db.query).toHaveBeenCalled();
     expect(templateService.getResolved).not.toHaveBeenCalled();
   });
 
   it('falls back to the employee resolved shift template when no roster or assignment exists', async () => {
-    db.query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
     templateService.getResolved.mockResolvedValueOnce({
       id: 'template-1',
       name: 'Front Desk Shift Policy',
@@ -67,9 +79,6 @@ describe('ShiftService - today shift resolution', () => {
   });
 
   it('uses default shift presets for older shift templates without explicit times', async () => {
-    db.query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
     templateService.getResolved.mockResolvedValueOnce({
       id: 'template-1',
       name: 'Standard Shift Policy',
@@ -92,9 +101,6 @@ describe('ShiftService - today shift resolution', () => {
 
   it('returns null for a resolved shift template on a configured weekly off', async () => {
     service['getLocalDate'] = jest.fn().mockReturnValue('2026-07-05');
-    db.query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
     templateService.getResolved.mockResolvedValueOnce({
       id: 'template-1',
       name: 'Standard Shift Policy',

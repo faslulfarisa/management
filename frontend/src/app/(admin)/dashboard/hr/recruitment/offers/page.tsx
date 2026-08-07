@@ -56,7 +56,7 @@ export default function OffersPage() {
           <h2 className="text-lg font-bold text-foreground">Offer Management</h2>
           <p className="text-sm text-muted-foreground">Compensation, approval workflow, and acceptance tracking</p>
         </div>
-        <Can permission={PERMISSIONS.RECRUITMENT_CREATE}>
+        <Can permission={PERMISSIONS.RECRUITMENT_EDIT}>
           <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 bg-primary text-white rounded-xl px-3 py-2 text-sm font-semibold hover:bg-primary/90">
             <Plus className="w-3.5 h-3.5" /> New Offer
           </button>

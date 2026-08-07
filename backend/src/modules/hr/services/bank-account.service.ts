@@ -231,9 +231,9 @@ export class BankAccountService {
     if (!sets.length) return this.findById(id, tenantId);
 
     sets.push(`updated_at = now()`);
-    params.push(id);
+    params.push(id, old.tenant_id);
     const { rows } = await this.db.query(
-      `UPDATE employee_bank_accounts SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
+      `UPDATE employee_bank_accounts SET ${sets.join(', ')} WHERE id = $${idx} AND tenant_id = $${idx + 1} RETURNING *`,
       params,
     );
 
@@ -281,8 +281,8 @@ export class BankAccountService {
       );
       // Set new primary
       await client.query(
-        `UPDATE employee_bank_accounts SET is_primary = TRUE, updated_at = now() WHERE id = $1`,
-        [id],
+        `UPDATE employee_bank_accounts SET is_primary = TRUE, updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+        [id, account.tenant_id],
       );
     });
 
@@ -320,8 +320,8 @@ export class BankAccountService {
       `UPDATE employee_bank_accounts
        SET verification_status = $1, verified_by = $2, verified_at = now(),
            verification_notes = $3, updated_at = now()
-       WHERE id = $4 RETURNING *`,
-      [dto.status, verifiedBy, dto.verification_notes ?? null, id],
+       WHERE id = $4 AND tenant_id = $5 RETURNING *`,
+      [dto.status, verifiedBy, dto.verification_notes ?? dto.notes ?? null, id, existing[0].tenant_id],
     );
 
     try {
@@ -331,7 +331,7 @@ export class BankAccountService {
         entityType: 'employee_bank_account',
         entityId: id,
         action: `verification_${dto.status}`,
-        newValues: { status: dto.status, notes: dto.verification_notes },
+        newValues: { status: dto.status, notes: dto.verification_notes ?? dto.notes },
         ipAddress,
       });
     } catch {}
@@ -362,8 +362,8 @@ export class BankAccountService {
     }
 
     await this.db.query(
-      `UPDATE employee_bank_accounts SET deleted_at = now(), updated_at = now() WHERE id = $1`,
-      [id],
+      `UPDATE employee_bank_accounts SET deleted_at = now(), updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+      [id, rows[0].tenant_id],
     );
 
     try {

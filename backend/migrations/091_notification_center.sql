@@ -1,7 +1,7 @@
 -- 091_notification_center.sql
 -- Notification Center & Workflow Hub: extends the existing `notifications`
--- table (from 010_automation.sql) with classification, scoping, and
--- lifecycle columns needed for a filterable, actionable inbox. Also adds
+-- table with classification, scoping, and lifecycle columns needed for a
+-- filterable, actionable inbox. Also adds
 -- per-user/per-module notification channel preferences.
 -- SAFE: additive only (ADD COLUMN IF NOT EXISTS / CREATE TABLE IF NOT EXISTS).
 

@@ -63,6 +63,7 @@ export class CareerPortalController {
         current_company: body.current_company, current_designation: body.current_designation,
         experience_years: body.experience_years ? parseFloat(body.experience_years) : undefined,
         expected_salary: body.expected_salary ? parseFloat(body.expected_salary) : undefined,
+        source: body.source,
         cover_note: body.cover_note,
       },
       resume ? { buffer: resume.buffer, mimetype: resume.mimetype, originalname: resume.originalname } : undefined,

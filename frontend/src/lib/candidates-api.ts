@@ -134,10 +134,10 @@ export interface CandidateCommunication {
   candidate_id: string;
   application_id: string | null;
   template_id: string | null;
-  channel: 'email';
+  channel: 'email' | 'sms' | 'whatsapp' | 'phone_note' | 'internal_note';
   subject: string;
   body: string;
-  status: 'sent' | 'failed';
+  status: 'sent' | 'failed' | 'logged';
   error_message: string | null;
   sent_by: string | null;
   sent_by_email?: string | null;
@@ -155,7 +155,7 @@ export const candidatesApi = {
   list: (filters: { q?: string; tag?: string; source?: string; page?: number; limit?: number } = {}): Promise<{ data: Candidate[]; total: number }> =>
     api.get(`/recruitment/candidates${qs(filters)}`).then((r) => ({ data: r.data.data, total: r.data.total })),
   get: (id: string): Promise<Candidate> => api.get(`/recruitment/candidates/${id}`).then((r) => r.data.data),
-  create: (data: Partial<Candidate> & { job_posting_id?: string }) => api.post('/recruitment/candidates', data).then((r) => r.data.data),
+  create: (data: Partial<Candidate> & { job_posting_id?: string; vacancy_id?: string }) => api.post('/recruitment/candidates', data).then((r) => r.data.data),
   update: (id: string, data: Partial<Candidate>) => api.put(`/recruitment/candidates/${id}`, data).then((r) => r.data.data),
   remove: (id: string) => api.delete(`/recruitment/candidates/${id}`).then((r) => r.data.data),
   applications: (id: string): Promise<{ data: Application[]; total: number }> =>
@@ -204,7 +204,7 @@ export const applicationsApi = {
   },
   communications: {
     list: (id: string): Promise<CandidateCommunication[]> => api.get(`/recruitment/applications/${id}/communications`).then((r) => r.data.data),
-    send: (id: string, data: { template_id?: string; subject?: string; body?: string }) =>
+    send: (id: string, data: { channel?: CandidateCommunication['channel']; template_id?: string; subject?: string; body?: string }) =>
       api.post(`/recruitment/applications/${id}/communications`, data).then((r) => r.data.data),
   },
 };

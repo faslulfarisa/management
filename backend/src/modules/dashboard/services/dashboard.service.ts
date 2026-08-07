@@ -291,7 +291,23 @@ export class DashboardService {
   }
 
   async getNotifications(tenantId: string, userId: string, employeeId: string | null, isSuperAdmin: boolean, user?: DashboardAuthUser) {
-    type NotifItem = { id: string; type: string; title: string; message: string; time: string; read: boolean; href?: string };
+    type NotifItem = {
+      id: string;
+      type: string;
+      title: string;
+      message: string;
+      time: string;
+      read: boolean;
+      href?: string;
+      source_module?: string | null;
+      action_url?: string | null;
+      action_type?: string | null;
+      entity_type?: string | null;
+      entity_id?: string | null;
+      status?: string | null;
+      priority?: string | null;
+      metadata?: Record<string, any> | null;
+    };
     const notifications: NotifItem[] = [];
     const scope = await this.resolveAccessScope(tenantId, user);
     const leaveScope = branchScopeClause(scope, 'e.branch_id', 2);
@@ -370,12 +386,12 @@ export class DashboardService {
           async () => {
             try {
               const { rows } = await this.db.query(
-                `SELECT id, first_name, last_name, date_of_joining
+                `SELECT id, first_name, last_name, date_of_joining, created_at
                  FROM employees
                  WHERE tenant_id = $1 AND deleted_at IS NULL
                    AND ${employeeScope.clause}
                    AND date_of_joining >= CURRENT_DATE - INTERVAL '7 days'
-                 ORDER BY date_of_joining DESC LIMIT 3`,
+                 ORDER BY created_at DESC LIMIT 3`,
                 [tenantId, ...employeeScope.params],
               );
               return rows.map(row => ({
@@ -383,7 +399,7 @@ export class DashboardService {
                 type: 'employee',
                 title: 'New Employee Joined',
                 message: `${row.first_name} ${row.last_name} joined the team`,
-                time: row.date_of_joining,
+                time: row.created_at,
                 read: true,
                 href: portalHref('/dashboard/hr/employees'),
               }));
@@ -596,10 +612,46 @@ export class DashboardService {
     const results = await Promise.all(fetchers.map(fn => fn()));
     for (const items of results) notifications.push(...items);
 
-    // Sort by time descending
-    notifications.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+    const normalized = notifications.map((item) => {
+      const [sourceModule, ...rest] = item.id.split('-');
+      const entityId = rest.join('-') || null;
+      const entityTypeBySource: Record<string, string> = {
+        compdoc: 'compliance_document',
+        cycle: 'review_cycle',
+        expense: 'expense_claim',
+        filing: 'compliance_filing',
+        joiner: 'employee',
+        leave: 'leave_request',
+        probation: 'employee',
+        review: 'performance_review',
+      };
+      const moduleBySource: Record<string, string> = {
+        compdoc: 'documents',
+        cycle: 'performance',
+        expense: 'finance',
+        filing: 'compliance',
+        joiner: 'employee_events',
+        leave: 'leave',
+        probation: 'employee_events',
+        review: 'performance',
+      };
+      return {
+        ...item,
+        source_module: item.source_module ?? moduleBySource[sourceModule] ?? item.type,
+        action_url: item.action_url ?? item.href ?? null,
+        action_type: item.action_type ?? (item.title.toLowerCase().includes('pending') || item.title.toLowerCase().includes('approval') ? 'APPROVE' : 'DETAILS'),
+        entity_type: item.entity_type ?? entityTypeBySource[sourceModule] ?? null,
+        entity_id: item.entity_id ?? entityId,
+        status: item.status ?? 'active',
+        priority: item.priority ?? (item.type === 'alert' ? 'high' : 'medium'),
+        metadata: item.metadata ?? {},
+      };
+    });
 
-    return { notifications, unread_count: notifications.filter(n => !n.read).length };
+    // Sort by time descending
+    normalized.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+
+    return { notifications: normalized, unread_count: normalized.filter(n => !n.read).length };
   }
 
   async globalSearch(tenantId: string, query: string, user?: DashboardAuthUser) {

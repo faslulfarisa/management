@@ -32,7 +32,7 @@ export function BreakSummary({ breaks, limits }: BreakSummaryProps) {
     } else {
       usageByCode.set(b.break_code, {
         code: b.break_code,
-        label: b.reason_label,
+        label: limits[b.break_code]?.name ?? b.reason_label,
         usedMinutes,
         allowedMinutes: limits[b.break_code]?.allowed_minutes ?? b.allowed_minutes ?? null,
         overdueMinutes: b.overdue_minutes,

@@ -217,7 +217,6 @@ The following table represents the complete list of permission registry strings 
 | | `documents:upload` | `*` | `*` | **C** | | [document.controller.ts](file:///c:/Users/amann/Spinach/HMS/backend/src/modules/platform/controllers/document.controller.ts#L36) |
 | | `documents:delete` | `*` | `*` | **C** | | [document.controller.ts](file:///c:/Users/amann/Spinach/HMS/backend/src/modules/platform/controllers/document.controller.ts#L57) |
 | **Notifications** | `notifications:view` | `*` | `*` | **C** | **E** | [notifications.controller.ts](file:///c:/Users/amann/Spinach/HMS/backend/src/modules/notifications/controllers/notifications.controller.ts#L27) |
-| | `notifications:send` | `*` | `*` | **C** | | [automation.controller.ts](file:///c:/Users/amann/Spinach/HMS/backend/src/modules/automation/controllers/automation.controller.ts#L110) |
 | | `notifications:manage` | `*` | `*` | **I** | | None |
 | **Reports** | `reports:view` | `*` | `*` | **C** | | [reports.controller.ts](file:///c:/Users/amann/Spinach/HMS/backend/src/modules/reports/reports.controller.ts#L293) |
 | | `reports:payroll` | `*` | `*` | **C** | | [reports.controller.ts](file:///c:/Users/amann/Spinach/HMS/backend/src/modules/reports/reports.controller.ts#L383) |
@@ -278,7 +277,6 @@ The following controllers declare `@UseGuards(JwtAuthGuard)` but **do not use** 
 * **[position.controller.ts](file:///c:/Users/amann/Spinach/HMS/backend/src/modules/platform/controllers/position.controller.ts):** Any authenticated user can create/delete job positions and change their mapped permissions.
 * **[user.controller.ts](file:///c:/Users/amann/Spinach/HMS/backend/src/modules/platform/controllers/user.controller.ts):** Access configurations (`setAccess` / PUT `:id/roles`) can be requested by any authenticated user. The endpoint checks that the actor's rank is higher than the target user's rank, but lacks general role/permission restrictions on user administration.
 * **[leave.controller.ts](file:///c:/Users/amann/Spinach/HMS/backend/src/modules/hr/controllers/leave.controller.ts):** Any user can list all leave requests in the organization, and approve/reject leave requests by hitting `/leaves/requests/:id/approve` or `/leaves/encashment/:id/approve` with arbitrary payloads.
-* **[automation.controller.ts](file:///c:/Users/amann/Spinach/HMS/backend/src/modules/automation/controllers/automation.controller.ts):** Endpoints managing background tasks and automation rules (endpoints under `/automation/rules` and `/automation/tasks`) are not protected by permission decorators.
 
 ### B. Privilege Escalation in Profile Viewing
 * **`EmployeeController.findOne()` (GET `/employees/:id`):** This endpoint requires `hr.employees:view` but does not enforce the caller's branch scope. A manager restricted to Branch A can request and view full details (including bank accounts, salary structures, Aadhaar, PAN) of employees from Branch B.
@@ -294,8 +292,7 @@ The following controllers declare `@UseGuards(JwtAuthGuard)` but **do not use** 
 * `organization_profile:view`, `organization_profile:edit` *(added via migration 065 but missing from seed)*
 * `branch:view`, `branch:manage`, `schedules:assign`, `approvals:manage`, `notifications:manage`, `reports:export`
 
-17 permissions seeded in the database by [seed.ts](file:///c:/Users/amann/Spinach/HMS/backend/scripts/seed.ts) are missing from the codebase constant registry:
-* `automation.rules:view`, `automation.rules:create`, `automation.rules:edit`, `automation.rules:delete`
+13 permissions seeded in the database by [seed.ts](file:///c:/Users/amann/Spinach/HMS/backend/scripts/seed.ts) are missing from the codebase constant registry:
 * `billing.plans:view`, `billing.plans:create`, `billing.plans:edit`
 * `billing.invoices:view`, `billing.invoices:create`, `billing.invoices:export`
 * `developer.api_keys:view`, `developer.api_keys:create`, `developer.api_keys:delete`
@@ -347,7 +344,7 @@ To secure the HRMS codebase and resolve the identified vulnerabilities, the foll
    }
    ```
 3. **Harmonize Seeds and Registries:**
-   Update [seed.ts](file:///c:/Users/amann/Spinach/HMS/backend/scripts/seed.ts) to match the registry in [permissions.constants.ts](file:///c:/Users/amann/Spinach/HMS/backend/src/shared/permissions.constants.ts), and add the missing automation and developer keys permissions to the code constants registry.
+   Update [seed.ts](file:///c:/Users/amann/Spinach/HMS/backend/scripts/seed.ts) to match the registry in [permissions.constants.ts](file:///c:/Users/amann/Spinach/HMS/backend/src/shared/permissions.constants.ts), and add the missing developer keys permissions to the code constants registry.
 4. **Fix SQL Migration Bug:**
    Re-write or patch migration `065` to target `'Super Admin'` (or a real Organization Admin Role, if one is introduced) instead of the non-existent `'org_admin'` role, and include the `tenant_id` field.
 5. **Clean up Unused Guards:**

@@ -47,7 +47,15 @@ export function AuthHeroPanel({
   );
 }
 
-export function AuthBrandMark({ variant = 'dark' }: { variant?: 'dark' | 'light' }) {
+export function AuthBrandMark({
+  variant = 'dark',
+  title = 'AI-HRMS',
+  subtitle = 'Human Resource Management System',
+}: {
+  variant?: 'dark' | 'light';
+  title?: string;
+  subtitle?: string;
+}) {
   const isDark = variant === 'dark';
   return (
     <div className="flex items-center gap-3">
@@ -62,10 +70,10 @@ export function AuthBrandMark({ variant = 'dark' }: { variant?: 'dark' | 'light'
       </div>
       <div>
         <div className={isDark ? 'text-xl font-bold tracking-tight' : 'text-lg font-bold tracking-tight text-foreground'}>
-          Ai-HRMS
+          {title}
         </div>
         <div className={isDark ? 'text-xs text-white/70' : 'text-xs text-muted-foreground'}>
-          Workforce Management Platform
+          {subtitle}
         </div>
       </div>
     </div>

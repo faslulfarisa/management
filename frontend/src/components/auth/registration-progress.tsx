@@ -1,14 +1,13 @@
 import { Check } from 'lucide-react';
 
-const STEPS = ['Account', 'Verify Email', 'Organization', 'Submitted'];
+const STEPS = ['Account', 'Organization', 'Submitted'];
 
 /**
  * Macro progress indicator for the whole signup journey, spanning multiple
- * pages (account → verify-email → organization wizard → pending). The
- * organization wizard page additionally has its own micro-stepper for its
- * internal sub-steps.
+ * pages (account -> organization wizard -> pending). The organization wizard
+ * page additionally has its own micro-stepper for its internal sub-steps.
  */
-export function RegistrationProgress({ step }: { step: 1 | 2 | 3 | 4 }) {
+export function RegistrationProgress({ step }: { step: 1 | 2 | 3 }) {
   return (
     <div className="mb-8 flex items-center" aria-label={`Step ${step} of ${STEPS.length}: ${STEPS[step - 1]}`}>
       {STEPS.map((label, i) => {

@@ -15,6 +15,7 @@ const schema = z.object({
   date: z.string().min(1, 'Date is required'),
   hours: z.coerce.number().min(0.5, 'Minimum 0.5 hours').max(12, 'Maximum 12 hours'),
   reason: z.string().min(5, 'Please describe the work done'),
+  priority: z.enum(['low', 'normal', 'high']).optional(),
 });
 
 type FormData = z.infer<typeof schema>;
@@ -30,7 +31,7 @@ export function OvertimeSheet({ open, onClose }: OvertimeSheetProps) {
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { date: '', hours: undefined, reason: '' },
+    defaultValues: { date: '', hours: undefined, reason: '', priority: 'normal' },
   });
 
   const submit = useMutation({
@@ -79,6 +80,18 @@ export function OvertimeSheet({ open, onClose }: OvertimeSheetProps) {
                 className="h-11"
               />
               {errors.hours && <p className="text-xs text-destructive">{errors.hours.message}</p>}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Priority</label>
+              <select
+                {...register('priority')}
+                className="w-full h-11 px-3 text-sm rounded-lg border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="low">Low</option>
+                <option value="normal">Medium</option>
+                <option value="high">High</option>
+              </select>
             </div>
 
             <div className="space-y-1.5">

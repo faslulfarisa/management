@@ -28,20 +28,32 @@ export function PunchCard() {
     staleTime: 30_000,
   });
 
+  const isPunchedIn = today?.is_punched_in ?? false;
   const punch = useMutation({
     mutationFn: ({ type, reason_code, note }: { type: 'in' | 'out'; reason_code?: string; note?: string }) =>
       employeeApi.punch(type, { reason_code, note }),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       queryClient.setQueryData(['employee-today-attendance'], data);
       queryClient.invalidateQueries({ queryKey: ['employee-attendance-history'] });
       queryClient.invalidateQueries({ queryKey: ['employee-today-breaks'] });
       setReasonModalOpen(false);
       setFlashSuccess(true);
+
+      if (variables.type === 'in' && data.late_minutes > 0 && !isPunchedIn) {
+        setLateWarning(`Late Punch In: You have punched in after the allowed grace period. Your attendance has been marked as Late.`);
+      }
+
       setTimeout(() => setFlashSuccess(false), 2000);
+
+      const isTypeIn = !today?.is_punched_in && !today?.clock_in;
+      // We can also check data.late_minutes here directly. Wait, the type arg isn't in scope unless we get it from variables.
+      if (data.late_minutes > 0 && !today?.clock_in) {
+        setWarning(`Warning: You have punched in late by ${data.late_minutes} minutes past the grace period.`);
+        setTimeout(() => setWarning(null), 5000);
+      }
     },
   });
 
-  const isPunchedIn = today?.is_punched_in ?? false;
   const isOnBreak = today?.is_on_break ?? false;
   const canPunchOut = isPunchedIn && !today?.clock_out && !isOnBreak;
   const canPunchIn = !isPunchedIn && !today?.clock_in && !isOnBreak;
@@ -167,6 +179,7 @@ export function PunchCard() {
         onOpenChange={setReasonModalOpen}
         onConfirm={(reason_code, note) => punch.mutate({ type: 'out', reason_code, note })}
         isSubmitting={punch.isPending}
+        breakTypes={breaksData?.policy?.break_types}
       />
 
       {today && breaksData && (
@@ -181,10 +194,10 @@ export function PunchCard() {
 
 function StatusChip({ status }: { status: string }) {
   const map: Record<string, { label: string; className: string }> = {
-    present:  { label: 'Present',  className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-    late:     { label: 'Late',     className: 'bg-orange-50  text-orange-700  border-orange-200'  },
-    half_day: { label: 'Half Day', className: 'bg-amber-50   text-amber-700   border-amber-200'   },
-    absent:   { label: 'Absent',   className: 'bg-red-50     text-red-700     border-red-200'     },
+    present: { label: 'Present', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+    late: { label: 'Late', className: 'bg-orange-50  text-orange-700  border-orange-200' },
+    half_day: { label: 'Half Day', className: 'bg-amber-50   text-amber-700   border-amber-200' },
+    absent: { label: 'Absent', className: 'bg-red-50     text-red-700     border-red-200' },
   };
   const cfg = map[status] ?? { label: status, className: 'bg-muted text-muted-foreground border-border' };
   return (

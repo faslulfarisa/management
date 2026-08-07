@@ -41,6 +41,8 @@ export interface ApplyPayload {
   experience_years?: string;
   expected_salary?: string;
   cover_note?: string;
+  source?: string;
+  campaign_id?: string;
   resume?: File;
 }
 

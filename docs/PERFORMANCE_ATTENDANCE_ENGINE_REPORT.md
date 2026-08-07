@@ -89,7 +89,7 @@ Default weights **40 / 40 / 20** (KRA / KPI / Attendance), configurable and vali
 
 `backend/migrations/106_attendance_performance_engine.sql`:
 
-- **`performance_configuration`** — one JSONB-config row per tenant (`UNIQUE(tenant_id)`), `version` int, `updated_by`. Mirrors the `document_branding_config`/`automation_rules` JSONB pattern already used elsewhere in this codebase rather than ~15 individual typed columns.
+- **`performance_configuration`** — one JSONB-config row per tenant (`UNIQUE(tenant_id)`), `version` int, `updated_by`. Mirrors the JSONB config-table pattern already used elsewhere in this codebase rather than ~15 individual typed columns.
 - **`attendance_performance_snapshots`** — one row per `(tenant_id, employee_id, cycle_id)`: every raw metric in §3, `component_scores` (JSONB), `behaviour_score`, `behaviour_rating`, `status` (`calculated` → `recalculated` → `frozen`), `generation_version`, `config_version`, `generated_by/at`, `frozen_by/at`.
 - **`performance_reviews` ALTER** — `kra_score`, `kpi_score`, `attendance_score`, `attendance_score_original`, `attendance_score_overridden`, `attendance_override_reason/by/at`, `attendance_snapshot_id`, `score_breakdown` (JSONB — weights/components used at compute time, for explainability even after config changes), `locked_at/by`.
 - **`review_cycles` ALTER** — `attendance_last_calculated_at`.
@@ -110,7 +110,7 @@ draft ──activate──▶ active ──approve──▶ approved ──lock�
 - **→ active**: `AttendanceBehaviourEngineService.generateForCycle()` snapshots every employee with `status IN ('active','confirmed','probation')`. Per-employee failures are caught and counted, never abort the batch.
 - **Recalculation** while the cycle is `draft`/`active`: `recalculateSnapshot()`/`recalculateForCycle()` — blocked the moment the cycle is `approved` or `locked`, or the individual snapshot is already `frozen`.
 - **→ approved / locked**: `freezeSnapshots()` flips every snapshot in the cycle to `status='frozen'`; `locked` additionally stamps `locked_at/by` on every `performance_reviews` row in the cycle, after which `PerformanceService.updateReview()`/`overrideAttendanceScore()` refuse any further write.
-- **Automation hook**: `AttendanceSummaryService.approve()` (the existing monthly payroll-attendance-summary approval) now calls `AttendanceBehaviourEngineService.onAttendanceSummaryApproved(tenantId, employeeId, periodStart, periodEnd)`, which refreshes any **active, non-frozen** snapshot whose cycle overlaps that period. Failures here are logged and swallowed — refreshing a forward-looking snapshot must never block a payroll approval.
+- **Refresh hook**: `AttendanceSummaryService.approve()` (the existing monthly payroll-attendance-summary approval) now calls `AttendanceBehaviourEngineService.onAttendanceSummaryApproved(tenantId, employeeId, periodStart, periodEnd)`, which refreshes any **active, non-frozen** snapshot whose cycle overlaps that period. Failures here are logged and swallowed — refreshing a forward-looking snapshot must never block a payroll approval.
 
 ## 7. Configuration
 

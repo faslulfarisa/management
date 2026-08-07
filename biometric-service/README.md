@@ -53,4 +53,4 @@ celery -A app.tasks.celery_app beat --loglevel=info
 
 This microservice communicates with the Ai-HRMS core in two ways:
 1. **Device PUSH (ADMS):** Devices pushing directly to Ai-HRMS core can still be processed here if the HTTP payloads are forwarded or if they push directly to this service's endpoints.
-2. **Attendance Callback:** When the attendance engine finishes processing a shift session, it POSTs the results back to `HMS_BASE_URL/integrations/zkteco/punch`.
+2. **Attendance Callback:** When the attendance engine finishes processing a shift session, it POSTs the results back to the HRMS core at `HMS_BASE_URL/integrations/zkteco/punch`.

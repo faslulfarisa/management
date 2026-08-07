@@ -6,6 +6,7 @@ import type { UpdateContactInfoPayload } from '@/lib/company-profile-api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 import { Save, RefreshCw } from 'lucide-react';
 
 const EMPTY: UpdateContactInfoPayload = {
@@ -100,20 +101,10 @@ export default function ContactPage() {
 
           <div className="grid grid-cols-2 gap-4">
             <Field label="Primary Phone">
-              <Input
-                type="tel"
-                value={form.phoneNumber ?? ''}
-                onChange={(e) => set('phoneNumber', e.target.value)}
-                placeholder="+91 98765 43210"
-              />
+              <PhoneNumberInput value={form.phoneNumber ?? ''} onChange={(value) => set('phoneNumber', value)} />
             </Field>
             <Field label="Alternate Phone">
-              <Input
-                type="tel"
-                value={form.alternatePhone ?? ''}
-                onChange={(e) => set('alternatePhone', e.target.value)}
-                placeholder="+91 98765 43211"
-              />
+              <PhoneNumberInput value={form.alternatePhone ?? ''} onChange={(value) => set('alternatePhone', value)} />
             </Field>
           </div>
         </CardContent>
@@ -141,12 +132,7 @@ export default function ContactPage() {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Mobile Number">
-              <Input
-                type="tel"
-                value={form.contactPersonMobile ?? ''}
-                onChange={(e) => set('contactPersonMobile', e.target.value)}
-                placeholder="+91 98765 43210"
-              />
+              <PhoneNumberInput value={form.contactPersonMobile ?? ''} onChange={(value) => set('contactPersonMobile', value)} />
             </Field>
             <Field label="Email">
               <Input

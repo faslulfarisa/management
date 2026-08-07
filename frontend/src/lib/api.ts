@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getCurrentHost } from '@/lib/portal-host';
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || '/api/v1',
@@ -9,6 +10,8 @@ const api = axios.create({
 api.interceptors.request.use((config) => {
   const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  const currentHost = getCurrentHost();
+  if (currentHost) config.headers['X-Portal-Host'] = currentHost;
   if (config.data instanceof FormData) {
     delete config.headers['Content-Type'];
   }

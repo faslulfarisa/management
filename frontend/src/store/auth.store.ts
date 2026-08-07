@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { EmployeeProfile } from '@/types/employee';
+import { getCookieDomainAttribute } from '@/lib/portal-host';
 
 export interface TenantInfo {
   id: string;
@@ -17,6 +18,7 @@ export interface AccessScope {
 }
 
 export const DEFAULT_ACCESS_SCOPE: AccessScope = { isGlobalAccess: false, branchIds: [] };
+const LAST_SELECTED_TENANT_KEY_PREFIX = 'last_selected_tenant_id';
 
 interface AuthState {
   user: any | null;
@@ -50,6 +52,11 @@ function deriveActiveOrg(tenants: TenantInfo[], selectedTenantId: string | null)
 
 function deriveUserType(activeOrganization: TenantInfo | null): string {
   return activeOrganization?.userType || 'employee';
+}
+
+function rememberedTenantKey(email?: string | null): string | null {
+  const normalizedEmail = email?.trim().toLowerCase();
+  return normalizedEmail ? `${LAST_SELECTED_TENANT_KEY_PREFIX}:${normalizedEmail}` : null;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -119,6 +126,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (activeOrganization) {
       localStorage.setItem('last_active_org', JSON.stringify(activeOrganization));
     }
+    const userRememberKey = rememberedTenantKey(get().user?.email);
+    if (userRememberKey) localStorage.setItem(userRememberKey, tenantId);
+    localStorage.setItem(LAST_SELECTED_TENANT_KEY_PREFIX, tenantId);
     // Clear stale permissions from the previous org context immediately —
     // PermissionsSync re-fetches them for the newly selected tenant.
     localStorage.removeItem('permissions');
@@ -155,6 +165,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: () => {
     document.cookie = 'portal=; path=/; max-age=0';
+    const cookieDomain = getCookieDomainAttribute();
+    if (cookieDomain) document.cookie = `portal=; path=/; max-age=0${cookieDomain}`;
     localStorage.removeItem('access_token');
     localStorage.removeItem('tenants');
     localStorage.removeItem('selected_tenant_id');
@@ -163,6 +175,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     localStorage.removeItem('employee_profile');
     localStorage.removeItem('permissions');
     localStorage.removeItem('access_scope');
+    // Reset admin section switcher so the next login starts in Branch Management mode.
+    sessionStorage.removeItem('admin_active_section');
     set({
       user: null,
       accessToken: null,

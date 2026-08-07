@@ -19,10 +19,8 @@
  */
 
 import { Process, Processor, OnQueueFailed } from '@nestjs/bull';
-import { InjectQueue } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
-import { Job, Queue } from 'bull';
-import { randomUUID } from 'crypto';
+import { Job } from 'bull';
 
 import { BiometricsMetricsService } from '../../../shared/metrics/biometrics-metrics.service';
 import { BiometricDeviceService } from '../services/biometric-device.service';
@@ -35,8 +33,8 @@ import {
 } from './biometric-sync.types';
 import { SyncCursorService } from './sync-cursor.service';
 import { EasyTimeProSyncAdapter, EASYTIMEPRO_PROVIDER_NAME } from './easytimepro-sync.adapter';
-import { PUNCH_INGESTION_QUEUE, PUNCH_INGESTION_JOB } from '../queue/punch-ingestion.types';
 import { PunchEventDto } from '../dto/punch-event.dto';
+import { PunchIngestionService } from '../services/punch-ingestion.service';
 
 /** 24 h look-back when no cursor exists for an integration yet */
 const FALLBACK_LOOKBACK_MS = 24 * 60 * 60 * 1_000;
@@ -50,7 +48,7 @@ export class BiometricSyncProcessor {
     private readonly etpAdapter: EasyTimeProSyncAdapter,
     private readonly deviceService: BiometricDeviceService,
     private readonly metrics: BiometricsMetricsService,
-    @InjectQueue(PUNCH_INGESTION_QUEUE) private readonly punchQueue: Queue,
+    private readonly punchIngestion: PunchIngestionService,
   ) {}
 
   // ── Job Handler ───────────────────────────────────────────────────────────
@@ -287,33 +285,13 @@ export class BiometricSyncProcessor {
     if (events.length === 0) return { enqueued: 0, failed: 0 };
 
     try {
-      await this.punchQueue.add(
-        PUNCH_INGESTION_JOB,
-        {
-          tenantId,
-          integrationId,
-          providerName,
-          events: events.map((e) => ({
-            employeeCode:     e.employeeCode,
-            timestamp:        e.timestamp.toISOString(),
-            punchType:        e.punchType,
-            verifyMethod:     e.verifyMethod,
-            providerName:     e.providerName,
-            deviceId:         e.deviceId,
-            attendanceSource: e.attendanceSource,
-            rawPayload:       e.rawPayload,
-          })),
-          requestId:   randomUUID(),
-          submittedAt: new Date().toISOString(),
-          correlationId,
-        },
-        {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 5_000 },
-          removeOnComplete: { count: 1_000 },
-          removeOnFail: { count: 500 },
-        },
-      );
+      await this.punchIngestion.submit({
+        tenantId,
+        integrationId,
+        providerName,
+        events,
+        correlationId,
+      });
       return { enqueued: events.length, failed: 0 };
     } catch (err: any) {
       this.logger.error(

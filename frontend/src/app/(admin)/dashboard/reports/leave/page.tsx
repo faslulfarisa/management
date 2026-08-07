@@ -167,7 +167,18 @@ export default function LeaveReportsPage() {
 
   const cfg = TAB_CONFIG[tab];
   function buildExportData() {
-    return { columns: cfg.exportCols, rows: rows.map(r => cfg.exportKeys.map(k => String(r[k] ?? ''))) };
+    return {
+      columns: cfg.exportCols,
+      rows: rows.map(r => cfg.exportKeys.map(k => {
+        const v = r[k];
+        const formatted = (() => {
+          if (['created_at', 'from_date', 'to_date'].includes(k)) return fmtDate(v);
+          if (k === 'utilization_pct') return fmtPct(v);
+          return v != null ? String(v) : '';
+        })();
+        return formatted === '—' ? '' : formatted;
+      })),
+    };
   }
 
   return (

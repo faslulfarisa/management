@@ -40,7 +40,7 @@ export class PayrollLockService {
     const { rows } = await this.db.query(
       `SELECT id, period_start, period_end FROM payroll_attendance_summary
        WHERE tenant_id = $1 AND employee_id = $2
-         AND status IN ('payroll_locked', 'payroll_processed')
+         AND status = 'payroll_locked'
          AND period_start <= $4 AND period_end >= $3
        LIMIT 1`,
       [tenantId, employeeId, fromDate, toDate ?? fromDate],
@@ -118,12 +118,12 @@ export class PayrollLockService {
     const { rows } = await this.db.query(
       `UPDATE payroll_attendance_summary
        SET status = 'approved', locked_by = NULL, locked_at = NULL, lock_reason = NULL, updated_at = now()
-       WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND status IN ('payroll_locked', 'payroll_processed')
+       WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND status = 'payroll_locked'
        RETURNING id, employee_id`,
       [tenantId, summaryIds],
     );
     if (!rows.length) {
-      throw new BadRequestException('No locked or processed summaries found among the given IDs.');
+      throw new BadRequestException('No unlockable payroll-locked summaries found among the given IDs. Processed payroll is immutable.');
     }
 
     for (const row of rows) {

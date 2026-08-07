@@ -33,9 +33,9 @@ export class AttendanceReportsService {
         b.name                                                         AS branch,
         d.name                                                         AS department,
         COUNT(*)                                                       AS total,
-        COUNT(*) FILTER (WHERE ar.status = 'present')                 AS present,
+        COUNT(*) FILTER (WHERE ar.status IN ('present', 'late'))                 AS present,
         COUNT(*) FILTER (WHERE ar.status = 'absent')                  AS absent,
-        COUNT(*) FILTER (WHERE ar.status = 'late')                    AS late,
+        COUNT(*) FILTER (WHERE ar.status = 'late' OR ar.late_minutes > 0)                    AS late,
         COUNT(*) FILTER (WHERE ar.status = 'half_day')                AS half_day,
         ROUND(AVG(ar.late_minutes) FILTER (WHERE ar.late_minutes > 0)::numeric, 1) AS avg_late_mins,
         SUM(ar.overtime_minutes)                                       AS total_overtime_mins,
@@ -131,8 +131,8 @@ export class AttendanceReportsService {
         d.name                              AS department,
         b.name                              AS branch,
         COUNT(*) FILTER (WHERE ar.status = 'absent')  AS absent_days,
-        COUNT(*) FILTER (WHERE ar.status = 'present') AS present_days,
-        COUNT(*) FILTER (WHERE ar.status = 'late')    AS late_days,
+        COUNT(*) FILTER (WHERE ar.status IN ('present', 'late')) AS present_days,
+        COUNT(*) FILTER (WHERE ar.status = 'late' OR ar.late_minutes > 0)    AS late_days,
         COUNT(*)                                       AS total_days,
         ROUND(
           COUNT(*) FILTER (WHERE ar.status = 'absent') * 100.0 / NULLIF(COUNT(*), 0)::numeric, 1
@@ -226,9 +226,9 @@ export class AttendanceReportsService {
         e.first_name || ' ' || e.last_name  AS employee_name,
         d.name                              AS department,
         b.name                              AS branch,
-        COUNT(*) FILTER (WHERE ar.status = 'present')   AS present_days,
+        COUNT(*) FILTER (WHERE ar.status IN ('present', 'late'))   AS present_days,
         COUNT(*) FILTER (WHERE ar.status = 'absent')    AS absent_days,
-        COUNT(*) FILTER (WHERE ar.status = 'late')      AS late_days,
+        COUNT(*) FILTER (WHERE ar.status = 'late' OR ar.late_minutes > 0)      AS late_days,
         ROUND(
           SUM(EXTRACT(EPOCH FROM (ar.clock_out - ar.clock_in)) / 3600.0)
             FILTER (WHERE ar.clock_in IS NOT NULL AND ar.clock_out IS NOT NULL)::numeric, 2
@@ -267,9 +267,9 @@ export class AttendanceReportsService {
         e.first_name || ' ' || e.last_name  AS employee_name,
         b.name                              AS branch,
         d.name                              AS department,
-        COUNT(*) FILTER (WHERE ar.status = 'present')  AS present_count,
+        COUNT(*) FILTER (WHERE ar.status IN ('present', 'late'))  AS present_count,
         COUNT(*) FILTER (WHERE ar.status = 'absent')   AS absent_count,
-        COUNT(*) FILTER (WHERE ar.status = 'late')     AS late_count,
+        COUNT(*) FILTER (WHERE ar.status = 'late' OR ar.late_minutes > 0)     AS late_count,
         COUNT(*) FILTER (WHERE ar.status = 'half_day') AS half_day_count,
         ROUND(SUM(ar.late_minutes)::numeric, 0)        AS total_late_mins,
         ROUND(SUM(ar.overtime_minutes) / 60.0::numeric, 2) AS total_ot_hours,
@@ -309,38 +309,67 @@ export class AttendanceReportsService {
     if (department_id) { where += ` AND e.department_id = $${idx++}`; params.push(department_id); }
     if (employee_id)   { where += ` AND ar.employee_id = $${idx++}`; params.push(employee_id); }
 
+    // Expand each attendance record into individual punch rows:
+    //   - clock_in  → direction = 'IN'
+    //   - clock_out → direction = 'OUT'  (only when clock_out is not null)
+    // is_duplicate is flagged when punch_count > 2 (i.e. more than one IN+OUT pair)
     const { rows } = await this.db.query(`
+      WITH base AS (
+        SELECT
+          ar.date,
+          e.employee_code,
+          e.first_name || ' ' || e.last_name  AS employee_name,
+          b.name                              AS branch,
+          d.name                              AS department,
+          ar.clock_in,
+          ar.clock_out,
+          ar.verify_method,
+          ar.source_device_id                AS device_id,
+          ar.attendance_source,
+          ar.punch_count,
+          ar.is_overnight
+        FROM attendance_records ar
+        JOIN employees e        ON ar.employee_id = e.id
+        LEFT JOIN branches b    ON ar.branch_id = b.id
+        LEFT JOIN departments d ON e.department_id = d.id
+        WHERE ar.tenant_id = $1 ${where}
+      ),
+      punches AS (
+        -- IN punch row
+        SELECT
+          date, employee_code, employee_name, branch, department,
+          clock_in                            AS punch_time,
+          'IN'                                AS direction,
+          verify_method,
+          device_id,
+          attendance_source,
+          (punch_count > 2)                   AS is_duplicate
+        FROM base
+        WHERE clock_in IS NOT NULL
+        UNION ALL
+        -- OUT punch row (only when check-out recorded)
+        SELECT
+          date, employee_code, employee_name, branch, department,
+          clock_out                           AS punch_time,
+          'OUT'                               AS direction,
+          verify_method,
+          device_id,
+          attendance_source,
+          (punch_count > 2)                   AS is_duplicate
+        FROM base
+        WHERE clock_out IS NOT NULL
+      )
       SELECT
-        ar.date,
-        e.employee_code,
-        e.first_name || ' ' || e.last_name  AS employee_name,
-        b.name                              AS branch,
-        d.name                              AS department,
-        ar.clock_in,
-        ar.clock_out,
-        ar.status,
-        ar.punch_count,
-        ar.punch_sequence,
-        ar.attendance_source               AS source,
-        ar.verify_method,
-        ar.source_device_id                AS device_id,
-        ar.provider_name,
-        ar.is_overnight,
-        ar.late_minutes,
-        ar.overtime_minutes,
-        ar.early_departure_minutes,
-        COUNT(*) OVER()                     AS full_count
-      FROM attendance_records ar
-      JOIN employees e        ON ar.employee_id = e.id
-      LEFT JOIN branches b    ON ar.branch_id = b.id
-      LEFT JOIN departments d ON e.department_id = d.id
-      WHERE ar.tenant_id = $1 ${where}
-      ORDER BY ar.date DESC, e.first_name
+        *,
+        COUNT(*) OVER() AS full_count
+      FROM punches
+      ORDER BY date DESC, punch_time ASC
       LIMIT $${idx} OFFSET $${idx + 1}
     `, [...params, limit, offset]);
 
     return { data: rows, total: parseInt(rows[0]?.full_count ?? '0'), page, limit };
   }
+
 
   async getMissedPunches(tenantId: string, filter: ReportFilterDto) {
     const { date_from, date_to, branch_id, department_id, employee_id, page = 1, limit = 50 } = filter;
@@ -363,7 +392,8 @@ export class AttendanceReportsService {
         b.name                              AS branch,
         ar.clock_in,
         ar.punch_count,
-        ar.attendance_source               AS source,
+        ar.attendance_source,
+        ar.status,
         ar.verify_method,
         COUNT(*) OVER()                     AS full_count
       FROM attendance_records ar
@@ -400,11 +430,11 @@ export class AttendanceReportsService {
         ar.date,
         b.name                                                     AS branch,
         COUNT(*)                                                   AS total,
-        COUNT(*) FILTER (WHERE ar.status = 'present')             AS present,
+        COUNT(*) FILTER (WHERE ar.status IN ('present', 'late'))             AS present,
         COUNT(*) FILTER (WHERE ar.status = 'absent')              AS absent,
-        COUNT(*) FILTER (WHERE ar.status = 'late')                AS late,
+        COUNT(*) FILTER (WHERE ar.status = 'late' OR ar.late_minutes > 0)                AS late,
         ROUND(
-          COUNT(*) FILTER (WHERE ar.status = 'present') * 100.0 / NULLIF(COUNT(*), 0)::numeric, 1
+          COUNT(*) FILTER (WHERE ar.status IN ('present', 'late')) * 100.0 / NULLIF(COUNT(*), 0)::numeric, 1
         )                                                          AS attendance_pct,
         SUM(ar.overtime_minutes)                                   AS total_ot_mins,
         COUNT(*) OVER()                                            AS full_count

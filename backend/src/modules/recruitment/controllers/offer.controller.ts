@@ -56,7 +56,7 @@ export class OfferController {
   }
 
   @Post()
-  @RequirePermission(PERMISSIONS.RECRUITMENT_CREATE)
+  @RequirePermission(PERMISSIONS.RECRUITMENT_EDIT)
   async create(@Req() req: any, @Body() dto: CreateOfferDto) {
     return { success: true, data: await this.offers.create(tenantOf(req), req.user.sub, dto), error: null };
   }

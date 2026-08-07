@@ -39,7 +39,7 @@ export function ProbationReviewCard({
       <Card>
         <CardContent className="p-5 flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-foreground">Probation & Confirmation</h3>
+            <h3 className="text-base font-bold text-foreground">Probation & Confirmation</h3>
             <p className="text-xs text-muted-foreground mt-0.5">No probation review started yet.</p>
           </div>
           <Can permission={PERMISSIONS.RECRUITMENT_CREATE}>
@@ -103,7 +103,7 @@ export function ProbationReviewCard({
         )}
 
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-foreground">Probation & Confirmation</h3>
+          <h3 className="text-base font-bold text-foreground">Probation & Confirmation</h3>
           <span className="px-2 py-0.5 rounded-full text-xs font-medium capitalize bg-muted/60">{review.status.replace('_', ' ')}</span>
         </div>
 

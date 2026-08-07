@@ -5,6 +5,8 @@ import { AuthModule } from '../auth/auth.module';
 import { PlatformModule } from '../platform/platform.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { BillingModule } from '../billing/billing.module';
+import { BiometricsModule } from '../biometrics/biometrics.module';
 import { EmployeeController } from './controllers/employee.controller';
 import { EmployeeService } from './services/employee.service';
 import { AttendanceController } from './controllers/attendance.controller';
@@ -38,6 +40,10 @@ import { OvertimeController } from './controllers/overtime.controller';
 import { OvertimeService } from './services/overtime.service';
 import { BreakSessionService } from './services/break-session.service';
 import { BreakMonitorService } from './services/break-monitor.service';
+import { ShiftOverrideController } from './controllers/shift-override.controller';
+import { ShiftOverrideService } from './services/shift-override.service';
+import { TaskController } from './controllers/task.controller';
+import { TaskService } from './services/task.service';
 
 @Module({
   imports: [
@@ -45,6 +51,8 @@ import { BreakMonitorService } from './services/break-monitor.service';
     forwardRef(() => PlatformModule),
     forwardRef(() => ApprovalsModule),
     forwardRef(() => NotificationsModule),
+    forwardRef(() => BillingModule),
+    forwardRef(() => BiometricsModule),
     registerQueues({
       name: PAYROLL_PAYOUT_QUEUE,
       defaultJobOptions: {
@@ -69,6 +77,8 @@ import { BreakMonitorService } from './services/break-monitor.service';
     RazorpayWebhookController,
     PayslipController,
     OvertimeController,
+    ShiftOverrideController,
+    TaskController,
   ],
   providers: [
     EmployeeService, AttendanceService, ShiftService, LeaveService,
@@ -84,6 +94,8 @@ import { BreakMonitorService } from './services/break-monitor.service';
     OvertimeService,
     BreakSessionService,
     BreakMonitorService,
+    ShiftOverrideService,
+    TaskService,
   ],
   exports: [
     EmployeeService, AttendanceService, ShiftService, LeaveService,
@@ -96,6 +108,7 @@ import { BreakMonitorService } from './services/break-monitor.service';
     PayslipService,
     OvertimeService,
     BreakSessionService,
+    ShiftOverrideService,
   ],
 })
-export class HrModule {}
+export class HrModule { }

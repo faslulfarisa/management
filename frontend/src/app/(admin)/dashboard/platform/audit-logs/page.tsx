@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect, type ReactNode } from 'react';
 import api from '@/lib/api';
@@ -8,14 +8,14 @@ import { ShieldCheck, MapPin, Briefcase, Download } from 'lucide-react';
 import { UserTypeBadge } from '@/components/users/user-type-badge';
 import { useCan } from '@/hooks/use-permissions';
 import { PERMISSIONS } from '@/lib/permissions';
-import { exportReportCsv } from '@/lib/report-export';
+import { ExportButton } from '@/components/export';
+import { ImportButton } from '@/components/import';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 
 export default function AuditLogsPage() {
-  const canExport = useCan(PERMISSIONS.AUDIT_LOGS_EXPORT);
+  const canExport = useCan(PERMISSIONS.PLATFORM_AUDIT_VIEW);
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [exporting, setExporting] = useState(false);
   const [filterEntity, setFilterEntity] = useState('');
   const [filterAction, setFilterAction] = useState('');
   const [page, setPage] = useState(1);
@@ -62,37 +62,6 @@ export default function AuditLogsPage() {
     position_assigned: Briefcase,
   };
 
-  const entityTypeLabels: Record<string, string> = {
-    user_access: 'User Access',
-    organization: 'Organization (Operations)',
-  };
-
-  const handleExport = async () => {
-    setExporting(true);
-    try {
-      const params: any = { limit: 1000 };
-      if (filterEntity) params.entity_type = filterEntity;
-      if (filterAction) params.action = filterAction;
-      const { data } = await api.get('/audit-logs/export', { params });
-      const rows: any[] = data.data ?? [];
-      exportReportCsv({
-        columns: ['Timestamp', 'User ID', 'Entity Type', 'Entity ID', 'Action', 'IP Address'],
-        rows: rows.map(r => [
-          new Date(r.created_at).toLocaleString(),
-          r.user_id ?? '',
-          entityTypeLabels[r.entity_type] || r.entity_type || '',
-          r.entity_id ?? '',
-          actionLabels[r.action] || r.action || '',
-          r.ip_address ?? '',
-        ]),
-      }, 'audit_logs');
-    } catch (err) {
-      console.error('Failed to export audit logs:', err);
-    } finally {
-      setExporting(false);
-    }
-  };
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
@@ -101,14 +70,36 @@ export default function AuditLogsPage() {
           <p className="text-muted-foreground">Track all system activities and changes</p>
         </div>
         {canExport && (
-          <button
-            onClick={handleExport}
-            disabled={exporting}
-            className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground border border-border rounded-xl px-3 py-1.5 transition-all hover:text-primary hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <Download className="w-3.5 h-3.5" />
-            {exporting ? 'Exporting…' : 'Export CSV'}
-          </button>
+          <div className="flex items-center gap-2">
+            <ExportButton
+              config={{
+                module: 'audit_logs',
+                title: 'Audit Logs',
+                permission: PERMISSIONS.PLATFORM_AUDIT_VIEW,
+                columns: [
+                  { key: 'action', header: 'Action' },
+                  { key: 'resource_type', header: 'Resource' },
+                  { key: 'resource_id', header: 'Resource ID' },
+                  { key: 'actor_name', header: 'Actor' },
+                  { key: 'actor_email', header: 'Actor Email' },
+                  { key: 'ip_address', header: 'IP Address' },
+                  { key: 'created_at', header: 'Timestamp', type: 'date' },
+                ],
+                defaultColumns: ['action', 'resource_type', 'actor_name', 'created_at', 'ip_address'],
+                filenamePrefix: 'audit_logs',
+              }}
+              filters={{ resource_type: filterEntity, action: filterAction }}
+              currentPageData={logs}
+              totalRecords={meta?.total}
+            />
+            <ImportButton
+              config={{
+                module: 'audit_logs',
+                title: 'Audit Logs',
+                permission: PERMISSIONS.PLATFORM_AUDIT_VIEW,
+              }}
+            />
+          </div>
         )}
       </div>
 
@@ -173,8 +164,8 @@ export default function AuditLogsPage() {
                     <TableCell className="p-4">{new Date(log.created_at).toLocaleString()}</TableCell>
                     <TableCell className="p-4">{log.user_email || log.user_name || 'System'}</TableCell>
                     <TableCell className="p-4">
-                      {entityTypeLabels[log.entity_type] || <span className="capitalize">{log.entity_type}</span>}
-                      {log.entity_id && <span className="text-xs text-muted-foreground ml-1 font-mono">{log.entity_id.slice(0, 8)}...</span>}
+                      <span className="capitalize">{log.entity_type?.replace(/_/g, ' ') || '—'}</span>
+                      {log.entity_id && <span className="text-xs text-muted-foreground ml-1 font-mono">{String(log.entity_id).slice(0, 8)}…</span>}
                     </TableCell>
                     <TableCell className="p-4">
                       <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs ${actionColors[log.action] || 'bg-gray-100'}`}>

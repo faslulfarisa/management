@@ -14,6 +14,7 @@ export class ScheduleInterviewDto {
   @IsOptional() @IsArray() @IsString({ each: true }) panel_member_ids?: string[];
   /** Kept for backward compat with the legacy single-interviewer flow. */
   @IsOptional() @IsString() interviewer_id?: string;
+  @IsOptional() @IsString() notes?: string;
 }
 
 export class RescheduleInterviewDto {
@@ -27,7 +28,7 @@ export class CancelInterviewDto {
 
 export class SubmitInterviewFeedbackDto {
   @IsInt() @Min(1) rating!: number;
-  @IsOptional() @IsIn(['strong_yes', 'yes', 'neutral', 'no', 'strong_no']) recommendation?: string;
+  @IsOptional() @IsIn(['hire', 'hold', 'reject', 'next_round']) recommendation?: string;
   @IsOptional() @IsString() comments?: string;
 }
 

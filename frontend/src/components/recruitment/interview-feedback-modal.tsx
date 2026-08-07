@@ -4,12 +4,12 @@ import { useState } from 'react';
 import { X, Loader2 } from 'lucide-react';
 import { interviewsApi, Interview } from '@/lib/interviews-api';
 
-const RECOMMENDATIONS = ['strong_yes', 'yes', 'neutral', 'no', 'strong_no'];
+const RECOMMENDATIONS = ['hire', 'hold', 'reject', 'next_round'];
 
 /** A single panelist submits their own scorecard entry for an interview round. */
 export function InterviewFeedbackModal({ interview, onClose, onSaved }: { interview: Interview; onClose: () => void; onSaved: () => void }) {
   const [rating, setRating] = useState(3);
-  const [recommendation, setRecommendation] = useState('neutral');
+  const [recommendation, setRecommendation] = useState('hold');
   const [comments, setComments] = useState('');
   const [saving, setSaving] = useState(false);
 

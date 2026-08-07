@@ -212,6 +212,31 @@ const POLICY_DOMAINS = [
     borderColor: 'border-violet-200',
     description: 'Salary components, PF/ESI eligibility, LOP method, bonus & gratuity',
     fields: [
+      { key: 'pay_basis', label: 'Pay Basis', section: 'Pay Basis Configuration', type: 'select' as FieldType, options: [
+        { value: 'monthly_salary', label: 'Monthly Salary' },
+        { value: 'weekly_salary', label: 'Weekly Salary' },
+        { value: 'daily_wage', label: 'Daily Wage' },
+        { value: 'hourly_wage', label: 'Hourly Wage' },
+        { value: 'half_day_rate', label: 'Half-Day Rate' },
+        { value: 'hourly_weekly_payroll', label: 'Hourly (Weekly Payroll)' },
+        { value: 'hourly_monthly_payroll', label: 'Hourly (Monthly Payroll)' },
+        { value: 'daily_weekly_payroll', label: 'Daily (Weekly Payroll)' },
+        { value: 'daily_monthly_payroll', label: 'Daily (Monthly Payroll)' },
+        { value: 'custom', label: 'Custom' },
+      ], format: (v: string) => v ? v.replace(/_/g, ' ').toUpperCase() : 'Monthly Salary' },
+      { key: 'weekly_salary', label: 'Weekly Salary', section: 'Pay Basis Configuration', type: 'number' as FieldType, format: (v: number) => `₹${v}/week`, condition: (c: any) => c.pay_basis === 'weekly_salary' },
+      { key: 'daily_rate', label: 'Daily Rate', section: 'Pay Basis Configuration', type: 'number' as FieldType, format: (v: number) => `₹${v}/day`, condition: (c: any) => ['daily_wage', 'daily_weekly_payroll', 'daily_monthly_payroll'].includes(c.pay_basis) },
+      { key: 'hourly_rate', label: 'Hourly Rate', section: 'Pay Basis Configuration', type: 'number' as FieldType, format: (v: number) => `₹${v}/hour`, condition: (c: any) => ['hourly_wage', 'hourly_weekly_payroll', 'hourly_monthly_payroll'].includes(c.pay_basis) },
+      { key: 'half_day_rate', label: 'Half-Day Rate', section: 'Pay Basis Configuration', type: 'number' as FieldType, format: (v: number) => `₹${v}/half-day`, condition: (c: any) => c.pay_basis === 'half_day_rate' },
+      { key: 'payroll_frequency', label: 'Payroll Frequency', section: 'Pay Basis Configuration', type: 'text' as FieldType, format: (v: string) => v || '—' },
+      { key: 'calculation_unit', label: 'Calculation Unit', section: 'Pay Basis Configuration', type: 'text' as FieldType, format: (v: string) => v || '—' },
+      { key: 'standard_hours_per_day', label: 'Standard Hours / Day', section: 'Pay Basis Configuration', type: 'number' as FieldType, format: (v: number) => `${v} hrs` },
+      { key: 'standard_working_days_per_week', label: 'Standard Days / Week', section: 'Pay Basis Configuration', type: 'number' as FieldType, format: (v: number) => `${v} days` },
+      { key: 'standard_working_days_per_month', label: 'Standard Days / Month', section: 'Pay Basis Configuration', type: 'number' as FieldType, format: (v: number) => `${v} days` },
+      { key: 'half_day_hours', label: 'Half-Day Hours', section: 'Pay Basis Configuration', type: 'number' as FieldType, format: (v: number) => `${v} hrs` },
+      { key: 'ot_eligible', label: 'OT Eligible', section: 'Pay Basis Configuration', type: 'boolean' as FieldType, format: (v: boolean) => v ? 'Yes' : 'No' },
+      { key: 'holiday_pay_eligible', label: 'Holiday Pay Eligible', section: 'Pay Basis Configuration', type: 'boolean' as FieldType, format: (v: boolean) => v ? 'Yes' : 'No' },
+      { key: 'weekend_pay_eligible', label: 'Weekend Pay Eligible', section: 'Pay Basis Configuration', type: 'boolean' as FieldType, format: (v: boolean) => v ? 'Yes' : 'No' },
       { key: 'basic_percent_of_ctc', label: 'Basic (% of CTC)', section: 'Salary Components', type: 'number' as FieldType, description: 'Basic salary as a percentage of CTC', format: (v: number) => `${v}%` },
       { key: 'hra_percent_of_basic', label: 'HRA (% of Basic)', section: 'Salary Components', type: 'number' as FieldType, description: 'House Rent Allowance as % of Basic (0 = none)', format: (v: number) => v === 0 ? 'None' : `${v}%` },
       { key: 'da_percent_of_basic', label: 'DA (% of Basic)', section: 'Salary Components', type: 'number' as FieldType, description: 'Dearness Allowance as % of Basic (0 = none)', format: (v: number) => v === 0 ? 'None' : `${v}%` },
@@ -312,9 +337,6 @@ const POLICY_DOMAINS = [
       { key: 'break_duration_minutes', label: 'Break Duration', section: 'Break Configuration', type: 'number' as FieldType, description: 'Total break duration in minutes (auto-calculated from start/end times)', format: (v: number) => `${v} min`, condition: (c: any) => c.break_enabled },
       { key: 'paid_break', label: 'Paid Break', section: 'Break Configuration', type: 'boolean' as FieldType, description: 'Count break time as paid work hours', format: (v: boolean) => v ? 'Paid' : 'Unpaid', condition: (c: any) => c.break_enabled },
       // ── Attendance Rules ──
-      { key: 'grace_period_minutes', label: 'Grace Period', section: 'Attendance Rules', type: 'number' as FieldType, description: 'Minutes after shift start before a late-mark is applied', format: (v: number) => `${v} min` },
-      { key: 'late_mark_after_minutes', label: 'Late Mark After', section: 'Attendance Rules', type: 'number' as FieldType, description: 'Minutes beyond grace period before a late mark is recorded', format: (v: number) => `${v} min` },
-      { key: 'early_leave_before_minutes', label: 'Early Leave Before', section: 'Attendance Rules', type: 'number' as FieldType, description: 'Minutes before shift end to flag as early departure', format: (v: number) => `${v} min` },
       {
         key: 'attendance_calculation_mode', label: 'Attendance Mode', section: 'Attendance Rules', type: 'select' as FieldType, options: [
           { value: 'actual', label: 'Actual Hours Worked' }, { value: 'scheduled', label: 'Scheduled Shift Hours' }, { value: 'flexible', label: 'Flexible (Minimum Hours)' },
@@ -323,10 +345,6 @@ const POLICY_DOMAINS = [
       { key: 'auto_clock_out_enabled', label: 'Auto Clock-Out', section: 'Attendance Rules', type: 'boolean' as FieldType, description: 'Automatically clock out employee after maximum hours', format: (v: boolean) => v ? 'Enabled' : 'Disabled' },
       { key: 'auto_clock_out_after_hours', label: 'Auto Clock-Out After', section: 'Attendance Rules', type: 'number' as FieldType, description: 'Hours from shift start before auto clock-out triggers', format: (v: number) => `After ${v} hrs`, condition: (c: any) => c.auto_clock_out_enabled },
       { key: 'biometric_location_restricted', label: 'Location-Locked Attendance', section: 'Attendance Rules', type: 'boolean' as FieldType, description: "Restrict biometric check-ins to devices registered at the shift's assigned property or area. Punches from other locations will be flagged.", format: (v: boolean) => v ? 'Location-Locked' : 'Any Location' },
-      // ── Overtime ──
-      { key: 'ot_eligible', label: 'OT Eligible', section: 'Overtime', type: 'boolean' as FieldType, description: 'Employees on this shift type qualify for overtime', format: (v: boolean) => v ? 'Eligible' : 'Not Eligible' },
-      { key: 'ot_threshold_minutes', label: 'OT Threshold', section: 'Overtime', type: 'number' as FieldType, description: 'Minutes beyond shift end to qualify as overtime', format: (v: number) => `After ${v} min`, condition: (c: any) => c.ot_eligible },
-      { key: 'overtime_on_double_shift', label: 'OT on Double Shift', section: 'Overtime', type: 'boolean' as FieldType, description: 'Mark as OT when employee works consecutive back-to-back shifts', format: (v: boolean) => v ? 'Yes' : 'No' },
       // ── Rest & Recovery ──
       { key: 'min_rest_hours_between_shifts', label: 'Min Rest Between Shifts', section: 'Rest & Recovery', type: 'number' as FieldType, description: 'Minimum rest hours required between consecutive shifts', format: (v: number) => `${v} hrs` },
       { key: 'handover_buffer_minutes', label: 'Handover Buffer', section: 'Rest & Recovery', type: 'number' as FieldType, description: 'Buffer minutes allowed at shift changeover for handover', format: (v: number) => `${v} min` },
@@ -345,8 +363,7 @@ const POLICY_DOMAINS = [
       { key: 'weekly_off_days', label: 'Weekly Off Days', section: 'Rotation & Weekly Off', type: 'text' as FieldType, description: 'Comma-separated day names (e.g. Sunday,Saturday)', format: (v: string) => v },
       // ── Allowances ──
       { key: 'night_shift_allowance', label: 'Night Shift Allowance', section: 'Allowances', type: 'number' as FieldType, description: 'Per-night allowance amount (₹, 0 = none)', format: (v: number) => v === 0 ? 'None' : `₹${v.toLocaleString('en-IN')}/night` },
-      // ── Automation ──
-      { key: 'auto_assign_shifts', label: 'Auto-Assign Shifts', section: 'Automation', type: 'boolean' as FieldType, description: 'Automatically assign this shift to new employees', format: (v: boolean) => v ? 'Yes' : 'No' },
+      { key: 'auto_assign_shifts', label: 'Auto-Assign Shifts', section: 'Scheduling Rules', type: 'boolean' as FieldType, description: 'Automatically assign this shift to new employees', format: (v: boolean) => v ? 'Yes' : 'No' },
       // ── Monthly-specific ──
       { key: 'monthly_roster_finalize_by_day', label: 'Roster Finalized By (Day)', section: 'Monthly Configuration', type: 'number' as FieldType, description: 'Day of the preceding month by which the roster must be finalized (e.g. 25)', format: (v: number) => `By day ${v} of preceding month`, condition: (c: any) => c.apply_type === 'monthly' },
       { key: 'monthly_shift_swap_limit', label: 'Max Shift Swaps / Month', section: 'Monthly Configuration', type: 'number' as FieldType, description: 'Maximum allowed shift swaps per employee per month (0 = unlimited)', format: (v: number) => v === 0 ? 'Unlimited' : `${v} swaps/month`, condition: (c: any) => c.apply_type === 'monthly' },
@@ -1833,7 +1850,11 @@ export default function TemplatesPage() {
   const openEdit = (template: any) => {
     setIsEditing(true);
     setEditTemplateId(template.id);
-    setCreateForm({ name: template.name, description: template.description || '', config: { ...(template.config || {}) } });
+    const config = { ...(template.config || {}) };
+    if (activeDomain === 'shift_management' && !config.shift_name) {
+      config.shift_name = template.name;
+    }
+    setCreateForm({ name: template.name, description: template.description || '', config });
     setShowCreate(true);
   };
 
@@ -2115,7 +2136,10 @@ export default function TemplatesPage() {
                             </span>
                           ));
                         })() : domain.fields.slice(0, 3).map(field => {
-                          const val = t.config?.[field.key];
+                          let val = t.config?.[field.key];
+                          if (activeDomain === 'shift_management' && field.key === 'shift_name' && !val) {
+                            val = t.name;
+                          }
                           if (val == null) return null;
                           if (field.condition && !field.condition(t.config)) return null;
                           return (
@@ -2238,7 +2262,10 @@ export default function TemplatesPage() {
                             !(activeDomain === 'shift_management' && f.section === 'Break Configuration')
                           )
                           .map(field => {
-                            const val = selectedTemplate.config?.[field.key];
+                            let val = selectedTemplate.config?.[field.key];
+                            if (activeDomain === 'shift_management' && field.key === 'shift_name' && !val) {
+                              val = selectedTemplate.name;
+                            }
                             if (val == null) return null;
                             if (field.condition && !field.condition(selectedTemplate.config)) return null;
                             const fmt = (field.format as any)(val);
@@ -2462,7 +2489,18 @@ export default function TemplatesPage() {
                     <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Template Name *</label>
                     <input
                       value={createForm.name}
-                      onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))}
+                      onChange={e => {
+                        const name = e.target.value;
+                        setCreateForm(f => {
+                          const nextConfig = { ...f.config };
+                          if (activeDomain === 'shift_management') {
+                            if (!nextConfig.shift_name || nextConfig.shift_name === f.name) {
+                              nextConfig.shift_name = name;
+                            }
+                          }
+                          return { ...f, name, config: nextConfig };
+                        });
+                      }}
                       placeholder={`e.g., Night Shift ${domain.label}`}
                       required
                       className="mt-1.5 w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"

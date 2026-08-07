@@ -1,9 +1,9 @@
 'use client';
 
-import { Calendar, FilePen, ArrowLeftRight, Clock, Receipt, Shield } from 'lucide-react';
+import { Calendar, FilePen, ArrowLeftRight, Clock, Receipt, Shield, CalendarDays } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-export type RequestType = 'leave' | 'correction' | 'shift_change' | 'overtime' | 'expense' | 'fine_appeal';
+export type RequestType = 'leave' | 'correction' | 'shift_override' | 'overtime' | 'expense' | 'fine_appeal';
 
 interface RequestTypeOption {
   type: RequestType;
@@ -14,12 +14,12 @@ interface RequestTypeOption {
 }
 
 const options: RequestTypeOption[] = [
-  { type: 'leave',       label: 'Leave',          Icon: Calendar,       color: 'text-primary',     bg: 'bg-primary/10'    },
-  { type: 'correction',  label: 'Attendance Fix',  Icon: FilePen,        color: 'text-orange-600',  bg: 'bg-orange-100'    },
-  { type: 'shift_change',label: 'Shift Change',   Icon: ArrowLeftRight, color: 'text-purple-600',  bg: 'bg-purple-100'    },
-  { type: 'overtime',    label: 'Overtime',        Icon: Clock,          color: 'text-emerald-600', bg: 'bg-emerald-100'   },
-  { type: 'expense',     label: 'Expense',         Icon: Receipt,        color: 'text-amber-600',   bg: 'bg-amber-100'     },
-  { type: 'fine_appeal', label: 'Fine Appeal',     Icon: Shield,         color: 'text-red-600',     bg: 'bg-red-100'       },
+  { type: 'leave',          label: 'Leave',          Icon: Calendar,        color: 'text-primary',     bg: 'bg-primary/10'    },
+  { type: 'correction',     label: 'Attendance Fix',  Icon: FilePen,         color: 'text-orange-600',  bg: 'bg-orange-100'    },
+  { type: 'shift_override', label: 'Shift Override',  Icon: ArrowLeftRight,  color: 'text-purple-600',  bg: 'bg-purple-100'    },
+  { type: 'overtime',       label: 'Overtime',        Icon: Clock,           color: 'text-emerald-600', bg: 'bg-emerald-100'   },
+  { type: 'expense',        label: 'Expense',         Icon: Receipt,         color: 'text-amber-600',   bg: 'bg-amber-100'     },
+  { type: 'fine_appeal',    label: 'Fine Appeal',     Icon: Shield,          color: 'text-red-600',     bg: 'bg-red-100'       },
 ];
 
 interface RequestTypeSelectorProps {

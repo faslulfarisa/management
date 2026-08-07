@@ -7,7 +7,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import {
   AlertCircle, Building2, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck,
-  MapPin, UserSquare2, Calendar, Wallet, UsersRound, TrendingUp, Fingerprint, Gift,
+  MapPin, UserSquare2, Gift,
 } from 'lucide-react';
 import { registrationApi } from '@/lib/organization-registration-api';
 import { publicSignupOffersApi, PublicSignupOffer } from '@/lib/signup-offers-api';
@@ -16,6 +16,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AuthBrandMark } from '@/components/auth/auth-hero-panel';
 import { RegistrationProgress } from '@/components/auth/registration-progress';
+import AddressFields, { type AddressValue } from '@/components/forms/AddressFields';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 
 const COMPANY_TYPES: { value: string; label: string }[] = [
   { value: 'private_limited', label: 'Private Limited' },
@@ -28,33 +30,27 @@ const COMPANY_TYPES: { value: string; label: string }[] = [
   { value: 'other', label: 'Other' },
 ];
 
-const COMPANY_SIZES: { value: string; label: string }[] = [
-  { value: '1-50', label: '1–50 employees' },
-  { value: '51-200', label: '51–200 employees' },
-  { value: '201-500', label: '201–500 employees' },
-  { value: '501-1000', label: '501–1000 employees' },
-  { value: '1000+', label: '1000+ employees' },
-];
-
 const addressSchema = z.object({
   line1: z.string().min(1, 'Address line is required'),
   line2: z.string().optional(),
   city: z.string().min(1, 'City is required'),
   state: z.string().min(1, 'State is required'),
+  stateCode: z.string().optional(),
   country: z.string().min(1, 'Country is required'),
+  countryCode: z.string().optional(),
   postal_code: z.string().min(1, 'Postal code is required'),
 });
 
 const schema = z.object({
   legalName: z.string().min(1, 'Legal company name is required'),
   tradeName: z.string().optional(),
+  companyCode: z.string().trim().min(1, 'Company code is required'),
   companyType: z.string().min(1, 'Select a company type'),
   registrationNumber: z.string().optional(),
   gstin: z.string().optional(),
   panNumber: z.string().optional(),
   cinNumber: z.string().optional(),
   industry: z.string().optional(),
-  companySize: z.string().optional(),
   websiteUrl: z.string().optional(),
   corporateEmail: z.string().min(1, 'Business email is required').email('Enter a valid email address'),
   supportEmail: z.union([z.string().email('Enter a valid email address'), z.literal('')]).optional(),
@@ -69,11 +65,6 @@ const schema = z.object({
   estimatedEmployeeCount: z.union([z.coerce.number().int().min(1), z.literal('')]).optional(),
   businessCategory: z.string().optional(),
   currentHrSystem: z.string().optional(),
-  payrollRequirement: z.boolean().optional(),
-  attendanceRequirement: z.boolean().optional(),
-  recruitmentRequirement: z.boolean().optional(),
-  performanceRequirement: z.boolean().optional(),
-  biometricRequirement: z.boolean().optional(),
 
   contactPersonName: z.string().min(1, 'Contact person name is required'),
   contactDesignation: z.string().min(1, 'Designation is required'),
@@ -92,19 +83,11 @@ const STEPS = [
 ];
 
 const STEP_FIELDS: (keyof FormData)[][] = [
-  ['legalName', 'tradeName', 'companyType', 'registrationNumber', 'gstin', 'panNumber', 'cinNumber', 'industry', 'companySize', 'estimatedBranchCount', 'estimatedEmployeeCount', 'websiteUrl', 'corporateEmail', 'supportEmail', 'phoneNumber', 'alternatePhone'],
+  ['legalName', 'tradeName', 'companyCode', 'companyType', 'registrationNumber', 'gstin', 'panNumber', 'cinNumber', 'industry', 'estimatedBranchCount', 'estimatedEmployeeCount', 'websiteUrl', 'corporateEmail', 'supportEmail', 'phoneNumber', 'alternatePhone'],
   ['registeredAddress', 'sameAsRegistered', 'operationalAddress'],
-  ['businessCategory', 'currentHrSystem', 'payrollRequirement', 'attendanceRequirement', 'recruitmentRequirement', 'performanceRequirement', 'biometricRequirement'],
+  ['businessCategory', 'currentHrSystem'],
   ['contactPersonName', 'contactDesignation', 'contactPersonMobile', 'contactPersonEmail'],
   [],
-];
-
-const REQUIREMENTS: { key: keyof FormData; icon: React.ElementType; title: string; desc: string }[] = [
-  { key: 'attendanceRequirement', icon: Calendar, title: 'Attendance Management', desc: 'Track check-ins, shifts, and leave.' },
-  { key: 'payrollRequirement', icon: Wallet, title: 'Payroll Management', desc: 'Run payroll, payslips, and compliance.' },
-  { key: 'recruitmentRequirement', icon: UsersRound, title: 'Recruitment Module', desc: 'Source, screen, and hire candidates.' },
-  { key: 'performanceRequirement', icon: TrendingUp, title: 'Performance Management', desc: 'Goals, reviews, and feedback cycles.' },
-  { key: 'biometricRequirement', icon: Fingerprint, title: 'Biometric Integration', desc: 'Connect biometric attendance devices.' },
 ];
 
 export default function OrganizationSetupPage() {
@@ -113,6 +96,7 @@ export default function OrganizationSetupPage() {
   const [hydrated, setHydrated] = useState(false);
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [showCompliance, setShowCompliance] = useState(false);
 
@@ -123,17 +107,12 @@ export default function OrganizationSetupPage() {
   const [promoError, setPromoError] = useState('');
   const [appliedCodeOffer, setAppliedCodeOffer] = useState<PublicSignupOffer | null>(null);
 
-  const { register, handleSubmit, trigger, watch, formState: { errors } } = useForm<FormData>({
+  const { register, handleSubmit, trigger, watch, setValue, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
       companyType: '',
-      companySize: '',
+      companyCode: '',
       sameAsRegistered: true,
-      payrollRequirement: false,
-      attendanceRequirement: false,
-      recruitmentRequirement: false,
-      performanceRequirement: false,
-      biometricRequirement: false,
       registeredAddress: { line1: '', line2: '', city: '', state: '', country: '', postal_code: '' },
     },
   });
@@ -145,14 +124,11 @@ export default function OrganizationSetupPage() {
 
   useEffect(() => {
     if (!hydrated) return;
-    if (!session) {
+    if (!session && !submitted) {
       router.replace('/register');
       return;
     }
-    registrationApi.getAccountStatus(session).then((status) => {
-      if (!status.emailVerified) router.replace('/register/verify-email');
-    }).catch(() => router.replace('/register/verify-email'));
-  }, [hydrated, session, router]);
+  }, [hydrated, session, submitted, router]);
 
   useEffect(() => {
     if (!hydrated || !session) return;
@@ -167,6 +143,7 @@ export default function OrganizationSetupPage() {
       const offer = await publicSignupOffersApi.validateCode(promoCode.trim());
       setAppliedCodeOffer(offer);
       setSelectedOfferId(offer.id);
+      setPromoCode(offer.code ?? promoCode.trim().toUpperCase());
     } catch (err: any) {
       setPromoError(err.response?.data?.error?.message ?? err.response?.data?.message ?? 'Invalid or expired code');
     } finally {
@@ -174,7 +151,30 @@ export default function OrganizationSetupPage() {
     }
   };
 
+  const availableOffers = appliedCodeOffer && !offers.some((o) => o.id === appliedCodeOffer.id)
+    ? [...offers, appliedCodeOffer]
+    : offers;
+
+  const handleSelectOffer = (offerId: string | undefined) => {
+    setSelectedOfferId(offerId);
+    setPromoError('');
+
+    if (!offerId) {
+      setPromoCode('');
+      return;
+    }
+
+    const offer = availableOffers.find((item) => item.id === offerId);
+    setPromoCode(offer?.code ?? '');
+  };
+
   const sameAsRegistered = watch('sameAsRegistered');
+  const registeredAddress = watch('registeredAddress') as AddressValue;
+  const operationalAddress = watch('operationalAddress') as AddressValue;
+
+  const setAddress = (key: 'registeredAddress' | 'operationalAddress', address: AddressValue) => {
+    setValue(key, address as any, { shouldDirty: true, shouldValidate: true });
+  };
 
   const next = async () => {
     const valid = await trigger(STEP_FIELDS[step]);
@@ -184,6 +184,7 @@ export default function OrganizationSetupPage() {
 
   const onSubmit = async (data: FormData) => {
     if (!session) return;
+    if (step !== STEPS.length - 1) return;
     setSubmitting(true);
     setError('');
     try {
@@ -192,6 +193,7 @@ export default function OrganizationSetupPage() {
         accessToken: session.accessToken,
         legalName: data.legalName,
         tradeName: data.tradeName || undefined,
+        companyCode: data.companyCode,
         companyType: data.companyType,
         registrationNumber: data.registrationNumber || undefined,
         gstin: data.gstin || undefined,
@@ -203,26 +205,21 @@ export default function OrganizationSetupPage() {
         supportEmail: data.supportEmail || undefined,
         phoneNumber: data.phoneNumber,
         alternatePhone: data.alternatePhone || undefined,
-        registeredAddress: data.registeredAddress,
-        operationalAddress: data.sameAsRegistered ? undefined : (data.operationalAddress as any),
+        registeredAddress: cleanRegistrationAddress(data.registeredAddress),
+        operationalAddress: data.sameAsRegistered ? undefined : cleanRegistrationAddress(data.operationalAddress as any),
         estimatedBranchCount: data.estimatedBranchCount ? Number(data.estimatedBranchCount) : undefined,
         estimatedEmployeeCount: data.estimatedEmployeeCount ? Number(data.estimatedEmployeeCount) : undefined,
         businessCategory: data.businessCategory || undefined,
         currentHrSystem: data.currentHrSystem || undefined,
-        companySize: data.companySize || undefined,
-        payrollRequirement: !!data.payrollRequirement,
-        attendanceRequirement: !!data.attendanceRequirement,
-        recruitmentRequirement: !!data.recruitmentRequirement,
-        performanceRequirement: !!data.performanceRequirement,
-        biometricRequirement: !!data.biometricRequirement,
         contactPersonName: data.contactPersonName,
         contactDesignation: data.contactDesignation,
         contactPersonMobile: data.contactPersonMobile,
         contactPersonEmail: data.contactPersonEmail,
         offerId: selectedOfferId,
       });
-      clear();
+      setSubmitted(true);
       router.push(`/register/pending?tenantId=${result.tenantId}`);
+      clear();
     } catch (err: any) {
       setError(err.response?.data?.error?.message ?? err.response?.data?.message ?? 'Submission failed');
     } finally {
@@ -239,7 +236,7 @@ export default function OrganizationSetupPage() {
           <AuthBrandMark variant="light" />
         </div>
 
-        <RegistrationProgress step={3} />
+        <RegistrationProgress step={2} />
 
         <div className="mb-2 text-sm text-muted-foreground">
           Tell us about your organization — our onboarding team will review and activate your workspace.
@@ -266,7 +263,7 @@ export default function OrganizationSetupPage() {
           })}
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="rounded-2xl border border-border bg-white p-8 shadow-sm space-y-6 animate-fade-in">
+        <form onSubmit={(event) => event.preventDefault()} className="rounded-2xl border border-border bg-white p-8 shadow-sm space-y-6 animate-fade-in">
           {error && (
             <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error}</span>
@@ -285,14 +282,19 @@ export default function OrganizationSetupPage() {
                 </Field>
               </div>
               <div className="grid grid-cols-2 gap-4">
+                <Field label="Company Code *" error={errors.companyCode?.message}>
+                  <Input {...register('companyCode')} placeholder="ACME-CORP" />
+                </Field>
+                <Field label="Company Type *" error={errors.companyType?.message}>
+                  <select {...register('companyType')} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                    <option value="">- Select type -</option>
+                    {COMPANY_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  </select>
+                </Field>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
                 <Field label="Industry" error={errors.industry?.message}>
                   <Input {...register('industry')} placeholder="e.g. Information Technology" />
-                </Field>
-                <Field label="Company Size" error={errors.companySize?.message}>
-                  <select {...register('companySize')} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-                    <option value="">— Select size —</option>
-                    {COMPANY_SIZES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                  </select>
                 </Field>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -313,13 +315,7 @@ export default function OrganizationSetupPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Phone Number *" error={errors.phoneNumber?.message}>
-                  <Input {...register('phoneNumber')} />
-                </Field>
-                <Field label="Company Type *" error={errors.companyType?.message}>
-                  <select {...register('companyType')} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-                    <option value="">— Select type —</option>
-                    {COMPANY_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
+                  <PhoneNumberInput value={watch('phoneNumber') || ''} onChange={(value) => setValue('phoneNumber', value, { shouldDirty: true, shouldValidate: true })} required />
                 </Field>
               </div>
 
@@ -347,7 +343,7 @@ export default function OrganizationSetupPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <Field label="Alternate Phone" error={errors.alternatePhone?.message}>
-                      <Input {...register('alternatePhone')} />
+                      <PhoneNumberInput value={watch('alternatePhone') || ''} onChange={(value) => setValue('alternatePhone', value, { shouldDirty: true, shouldValidate: true })} />
                     </Field>
                     <Field label="Support Email" error={errors.supportEmail?.message}>
                       <Input type="email" {...register('supportEmail')} placeholder="support@company.com" />
@@ -361,28 +357,8 @@ export default function OrganizationSetupPage() {
           {step === 1 && (
             <div className="space-y-4">
               <h3 className="text-base font-semibold text-foreground">Registered Address</h3>
-              <Field label="Address Line 1 *" error={errors.registeredAddress?.line1?.message}>
-                <Input {...register('registeredAddress.line1')} />
-              </Field>
-              <Field label="Address Line 2" error={errors.registeredAddress?.line2?.message}>
-                <Input {...register('registeredAddress.line2')} />
-              </Field>
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="City *" error={errors.registeredAddress?.city?.message}>
-                  <Input {...register('registeredAddress.city')} />
-                </Field>
-                <Field label="State *" error={errors.registeredAddress?.state?.message}>
-                  <Input {...register('registeredAddress.state')} />
-                </Field>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="Country *" error={errors.registeredAddress?.country?.message}>
-                  <Input {...register('registeredAddress.country')} />
-                </Field>
-                <Field label="Postal Code *" error={errors.registeredAddress?.postal_code?.message}>
-                  <Input {...register('registeredAddress.postal_code')} />
-                </Field>
-              </div>
+              <AddressFields value={registeredAddress} onChange={(address) => setAddress('registeredAddress', address)} postalCodeKey="postal_code" required />
+              {errors.registeredAddress && <p className="text-xs text-destructive">Complete the required registered address fields.</p>}
 
               <label className="flex items-center gap-2 pt-2 text-sm text-foreground">
                 <input type="checkbox" {...register('sameAsRegistered')} className="h-4 w-4 rounded border-input accent-primary" />
@@ -392,25 +368,7 @@ export default function OrganizationSetupPage() {
               {!sameAsRegistered && (
                 <div className="space-y-4 rounded-lg border border-dashed border-border p-4">
                   <h4 className="text-sm font-semibold text-foreground">Operational Address</h4>
-                  <Field label="Address Line 1" error={errors.operationalAddress?.line1?.message}>
-                    <Input {...register('operationalAddress.line1')} />
-                  </Field>
-                  <div className="grid grid-cols-2 gap-4">
-                    <Field label="City" error={errors.operationalAddress?.city?.message}>
-                      <Input {...register('operationalAddress.city')} />
-                    </Field>
-                    <Field label="State" error={errors.operationalAddress?.state?.message}>
-                      <Input {...register('operationalAddress.state')} />
-                    </Field>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <Field label="Country" error={errors.operationalAddress?.country?.message}>
-                      <Input {...register('operationalAddress.country')} />
-                    </Field>
-                    <Field label="Postal Code" error={errors.operationalAddress?.postal_code?.message}>
-                      <Input {...register('operationalAddress.postal_code')} />
-                    </Field>
-                  </div>
+                  <AddressFields value={operationalAddress || {}} onChange={(address) => setAddress('operationalAddress', address)} postalCodeKey="postal_code" />
                 </div>
               )}
             </div>
@@ -418,29 +376,8 @@ export default function OrganizationSetupPage() {
 
           {step === 2 && (
             <div className="space-y-4">
-              <h3 className="text-base font-semibold text-foreground">Business Requirements</h3>
-              <p className="text-sm text-muted-foreground">Tell us which modules you&apos;d like to use — this helps our team tailor your onboarding.</p>
-
-              <div className="space-y-2">
-                {REQUIREMENTS.map((r) => {
-                  const Icon = r.icon;
-                  return (
-                    <label
-                      key={r.key as string}
-                      className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm transition-colors hover:bg-muted/40 cursor-pointer"
-                    >
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <div className="flex-1">
-                        <div className="font-medium text-foreground">{r.title}</div>
-                        <div className="text-xs text-muted-foreground">{r.desc}</div>
-                      </div>
-                      <input type="checkbox" {...register(r.key as any)} className="h-5 w-5 rounded border-input accent-primary" />
-                    </label>
-                  );
-                })}
-              </div>
+              <h3 className="text-base font-semibold text-foreground">Business Context</h3>
+              <p className="text-sm text-muted-foreground">Tell us about your current HR setup so our team can tailor your onboarding.</p>
 
               <div className="grid grid-cols-2 gap-4 pt-2">
                 <Field label="Business Category">
@@ -466,7 +403,7 @@ export default function OrganizationSetupPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Mobile Number *" error={errors.contactPersonMobile?.message}>
-                  <Input {...register('contactPersonMobile')} />
+                  <PhoneNumberInput value={watch('contactPersonMobile') || ''} onChange={(value) => setValue('contactPersonMobile', value, { shouldDirty: true, shouldValidate: true })} required />
                 </Field>
                 <Field label="Email *" error={errors.contactPersonEmail?.message}>
                   <Input type="email" {...register('contactPersonEmail')} />
@@ -479,9 +416,9 @@ export default function OrganizationSetupPage() {
             <>
               <ReviewStep getValues={watch} />
               <OffersPicker
-                offers={appliedCodeOffer && !offers.some((o) => o.id === appliedCodeOffer.id) ? [...offers, appliedCodeOffer] : offers}
+                offers={availableOffers}
                 selectedOfferId={selectedOfferId}
-                onSelect={setSelectedOfferId}
+                onSelect={handleSelectOffer}
                 promoCode={promoCode}
                 setPromoCode={setPromoCode}
                 onApplyCode={handleApplyCode}
@@ -501,7 +438,7 @@ export default function OrganizationSetupPage() {
                 Next <ChevronRight className="ml-1 h-4 w-4" />
               </Button>
             ) : (
-              <Button type="submit" disabled={submitting}>
+              <Button type="button" onClick={handleSubmit(onSubmit)} disabled={submitting}>
                 {submitting ? 'Submitting…' : 'Submit for Review'}
               </Button>
             )}
@@ -510,6 +447,17 @@ export default function OrganizationSetupPage() {
       </div>
     </div>
   );
+}
+
+function cleanRegistrationAddress(address: AddressValue) {
+  return {
+    line1: address.line1 || '',
+    line2: address.line2 || '',
+    city: address.city || '',
+    state: address.state || '',
+    country: address.country || '',
+    postal_code: address.postal_code || address.pincode || '',
+  };
 }
 
 function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
@@ -524,7 +472,6 @@ function Field({ label, error, children }: { label: string; error?: string; chil
 
 function ReviewStep({ getValues }: { getValues: (name?: any) => any }) {
   const data = getValues();
-  const activeRequirements = REQUIREMENTS.filter((r) => !!data[r.key]);
 
   return (
     <div className="space-y-4">
@@ -535,28 +482,13 @@ function ReviewStep({ getValues }: { getValues: (name?: any) => any }) {
       <div className="space-y-3 rounded-lg bg-muted/40 p-4 text-sm">
         <Row label="Organization Name" value={data.tradeName || data.legalName} />
         <Row label="Legal Name" value={data.legalName} />
+        <Row label="Company Code" value={data.companyCode} />
         <Row label="Company Type" value={COMPANY_TYPES.find((t) => t.value === data.companyType)?.label} />
         <Row label="Industry" value={data.industry} />
-        <Row label="Company Size" value={COMPANY_SIZES.find((s) => s.value === data.companySize)?.label} />
         <Row label="Business Email" value={data.corporateEmail} />
         <Row label="Phone" value={data.phoneNumber} />
         <Row label="Registered Address" value={[data.registeredAddress?.line1, data.registeredAddress?.city, data.registeredAddress?.state, data.registeredAddress?.country].filter(Boolean).join(', ')} />
         <Row label="Contact Person" value={`${data.contactPersonName ?? ''} (${data.contactDesignation ?? ''})`} />
-      </div>
-
-      <div>
-        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Modules requested</div>
-        {activeRequirements.length ? (
-          <div className="flex flex-wrap gap-2">
-            {activeRequirements.map((r) => (
-              <span key={r.key as string} className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">
-                <r.icon className="h-3.5 w-3.5" /> {r.title}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">No specific modules selected yet — our team can help you decide.</p>
-        )}
       </div>
     </div>
   );
@@ -631,6 +563,11 @@ function OffersPicker({
             <div className="flex-1">
               <div className="font-medium text-foreground">{o.name}</div>
               {o.description && <div className="text-xs text-muted-foreground">{o.description}</div>}
+              {o.code && (
+                <div className="mt-1 text-xs font-medium text-indigo-700">
+                  Promo code: <span className="font-semibold">{o.code}</span>
+                </div>
+              )}
             </div>
             <span className="text-xs font-semibold text-indigo-700 shrink-0">{offerValueLabel(o)}</span>
           </label>

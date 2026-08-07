@@ -187,7 +187,7 @@ CREATE INDEX IF NOT EXISTS idx_dp_status
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 4. DEDUCTION RULES (future-ready automated fine trigger engine)
 --    Stores policy rules that can auto-create fines based on attendance/behavior.
---    Not yet wired into automation; created now for schema completeness.
+--    Not yet wired into scheduled processing; created now for schema completeness.
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS deduction_rules (
   id                    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),

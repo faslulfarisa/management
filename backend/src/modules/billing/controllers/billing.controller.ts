@@ -1,6 +1,7 @@
 import {
-  Controller, Get, Post, Put, Delete, Body, Param, Query, Req, UseGuards
+  Controller, Get, Post, Put, Delete, Body, Param, Query, Req, UseGuards, BadRequestException
 } from '@nestjs/common';
+import { Request } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { InternalStaffGuard } from '../../auth/guards/internal-staff.guard';
@@ -184,16 +185,33 @@ export class BillingController {
     const user = (req as any).user || (req as any);
     const tenantId = user.tenantId || user.tenant_id;
     const subscription = await this.service.getSubscription(tenantId);
-    return { success: true, data: subscription, error: null };
+    
+    const { rows: tenantRows } = await this.service.getTenantCurrency(tenantId);
+    const currency = tenantRows[0]?.currency || 'INR';
+    const currencySymbol = tenantRows[0]?.currency_symbol || '₹';
+
+    return { 
+      success: true, 
+      data: subscription, 
+      meta: { currency, currency_symbol: currencySymbol },
+      error: null 
+    };
   }
 
   @Post('subscribe')
-  @ApiOperation({ summary: 'Subscribe to a plan' })
+  @ApiOperation({ summary: 'Request to upgrade plan (Creates a pending change request)' })
   async subscribe(@Req() req: Request, @Body() data: { plan_id: string; billing_cycle: 'monthly' | 'yearly' }) {
     const user = (req as any).user || (req as any);
     const tenantId = user.tenantId || user.tenant_id;
-    const subscription = await this.service.subscribe(tenantId, data);
-    return { success: true, data: subscription, error: null };
+    const userId = user.sub;
+
+    try {
+      const request = await this.service.submitPlanUpgradeRequest(tenantId, data, userId);
+      return { success: true, data: request, error: null };
+    } catch (err: any) {
+      console.error('SUBSCRIBE ERROR:', err);
+      throw new BadRequestException(err.message || 'Subscription failed');
+    }
   }
 
   @Post('cancel')

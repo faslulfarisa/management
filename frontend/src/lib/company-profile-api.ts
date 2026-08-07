@@ -43,6 +43,8 @@ export interface OrganizationProfile {
   gstin: string | null;
   timezone: string | null;
   currency: string | null;
+  currency_symbol: string | null;
+  currency_metadata: Record<string, unknown> | null;
   date_format: string | null;
   fiscal_year_start: number | null;
   legal_name: string | null;

@@ -11,9 +11,13 @@ import { ApprovalEngineService } from '../../approvals/services/approval-engine.
 import { PayrollLockService } from '../../platform/services/payroll-lock.service';
 
 export interface CreateCorrectionDto {
-  employeeId: string;
-  attendanceRecordId: string;
-  requestedState: Record<string, any>;
+  employeeId?: string;
+  attendanceRecordId?: string;
+  attendance_record_id?: string;
+  correction_type?: string;
+  requestedState?: Record<string, any>;
+  requested_clock_in?: string;
+  requested_clock_out?: string;
   reason?: string;
 }
 
@@ -32,17 +36,28 @@ export class AttendanceCorrectionsService {
     requestedBy: string,
     dto: CreateCorrectionDto,
   ) {
+    const attendanceRecordId = dto.attendanceRecordId ?? dto.attendance_record_id;
+    if (!attendanceRecordId) {
+      throw new BadRequestException('attendance_record_id is required');
+    }
+
     const { rows: records } = await this.db.query(
       `SELECT * FROM attendance_records WHERE id = $1 AND tenant_id = $2`,
-      [dto.attendanceRecordId, tenantId],
+      [attendanceRecordId, tenantId],
     );
     if (!records[0]) {
       throw new NotFoundException(
-        `Attendance record '${dto.attendanceRecordId}' not found`,
+        `Attendance record '${attendanceRecordId}' not found`,
       );
     }
 
-    await this.payrollLock.assertPeriodUnlocked(tenantId, dto.employeeId, records[0].date);
+    const employeeId = dto.employeeId ?? records[0].employee_id;
+    const requestedState = dto.requestedState ?? this.buildRequestedState(dto);
+    if (!Object.keys(requestedState).length) {
+      throw new BadRequestException('At least one correction field is required');
+    }
+
+    await this.payrollLock.assertPeriodUnlocked(tenantId, employeeId, records[0].date);
 
     const { rows } = await this.db.query(
       `INSERT INTO attendance_corrections
@@ -52,31 +67,31 @@ export class AttendanceCorrectionsService {
        RETURNING *`,
       [
         tenantId,
-        dto.employeeId,
-        dto.attendanceRecordId,
+        employeeId,
+        attendanceRecordId,
         requestedBy,
         JSON.stringify(records[0]),
-        JSON.stringify(dto.requestedState),
+        JSON.stringify(requestedState),
         dto.reason ?? null,
       ],
     );
 
     await this.audit.write({
       tenantId,
-      employeeId: dto.employeeId,
-      attendanceRecordId: dto.attendanceRecordId,
+      employeeId,
+      attendanceRecordId,
       eventType: 'manual_correction',
       actorType: 'user',
       actorId: requestedBy,
       beforeState: records[0],
-      afterState: dto.requestedState,
+      afterState: requestedState,
       metadata: { correctionId: rows[0].id, reason: dto.reason },
     });
 
     // Look up employee branch for approval chain
     const { rows: empRows } = await this.db.query(
       'SELECT branch_id FROM employees WHERE id = $1 AND tenant_id = $2',
-      [dto.employeeId, tenantId],
+      [employeeId, tenantId],
     );
 
     await this.approvalEngine.submit({
@@ -86,70 +101,18 @@ export class AttendanceCorrectionsService {
       entityTable: 'attendance_corrections',
       submittedBy: requestedBy,
       branchId: empRows[0]?.branch_id ?? null,
-      title: `Attendance correction for ${dto.attendanceRecordId}`,
+      title: `Attendance correction for ${attendanceRecordId}`,
       description: dto.reason,
-      metadata: { attendance_record_id: dto.attendanceRecordId, employee_id: dto.employeeId },
+      metadata: { attendance_record_id: attendanceRecordId, employee_id: employeeId },
     });
 
     return rows[0];
   }
 
   async approve(tenantId: string, correctionId: string, approvedBy: string, reason: string) {
-    return this.db.transaction(async (client) => {
-      const { rows } = await client.query(
-        `SELECT * FROM attendance_corrections
-         WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
-         FOR UPDATE`,
-        [correctionId, tenantId],
-      );
-      if (!rows[0]) {
-        throw new NotFoundException(`Correction '${correctionId}' not found or not pending`);
-      }
-      const correction = rows[0];
-
-      // Delegate approval step/status to engine (uses same transaction client)
-      const result = await this.approvalEngine.approveByEntity(
-        correctionId, 'attendance_corrections', tenantId, approvedBy, reason,
-      );
-
-      // Apply attendance record change only on full approval
-      if (result.fullyApproved) {
-        const requested = correction.requested_state as Record<string, any>;
-        const allowedFields = ['clock_in', 'clock_out', 'status', 'total_work_minutes', 'overtime_minutes', 'late_minutes'];
-        const setClauses = allowedFields
-          .filter((f) => requested[f] !== undefined)
-          .map((f, i) => `${f} = $${i + 3}`)
-          .join(', ');
-        const setValues = allowedFields.filter((f) => requested[f] !== undefined).map((f) => requested[f]);
-
-        if (setClauses) {
-          await client.query(
-            `UPDATE attendance_records SET ${setClauses}, updated_at = NOW()
-             WHERE id = $1 AND tenant_id = $2`,
-            [correction.attendance_record_id, tenantId, ...setValues],
-          );
-        }
-
-        await client.query(
-          `UPDATE attendance_corrections SET applied_at = NOW() WHERE id = $1`,
-          [correctionId],
-        );
-
-        await this.audit.write({
-          tenantId,
-          employeeId: correction.employee_id,
-          attendanceRecordId: correction.attendance_record_id,
-          eventType: 'approval_granted',
-          actorType: 'user',
-          actorId: approvedBy,
-          beforeState: correction.original_state,
-          afterState: correction.requested_state,
-          metadata: { correctionId },
-        });
-      }
-
-      return result;
-    });
+    return this.approvalEngine.approveByEntity(
+      correctionId, 'attendance_corrections', tenantId, approvedBy, reason,
+    );
   }
 
   async reject(
@@ -201,5 +164,16 @@ export class AttendanceCorrectionsService {
       [tenantId],
     );
     return { items: rows, total: parseInt(countRows[0].total, 10), page, limit };
+  }
+
+  private buildRequestedState(dto: CreateCorrectionDto): Record<string, any> {
+    const requestedState: Record<string, any> = {};
+    if ((dto.correction_type === 'clock_in' || dto.correction_type === 'both') && dto.requested_clock_in) {
+      requestedState.clock_in = dto.requested_clock_in;
+    }
+    if ((dto.correction_type === 'clock_out' || dto.correction_type === 'both') && dto.requested_clock_out) {
+      requestedState.clock_out = dto.requested_clock_out;
+    }
+    return requestedState;
   }
 }

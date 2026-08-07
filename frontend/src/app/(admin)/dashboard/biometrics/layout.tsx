@@ -15,7 +15,7 @@ const NAV_ITEMS = [
   { label: 'Terminals',   href: '/dashboard/biometrics/terminals',       icon: Monitor },
   { label: 'Providers',   href: '/dashboard/biometrics/providers',       icon: ShieldCheck },
   { label: 'Queue',       href: '/dashboard/biometrics/queue-health',    icon: GitBranch },
-  { label: 'DLQ',         href: '/dashboard/biometrics/dlq',            icon: AlertTriangle },
+  { label: 'Exceptions',  href: '/dashboard/biometrics/dlq',            icon: AlertTriangle },
   { label: 'Corrections', href: '/dashboard/biometrics/corrections',     icon: ClipboardList },
 ];
 

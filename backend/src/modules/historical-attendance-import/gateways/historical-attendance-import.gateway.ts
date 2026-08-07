@@ -11,11 +11,12 @@ import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Server, Socket } from 'socket.io';
+import { getCorsOriginConfig } from '../../../shared/http-config.util';
 
 @WebSocketGateway({
   namespace: '/historical-attendance-import',
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: getCorsOriginConfig(),
     credentials: true,
   },
 })

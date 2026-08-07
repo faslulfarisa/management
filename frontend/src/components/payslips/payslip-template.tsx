@@ -4,18 +4,32 @@ import { useState } from 'react';
 import type { EnrichedPayslipDetail } from '@/types/employee';
 import { numberToWords } from '@/lib/pdf-utils';
 import { cn } from '@/lib/utils';
-
-const inr = (n: number) =>
-  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
+import { formatCurrency } from '@/lib/currency';
 
 interface Props {
   data: EnrichedPayslipDetail;
   className?: string;
 }
 
+function buildSalaryCalculationLines(
+  data: EnrichedPayslipDetail,
+  money: (amount: number) => string,
+  payBasisText: string | null,
+) {
+  return [
+    payBasisText ? `Pay basis: ${payBasisText}` : null,
+    data.attendance && data.worked_units !== null && data.worked_units !== undefined
+      ? `Attendance basis: ${data.worked_units} payable unit(s) from ${data.attendance.total_working_days} working day(s)`
+      : null,
+    `Gross Salary = earnings total ${money(data.totals.gross_salary)}`,
+    `Net Pay = Gross ${money(data.totals.gross_salary)} - Deductions ${money(data.totals.total_deductions)} = ${money(data.totals.net_salary)}`,
+  ].filter(Boolean) as string[];
+}
+
 export function PayslipTemplate({ data, className }: Props) {
   const { company, employee, period, earnings, deductions, fines, totals, attendance, payment } = data;
   const [logoError, setLogoError] = useState(false);
+  const money = (n: number) => formatCurrency(n, data.currency?.code, { maximumFractionDigits: 0 });
 
   const accentColor = company.header_color || '#1e3a8a';
 
@@ -30,6 +44,21 @@ export function PayslipTemplate({ data, className }: Props) {
     payment?.payment_date ?? payment?.paid_at ?? data.paid_at
       ? new Date((payment?.payment_date ?? payment?.paid_at ?? data.paid_at)!).toLocaleDateString('en-IN')
       : null;
+  const payBasisText = (() => {
+    if (!data.pay_basis) return null;
+    const rate = data.rate || 0;
+    const units = data.worked_units || 0;
+    if (data.pay_basis === 'weekly_salary') return `Weekly: ${money(rate)} x ${units} Weeks`;
+    if (['daily_wage', 'daily_weekly_payroll', 'daily_monthly_payroll'].includes(data.pay_basis)) {
+      return `Daily: ${money(rate)} x ${units} Days`;
+    }
+    if (['hourly_wage', 'hourly_weekly_payroll', 'hourly_monthly_payroll'].includes(data.pay_basis)) {
+      return `Hourly: ${money(rate)} x ${units} Hours`;
+    }
+    if (data.pay_basis === 'half_day_rate') return `Half-Day: ${money(rate)} x ${units} Half-Days`;
+    return `Monthly: ${money(data.rate || totals.gross_salary)}`;
+  })();
+  const salaryCalculationLines = buildSalaryCalculationLines(data, money, payBasisText);
 
   return (
     <div className={cn('bg-white overflow-hidden border border-gray-300', className)}>
@@ -128,6 +157,12 @@ export function PayslipTemplate({ data, className }: Props) {
               Payment Date: <span className="text-gray-600">{payDate}</span>
             </p>
           )}
+          {payBasisText && (
+            <p className="text-gray-400 text-[11px]">
+              Pay Basis:{' '}
+              <span className="text-gray-600 font-medium">{payBasisText}</span>
+            </p>
+          )}
         </div>
       </div>
 
@@ -149,12 +184,12 @@ export function PayslipTemplate({ data, className }: Props) {
               )}
             >
               <span className="text-gray-600 truncate pr-2">{e.label}</span>
-              <span className="text-gray-800 font-medium text-right tabular-nums">{inr(e.amount)}</span>
+              <span className="text-gray-800 font-medium text-right tabular-nums">{money(e.amount)}</span>
             </div>
           ))}
           <div className="grid grid-cols-2 px-3 py-2 text-[11px] font-semibold bg-gray-100 border-t border-gray-300">
             <span className="text-gray-700">Gross Salary</span>
-            <span className="text-gray-900 text-right tabular-nums">{inr(totals.gross_salary)}</span>
+            <span className="text-gray-900 text-right tabular-nums">{money(totals.gross_salary)}</span>
           </div>
         </div>
 
@@ -173,12 +208,12 @@ export function PayslipTemplate({ data, className }: Props) {
               )}
             >
               <span className="text-gray-600 truncate pr-2">{d.label}</span>
-              <span className="text-gray-800 font-medium text-right tabular-nums">{inr(d.amount)}</span>
+              <span className="text-gray-800 font-medium text-right tabular-nums">{money(d.amount)}</span>
             </div>
           ))}
           <div className="grid grid-cols-2 px-3 py-2 text-[11px] font-semibold bg-gray-100 border-t border-gray-300">
             <span className="text-gray-700">Total Deductions</span>
-            <span className="text-gray-900 text-right tabular-nums">{inr(totals.total_deductions)}</span>
+            <span className="text-gray-900 text-right tabular-nums">{money(totals.total_deductions)}</span>
           </div>
         </div>
       </div>
@@ -198,6 +233,19 @@ export function PayslipTemplate({ data, className }: Props) {
       )}
 
       {/* ── Net pay ─────────────────────────────────────────────────────────── */}
+      <div className="px-6 py-2.5 border-b border-gray-200 bg-gray-50">
+        <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
+          Salary Calculation
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-1">
+          {salaryCalculationLines.map((line) => (
+            <p key={line} className="text-[10px] text-gray-500 leading-snug">
+              {line}
+            </p>
+          ))}
+        </div>
+      </div>
+
       <div className="border-b border-gray-200">
         <div
           style={{ borderLeftColor: accentColor }}
@@ -211,10 +259,10 @@ export function PayslipTemplate({ data, className }: Props) {
           </div>
           <div className="text-right flex-shrink-0">
             <p className="text-[22px] font-bold text-gray-900 tabular-nums leading-tight">
-              {inr(totals.net_salary)}
+              {money(totals.net_salary)}
             </p>
             <p className="text-[10px] text-gray-400 mt-0.5">
-              Gross {inr(totals.gross_salary)} &minus; Deductions {inr(totals.total_deductions)}
+              Gross {money(totals.gross_salary)} &minus; Deductions {money(totals.total_deductions)}
             </p>
           </div>
         </div>
@@ -243,7 +291,7 @@ export function PayslipTemplate({ data, className }: Props) {
                 <span className="text-gray-700 truncate">{f.title}</span>
                 <span className="text-gray-500 truncate">{f.category ?? '—'}</span>
                 <span className="text-gray-800 font-medium text-right tabular-nums whitespace-nowrap">
-                  {inr(f.amount)}
+                  {money(f.amount)}
                 </span>
               </div>
             ))}

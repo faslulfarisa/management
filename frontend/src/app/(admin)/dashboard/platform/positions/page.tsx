@@ -20,6 +20,9 @@ import {
 import { DeleteWarningModal } from '@/components/ui/delete-warning-modal';
 import { useDependencyCheck } from '@/hooks/useDependencyCheck';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import { ExportButton } from '@/components/export';
+import { ImportButton } from '@/components/import';
+import { PERMISSIONS } from '@/lib/permissions';
 
 interface Position {
   id: string;
@@ -953,10 +956,35 @@ export default function PositionsPage() {
               Define company roles and control module access by position
             </p>
           </div>
-          <Button onClick={openCreate} className="gap-2">
-            <Plus className="w-4 h-4" />
-            New Position
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExportButton
+              config={{
+                module: 'positions',
+                title: 'Positions',
+                permission: PERMISSIONS.PLATFORM_POSITIONS_VIEW,
+                columns: [
+                  { key: 'name', header: 'Position Name' },
+                  { key: 'code', header: 'Code' },
+                  { key: 'is_active', header: 'Active' },
+                  { key: 'created_at', header: 'Created At', type: 'date' },
+                ],
+                defaultColumns: ['name', 'code', 'is_active', 'created_at'],
+                filenamePrefix: 'positions',
+              }}
+              filters={{ search: searchQuery }}
+              currentPageData={filtered}
+            />
+            <ImportButton
+              config={{
+                module: 'positions',
+                title: 'Positions',
+                permission: PERMISSIONS.PLATFORM_ROLES_CREATE,
+              }}
+            />
+            <Button onClick={openCreate} className="gap-2">
+              <Plus className="w-4 h-4" /> New Position
+            </Button>
+          </div>
         </div>
 
         {/* Stats */}

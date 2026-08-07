@@ -2,8 +2,19 @@
 
 import { useState } from 'react';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
-import { format, parseISO } from 'date-fns';
-import { FilePen, AlertCircle, CheckCircle2, Clock, XCircle, TrendingUp } from 'lucide-react';
+import {
+  eachDayOfInterval,
+  endOfMonth,
+  format,
+  getDay,
+  isBefore,
+  isFuture,
+  isToday,
+  parseISO,
+  startOfDay,
+  startOfMonth,
+} from 'date-fns';
+import { FilePen, AlertCircle, CheckCircle2, Clock, XCircle } from 'lucide-react';
 import { employeeApi } from '@/lib/employee-api';
 import { AttendanceCalendar } from '@/components/employee/attendance/attendance-calendar';
 import { CorrectionRequestSheet } from '@/components/employee/attendance/correction-request-sheet';
@@ -26,6 +37,19 @@ function fmtTime(t: string | null | undefined) {
   try { return format(parseISO(t), 'hh:mm a'); } catch { return '—'; }
 }
 
+function dateKey(date: string) {
+  return date.split('T')[0];
+}
+
+function resolveSummaryStatus(record: any | undefined, inferredAbsent: boolean) {
+  if (!record?.status) return inferredAbsent ? 'absent' : null;
+  if (record.status === 'absent' || record.status === 'half_day') return record.status;
+  if (record.status === 'late' || Number(record.late_minutes ?? 0) > 0) return 'late';
+  return 'present';
+}
+
+import { useEmployeeAttendanceStats } from '@/hooks/use-employee-attendance-stats';
+
 export function PortalAttendance() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [prefillDate, setPrefillDate] = useState<string | undefined>();
@@ -34,11 +58,7 @@ export function PortalAttendance() {
   const month = now.getMonth() + 1;
   const year  = now.getFullYear();
 
-  const { data: summary } = useQuery({
-    queryKey: ['employee-attendance-summary', month, year],
-    queryFn: () => employeeApi.getAttendanceSummary(month, year),
-    staleTime: 5 * 60_000,
-  });
+  const { summary, pct } = useEmployeeAttendanceStats(month, year);
 
   const { data: today } = useQuery({
     queryKey: ['employee-today-attendance'],
@@ -66,10 +86,6 @@ export function PortalAttendance() {
     });
 
   const records = data?.pages.flatMap((p) => p?.data ?? []) ?? [];
-
-  const pct = summary && summary.total_working_days > 0
-    ? Math.round(((summary.present) / summary.total_working_days) * 100)
-    : 0;
 
   return (
     <div>

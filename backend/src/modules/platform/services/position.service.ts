@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { DatabaseService } from '../../../shared/database.service';
 import { translateUniqueViolation } from '../../../shared/unique-code.validator';
 import { PermissionsCacheService } from '../../../shared/permissions-cache.service';
+import { UserAccessService } from './user-access.service';
 
 const POSITION_PRESETS = [
   {
@@ -53,7 +54,7 @@ const POSITION_PRESETS = [
     ],
   },
   {
-    category: 'Recruitment',
+    category: 'Recruiter',
     label: 'Recruiter',
     icon: 'UserSearch',
     description: 'Creates and manages vacancy requests, screens candidates in later phases',
@@ -62,7 +63,7 @@ const POSITION_PRESETS = [
     ],
   },
   {
-    category: 'Recruitment',
+    category: 'Hiring Manager',
     label: 'Hiring Manager',
     icon: 'UserCheck',
     description: 'Requests vacancies for their team and approves requisitions in their department',
@@ -125,6 +126,7 @@ export class PositionService {
   constructor(
     private db: DatabaseService,
     private permissionsCache: PermissionsCacheService,
+    private userAccessService: UserAccessService,
   ) {}
 
   async findAll(tenantId: string) {
@@ -277,29 +279,11 @@ export class PositionService {
   // ── User assignment ────────────────────────────────────────────────
 
   async assignUser(tenantId: string, positionId: string, userId: string, assignedBy: string) {
-    await this.findOne(positionId, tenantId);
-
-    await this.db.query(
-      `INSERT INTO user_positions (tenant_id, user_id, position_id, assigned_by)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (tenant_id, user_id) DO UPDATE
-         SET position_id = EXCLUDED.position_id,
-             assigned_by = EXCLUDED.assigned_by,
-             assigned_at = now()`,
-      [tenantId, userId, positionId, assignedBy],
-    );
-    await this.permissionsCache.invalidateUser(tenantId, userId);
-
-    return this.getUserPosition(userId, tenantId);
+    return this.userAccessService.assignPosition(tenantId, positionId, userId, assignedBy);
   }
 
   async unassignUser(tenantId: string, userId: string) {
-    await this.db.query(
-      'DELETE FROM user_positions WHERE tenant_id = $1 AND user_id = $2',
-      [tenantId, userId],
-    );
-    await this.permissionsCache.invalidateUser(tenantId, userId);
-    return { success: true };
+    return this.userAccessService.clearPosition(tenantId, userId);
   }
 
   /** Every user holding this position sees a stale permission cache until invalidated. */
@@ -312,16 +296,7 @@ export class PositionService {
   }
 
   async getUserPosition(userId: string, tenantId: string) {
-    const { rows } = await this.db.query(
-      `SELECT up.*, p.name AS position_name, p.code AS position_code,
-              u.email AS assigned_by_email
-       FROM user_positions up
-       JOIN positions p ON up.position_id = p.id
-       LEFT JOIN users u ON up.assigned_by = u.id
-       WHERE up.user_id = $1 AND up.tenant_id = $2`,
-      [userId, tenantId],
-    );
-    return rows[0] || null;
+    return this.userAccessService.getUserPosition(userId, tenantId);
   }
 
   async getPositionUsers(positionId: string, tenantId: string) {

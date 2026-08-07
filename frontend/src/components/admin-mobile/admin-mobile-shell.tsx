@@ -19,6 +19,7 @@ import {
   Edit3,
   Eye,
   FileText,
+  Fingerprint,
   Home,
   LogOut,
   Menu,
@@ -31,6 +32,7 @@ import {
   Shield,
   SlidersHorizontal,
   Trash2,
+  User,
   UserCheck,
   UserPlus,
   Users,
@@ -40,6 +42,8 @@ import api from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { PERMISSIONS, type Permission } from '@/lib/permissions';
 import { useAuthStore } from '@/store/auth.store';
+import { useAdminSection } from '@/hooks/use-admin-section';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 
 const ADMIN_MOBILE_QUERY = '(max-width: 767px)';
 const PAGE_SIZE = 25;
@@ -151,9 +155,19 @@ export function AdminMobileShell({ pathname }: { pathname: string }) {
   const router = useRouter();
   const permissions = useAuthStore((state) => state.permissions);
   const activeOrganization = useAuthStore((state) => state.activeOrganization);
+  const { isAdminDualContext, activeSection, setSection } = useAdminSection();
   const isBranchPortal = pathname.startsWith('/branch-admin');
   const navItems = (isBranchPortal ? branchNavItems : adminNavItems).filter((item) => canSee(permissions, item.permissions));
   const title = titleForPath(pathname);
+
+  const handleSectionSwitch = (section: 'my-space' | 'branch') => {
+    setSection(section);
+    if (section === 'my-space') {
+      router.push('/home');
+    } else {
+      router.push('/branch-admin');
+    }
+  };
 
   return (
     <div className="min-h-dvh bg-slate-50 text-foreground">
@@ -173,15 +187,45 @@ export function AdminMobileShell({ pathname }: { pathname: string }) {
               {activeOrganization?.name || (isBranchPortal ? 'Branch workspace' : 'Organization workspace')}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => router.refresh()}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border bg-white"
-            aria-label="Refresh"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </button>
         </div>
+
+        {/* Section tabs — only for admin / branch_admin users */}
+        {isAdminDualContext && (
+          <div
+            className="flex border-t border-border"
+            role="tablist"
+            aria-label="Switch operational context"
+          >
+            <button
+              role="tab"
+              aria-selected={activeSection === 'my-space'}
+              onClick={() => handleSectionSwitch('my-space')}
+              className={cn(
+                'flex flex-1 items-center justify-center gap-2 py-2.5 text-sm font-semibold transition-colors',
+                activeSection === 'my-space'
+                  ? 'border-b-2 border-violet-600 text-violet-700 bg-violet-50/60'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <User className="h-4 w-4 shrink-0" />
+              My Space
+            </button>
+            <button
+              role="tab"
+              aria-selected={activeSection === 'branch'}
+              onClick={() => handleSectionSwitch('branch')}
+              className={cn(
+                'flex flex-1 items-center justify-center gap-2 py-2.5 text-sm font-semibold transition-colors',
+                activeSection === 'branch'
+                  ? 'border-b-2 border-blue-600 text-blue-700 bg-blue-50/60'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <Building2 className="h-4 w-4 shrink-0" />
+              Branch Mgmt
+            </button>
+          </div>
+        )}
       </header>
 
       <div
@@ -229,9 +273,31 @@ export function AdminMobileShell({ pathname }: { pathname: string }) {
             );
           })}
         </nav>
+        <div className="border-t border-border p-3">
+          <Link
+            href="/profile"
+            onClick={() => setDrawerOpen(false)}
+            className="mb-1 flex min-h-12 items-center gap-3 rounded-xl px-3 text-sm font-medium text-foreground hover:bg-muted"
+          >
+            <User className="h-5 w-5 shrink-0" />
+            Profile
+          </Link>
+          <button
+            type="button"
+            onClick={() => {
+              setDrawerOpen(false);
+              useAuthStore.getState().logout();
+              router.push('/login');
+            }}
+            className="flex min-h-12 w-full items-center gap-3 rounded-xl px-3 text-sm font-medium text-red-600 hover:bg-red-50"
+          >
+            <LogOut className="h-5 w-5 shrink-0" />
+            Sign Out
+          </button>
+        </div>
       </aside>
 
-      <main className="px-4 pb-24 pt-20">
+      <main className={cn('px-4 pb-24', isAdminDualContext ? 'pt-[7.5rem]' : 'pt-20')}>
         <AdminMobileRoute pathname={pathname} />
       </main>
     </div>
@@ -964,7 +1030,7 @@ function EmployeeFormMobile({ employeeId, isBranchPortal }: { employeeId?: strin
       <Section title="Contact">
         <div className="space-y-3">
           <Field label="Email"><MobileInput type="email" value={form.personal_email} onChange={(e) => set('personal_email', e.target.value)} /></Field>
-          <Field label="Phone"><MobileInput type="tel" value={form.personal_phone} onChange={(e) => set('personal_phone', e.target.value)} /></Field>
+          <Field label="Phone"><PhoneNumberInput value={form.personal_phone} onChange={(value) => set('personal_phone', value)} /></Field>
         </div>
       </Section>
       <Section title="Employment">
@@ -1140,7 +1206,7 @@ function UserFormMobile({ userId, isBranchPortal }: { userId?: string; isBranchP
           <Field label="First Name"><MobileInput value={form.first_name} onChange={(e) => set('first_name', e.target.value)} /></Field>
           <Field label="Last Name"><MobileInput value={form.last_name} onChange={(e) => set('last_name', e.target.value)} /></Field>
           <Field label="Email" required><MobileInput type="email" value={form.email} onChange={(e) => set('email', e.target.value)} /></Field>
-          <Field label="Phone"><MobileInput type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} /></Field>
+          <Field label="Phone"><PhoneNumberInput value={form.phone} onChange={(value) => set('phone', value)} /></Field>
         </div>
       </Section>
       <Section title="Access">
@@ -1254,7 +1320,7 @@ function BranchFormMobile({ branchId, isBranchPortal }: { branchId?: string; isB
       </Section>
       <Section title="Contact">
         <div className="space-y-3">
-          <Field label="Phone"><MobileInput type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} /></Field>
+          <Field label="Phone"><PhoneNumberInput value={form.phone} onChange={(value) => set('phone', value)} /></Field>
           <Field label="Email"><MobileInput type="email" value={form.email} onChange={(e) => set('email', e.target.value)} /></Field>
           <Field label="Address"><MobileTextarea value={form.address} onChange={(e) => set('address', e.target.value)} /></Field>
         </div>
@@ -1696,9 +1762,11 @@ function SettingsMobile({ isBranchPortal }: { isBranchPortal: boolean }) {
     { label: 'Organization', href: '/dashboard/settings/company-profile', icon: Building2 },
     { label: 'Employees', href: '/dashboard/platform/departments', icon: Users },
     { label: 'Attendance', href: '/dashboard/templates/attendance-policy', icon: CalendarCheck },
+    { label: 'Breaks', href: '/dashboard/templates/break-policy', icon: Clock },
+    { label: 'Holidays', href: '/dashboard/templates/holiday-policy', icon: CalendarDays },
     { label: 'Payroll', href: '/dashboard/templates/salary-structure', icon: Banknote },
     { label: 'Security', href: '/dashboard/system/settings/mfa', icon: Shield },
-    { label: 'Notifications', href: '/dashboard/automation', icon: Bell },
+    { label: 'Notifications', href: '/dashboard/notifications', icon: Bell },
     { label: 'Billing', href: '/dashboard/system/settings/saas-billing', icon: FileText },
   ];
   return (

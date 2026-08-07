@@ -4,6 +4,7 @@ import { ApprovalEngineService } from '../../approvals/services/approval-engine.
 import { AuditLogService } from '../../platform/services/audit-log.service';
 import { EmployeeService } from '../../hr/services/employee.service';
 import { ProbationService } from './probation.service';
+import { isOrganizationAdmin } from './recruitment-approval-bypass.util';
 
 const WORKFLOW_TYPE = 'probation_confirmation';
 
@@ -25,6 +26,29 @@ export class ProbationApprovalService {
     }
     if (!review.recommendation) {
       throw new BadRequestException('Set a recommendation before submitting for approval');
+    }
+
+    if (await isOrganizationAdmin(this.db, tenantId, submittedById)) {
+      await this.db.query(
+        `UPDATE probation_reviews
+         SET approval_status = 'approved',
+             approved_by = $3,
+             approved_at = now(),
+             approval_reason = 'Auto-approved by organization admin',
+             updated_at = now()
+         WHERE id = $1 AND tenant_id = $2`,
+        [id, tenantId, submittedById],
+      );
+      await this.syncLifecycleStatus(tenantId, id);
+      await this.auditLog.log({
+        tenantId,
+        userId: submittedById,
+        entityType: 'probation_review',
+        entityId: id,
+        action: 'auto_approve',
+        newValues: { reason: 'Organization admin action' },
+      });
+      return this.probation.findOne(id, tenantId);
     }
 
     await this.db.query(

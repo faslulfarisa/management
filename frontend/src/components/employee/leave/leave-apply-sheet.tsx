@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -17,8 +17,13 @@ const schema = z.object({
   start_date: z.string().min(1, 'Start date is required'),
   end_date: z.string().min(1, 'End date is required'),
   reason: z.string().min(5, 'Please provide a reason'),
+  duration: z.enum(['full_day', 'half_day']).default('full_day'),
+  priority: z.enum(['low', 'normal', 'high']).optional(),
 }).refine((d) => d.end_date >= d.start_date, {
   message: 'End date must be on or after start date',
+  path: ['end_date'],
+}).refine((d) => !(d.duration === 'half_day' && d.start_date !== d.end_date), {
+  message: 'Half day leave must be for a single date',
   path: ['end_date'],
 });
 
@@ -45,19 +50,29 @@ export function LeaveApplySheet({ open, onClose }: LeaveApplySheetProps) {
     staleTime: 1000,
   });
 
-  const { register, handleSubmit, watch, reset, formState: { errors } } = useForm<FormData>({
+  const { register, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { leave_type_id: '', start_date: '', end_date: '', reason: '' },
+    defaultValues: { leave_type_id: '', start_date: '', end_date: '', reason: '', duration: 'full_day', priority: 'normal' },
   });
 
   const leaveTypeId = watch('leave_type_id');
   const startDate = watch('start_date');
   const endDate = watch('end_date');
+  const duration = watch('duration');
+
+  // If half day is selected, automatically sync end_date to match start_date
+  useEffect(() => {
+    if (duration === 'half_day' && startDate && startDate !== endDate) {
+      setValue('end_date', startDate);
+    }
+  }, [duration, startDate, endDate, setValue]);
+
   const days = startDate && endDate && endDate >= startDate
-    ? differenceInCalendarDays(parseISO(endDate), parseISO(startDate)) + 1
+    ? (duration === 'half_day' ? 0.5 : differenceInCalendarDays(parseISO(endDate), parseISO(startDate)) + 1)
     : null;
 
   const selectedBalance = (balances ?? []).find((b) => b.leave_type_id === leaveTypeId);
+  const noPolicyAssigned = Boolean(balances && balances.length === 0);
 
   // When a leave type is chosen but no balance record exists at all, that means
   // HR hasn't allocated this leave type for the employee yet.
@@ -117,6 +132,18 @@ export function LeaveApplySheet({ open, onClose }: LeaveApplySheetProps) {
               )}
             </div>
 
+            {/* Leave Duration */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Leave Duration</label>
+              <select
+                {...register('duration')}
+                className="w-full h-11 px-3 text-sm rounded-lg border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="full_day">Full Day</option>
+                <option value="half_day">Half Day</option>
+              </select>
+            </div>
+
             {/* Date range */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
@@ -147,9 +174,13 @@ export function LeaveApplySheet({ open, onClose }: LeaveApplySheetProps) {
               <div className="flex gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3">
                 <Info className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
                 <div>
-                  <p className="text-xs font-semibold text-amber-800">Insufficient balance</p>
+                  <p className="text-xs font-semibold text-amber-800">
+                    {noPolicyAssigned ? 'Leave policy template required' : 'Leave type unavailable'}
+                  </p>
                   <p className="text-xs text-amber-700 mt-0.5">
-                    Your assigned Leave Policy Template does not include this leave type, or you have no balance.
+                    {noPolicyAssigned
+                      ? 'You cannot request leave until HR assigns a leave policy template to you.'
+                      : 'Your assigned leave policy template does not include this leave type.'}
                   </p>
                 </div>
               </div>
@@ -167,20 +198,34 @@ export function LeaveApplySheet({ open, onClose }: LeaveApplySheetProps) {
               {errors.reason && <p className="text-xs text-destructive">{errors.reason.message}</p>}
             </div>
 
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Priority</label>
+              <select
+                {...register('priority')}
+                className="w-full h-11 px-3 text-sm rounded-lg border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="low">Low</option>
+                <option value="normal">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+
             {/* API error — shown after a failed submit */}
             {submit.isError && (() => {
               const msg: string =
                 (submit.error as any)?.response?.data?.message ||
                 (submit.error as any)?.response?.data?.error ||
                 'Submission failed. Please try again.';
-              const isNoBalance = msg.includes('No leave balance is available');
-              return isNoBalance ? (
+              const isPolicyError = msg.includes('No active leave policy template')
+                || msg.includes('No leave balance is available')
+                || msg.includes('not available under your assigned leave policy template');
+              return isPolicyError ? (
                 <div className="flex gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3">
                   <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
                   <div>
-                    <p className="text-xs font-semibold text-amber-800">Insufficient balance</p>
+                    <p className="text-xs font-semibold text-amber-800">Leave request unavailable</p>
                     <p className="text-xs text-amber-700 mt-0.5">
-                      Your assigned Leave Policy Template does not include this leave type, or you have no balance.
+                      {msg}
                     </p>
                   </div>
                 </div>

@@ -165,11 +165,15 @@ function VerifyModal({ account, onClose, onSaved }: {
     setSaving(true);
     setError('');
     try {
-      await api.patch(`/payroll/bank-accounts/${account.id}/verify`, { status, notes: notes.trim() || undefined });
+      await api.patch(`/payroll/bank-accounts/${account.id}/verify`, {
+        status,
+        verification_notes: notes.trim() || undefined,
+      });
       onSaved();
       onClose();
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to update verification');
+      const message = err.response?.data?.message;
+      setError(Array.isArray(message) ? message.join(', ') : message || err.response?.data?.error || 'Failed to update verification');
     } finally {
       setSaving(false);
     }

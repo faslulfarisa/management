@@ -19,6 +19,8 @@ import { AttendanceCorrectionsService } from './services/attendance-corrections.
 import { QueueHealthService } from './services/queue-health.service';
 import { ShiftCacheService } from './services/shift-cache.service';
 import { OfflineBufferService } from './services/offline-buffer.service';
+import { PunchIngestionService } from './services/punch-ingestion.service';
+import { PunchValidationService } from './services/punch-validation.service';
 
 // Gateway
 import { BiometricsGateway } from './gateways/biometrics.gateway';
@@ -55,6 +57,8 @@ import { TerminalController } from './terminals/terminal.controller';
 
 // Controllers
 import { BiometricsController } from './biometrics.controller';
+import { AdmsController } from './adms/adms.controller';
+import { AdmsService } from './adms/adms.service';
 
 const SHARED_QUEUE_OPTIONS = {
   settings: {
@@ -89,13 +93,13 @@ const SHARED_QUEUE_OPTIONS = {
           attempts: 3,
           backoff: { type: 'exponential', delay: 10_000 },
           removeOnComplete: { count: 200 },
-          removeOnFail: { count: 100 },
+          removeOnFail: false,
         },
         ...SHARED_QUEUE_OPTIONS,
       },
     ),
   ],
-  controllers: [BiometricsController, TerminalController],
+  controllers: [BiometricsController, TerminalController, AdmsController],
   providers: [
     // Core engine
     AttendanceEngineService,
@@ -108,6 +112,8 @@ const SHARED_QUEUE_OPTIONS = {
     QueueHealthService,
     ShiftCacheService,
     OfflineBufferService,
+    PunchIngestionService,
+    PunchValidationService,
 
     // WebSocket gateway
     BiometricsGateway,
@@ -129,6 +135,7 @@ const SHARED_QUEUE_OPTIONS = {
     AttendanceTerminalService,
     TerminalAuthGuard,
     TerminalPunchService,
+    AdmsService,
 
     // Provider registry + providers
     ProviderRegistryService,
@@ -144,6 +151,9 @@ const SHARED_QUEUE_OPTIONS = {
     SyncCursorService,
     BiometricDeviceService,
     AttendanceTerminalService,
+    PunchIngestionService,
+    PunchValidationService,
+    AdmsService,
   ],
 })
 export class BiometricsModule {}

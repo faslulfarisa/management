@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, X, UserCheck } from 'lucide-react';
 import api from '@/lib/api';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 import { conversionApi, ConversionPreview, ConvertToEmployeePayload } from '@/lib/onboarding-api';
 
 interface RefOption { id: string; name: string }
@@ -125,7 +126,7 @@ export function EmployeeConversionDrawer({
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Personal Phone</label>
-              <input value={form.personal_phone ?? ''} onChange={(e) => set('personal_phone', e.target.value)} className={inputCls} />
+              <PhoneNumberInput value={form.personal_phone ?? ''} onChange={(value) => set('personal_phone', value || undefined)} />
             </div>
           </div>
 

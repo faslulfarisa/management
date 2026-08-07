@@ -5,6 +5,8 @@ import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/store/auth.store';
 import { OperationsSidebar } from '@/components/operations/operations-sidebar';
 import { OperationsHeader } from '@/components/operations/operations-header';
+import { consumePostLogoutRedirectPath } from '@/lib/auth/logout-redirect';
+import { getCurrentPortalKind } from '@/lib/portal-host';
 
 export default function OperationsLayout({ children }: { children: React.ReactNode }) {
   const { accessToken, isInternalStaff, _hydrated } = useAuthStore();
@@ -16,8 +18,13 @@ export default function OperationsLayout({ children }: { children: React.ReactNo
   useEffect(() => {
     if (!_hydrated) return;
 
-    if (!accessToken) {
+    if (getCurrentPortalKind() === 'customer') {
       router.push('/login');
+      return;
+    }
+
+    if (!accessToken) {
+      router.push(consumePostLogoutRedirectPath() ?? '/login');
       return;
     }
     // Customer hierarchy roles do not bypass this; only internal staff

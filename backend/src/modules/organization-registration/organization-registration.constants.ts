@@ -5,13 +5,15 @@
  * Keys are the camelCase request body keys; values are the `tenants` columns.
  */
 export const PROTECTED_ORG_FIELDS: Record<string, string> = {
+  name: 'name',
   legalName: 'legal_name',
   tradeName: 'trade_name',
+  companyCode: 'company_code',
+  companyType: 'company_type',
   registrationNumber: 'registration_number',
   gstin: 'gstin',
   panNumber: 'pan_number',
   cinNumber: 'cin_number',
-  companyType: 'company_type',
 };
 
 export const PROTECTED_ORG_FIELD_KEYS = Object.keys(PROTECTED_ORG_FIELDS);

@@ -35,14 +35,14 @@
 import {
   Controller, Get, Post, Put, Patch, Delete, Body, Param, Query, Req,
   UseGuards, HttpCode, HttpStatus, NotFoundException, Inject,
-  ConflictException, UnprocessableEntityException,
+  ConflictException, UnprocessableEntityException, ForbiddenException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Throttle } from '@nestjs/throttler';
 import { Queue } from 'bull';
-import { randomUUID } from 'crypto';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam } from '@nestjs/swagger';
 import Redis from 'ioredis';
+import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import { REDIS_CLIENT } from '../../shared/redis.provider';
 import { ApiKeyOrJwtGuard } from '../auth/guards/api-key-or-jwt.guard';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
@@ -54,28 +54,50 @@ import { ServiceApiKeyService } from './services/service-api-key.service';
 import { AttendanceCorrectionsService, CreateCorrectionDto } from './services/attendance-corrections.service';
 import { QueueHealthService } from './services/queue-health.service';
 import { OfflineBufferService } from './services/offline-buffer.service';
+import { PunchIngestionService } from './services/punch-ingestion.service';
 import { BiometricDeviceService, DevicePatchDto, CreateDeviceDto } from './services/biometric-device.service';
+import { AdmsService } from './adms/adms.service';
 import {
   AttendanceTerminalService,
   RegisterTerminalDto,
   TerminalPatchDto,
 } from './terminals/attendance-terminal.service';
 import { DatabaseService } from '../../shared/database.service';
-import { PunchEventDto, PunchDirection, VerifyMethod } from './dto/punch-event.dto';
+import { PunchEventDto, PunchDirection, VerifyMethod, AttendanceSource } from './dto/punch-event.dto';
 import {
   PUNCH_INGESTION_QUEUE,
-  PUNCH_INGESTION_JOB,
-  PunchIngestionJobData,
 } from './queue/punch-ingestion.types';
+import { BIOMETRIC_SYNC_QUEUE } from './sync/biometric-sync.types';
+import { AttendanceEngineService } from './engine/attendance-engine.service';
 
 interface UnifiedPunchBody {
   provider: string;
   deviceSn?: string;
-  punches: Array<{ employeeCode: string; timestamp: string; punchType?: string }>;
+  punches: Array<{
+    employeeCode: string;
+    timestamp: string;
+    punchType?: string;
+    punchState?: string;
+    verifyMethod?: string;
+    verifyType?: string;
+    source?: string;
+    terminalId?: string;
+    terminalSerialNumber?: string;
+    deviceId?: string;
+    workCode?: string;
+    gps?: {
+      latitude: number;
+      longitude: number;
+      accuracyMeters?: number;
+      recordedAt?: string;
+    };
+    metadata?: Record<string, unknown>;
+  }>;
   /** Optional: nonce for replay protection (device-push endpoints) */
   nonce?: string;
   /** Optional: request timestamp ISO string for replay protection */
   requestTimestamp?: string;
+  signature?: string;
 }
 
 @ApiTags('Biometrics')
@@ -87,15 +109,19 @@ export class BiometricsController {
     private readonly registry: ProviderRegistryService,
     private readonly easyTimeScheduler: EasyTimeProScheduler,
     private readonly zktecoService: ZktecoService,
+    private readonly engine: AttendanceEngineService,
     private readonly auditService: AttendanceAuditService,
     private readonly correctionsService: AttendanceCorrectionsService,
     private readonly apiKeyService: ServiceApiKeyService,
     private readonly queueHealthService: QueueHealthService,
     private readonly offlineBuffer: OfflineBufferService,
+    private readonly punchIngestion: PunchIngestionService,
     private readonly deviceService: BiometricDeviceService,
+    private readonly admsService: AdmsService,
     private readonly terminalService: AttendanceTerminalService,
     private readonly db: DatabaseService,
     @InjectQueue(PUNCH_INGESTION_QUEUE) private readonly punchQueue: Queue,
+    @InjectQueue(BIOMETRIC_SYNC_QUEUE) private readonly syncQueue: Queue,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -120,20 +146,7 @@ export class BiometricsController {
       return { success: false, data: null, error: 'provider and punches[] are required' };
     }
 
-    // Replay protection: if device sends nonce + requestTimestamp, validate both
-    if (body.nonce || body.requestTimestamp) {
-      if (!body.nonce || !body.requestTimestamp) {
-        throw new UnprocessableEntityException('Both nonce and requestTimestamp are required together');
-      }
-      const reqTs = new Date(body.requestTimestamp).getTime();
-      if (isNaN(reqTs) || Math.abs(Date.now() - reqTs) > 5 * 60 * 1000) {
-        throw new UnprocessableEntityException('requestTimestamp outside allowed 5-minute window');
-      }
-      const nonceKey = `nonce:${tenantId}:${body.nonce}`;
-      const seen = await this.redis.exists(nonceKey);
-      if (seen) throw new ConflictException('Duplicate request detected (nonce already used)');
-      await this.redis.setex(nonceKey, 600, '1'); // 10-min TTL
-    }
+    const replay = await this.requireSignedPunchSubmission(req, tenantId, body);
 
     const integration = await this._resolveIntegration(tenantId, body.provider, body.deviceSn);
     if (!integration) {
@@ -152,9 +165,23 @@ export class BiometricsController {
           employeeCode: p.employeeCode,
           timestamp: ts,
           punchType: this._normalizePunchType(p.punchType),
-          verifyMethod: VerifyMethod.OTHER,
+          verifyMethod: this._normalizeVerifyMethod(p.verifyMethod),
           providerName: body.provider,
-          deviceId: body.deviceSn,
+          deviceId: p.deviceId ?? body.deviceSn,
+          terminalId: p.terminalId,
+          terminalSerialNumber: p.terminalSerialNumber,
+          attendanceSource: this._normalizeAttendanceSource(p.source),
+          punchState: p.punchState ?? p.punchType,
+          rawVerifyType: p.verifyType,
+          workCode: p.workCode,
+          gps: this._normalizeGps(p.gps),
+          tenantId,
+          integrationId: integration.id,
+          correlationId: req.correlationId as string | undefined,
+          rawPayload: {
+            ...p,
+            metadata: p.metadata ?? {},
+          } as Record<string, unknown>,
         };
       })
       .filter((e): e is PunchEventDto => e !== null);
@@ -163,44 +190,22 @@ export class BiometricsController {
       return { success: false, data: null, error: 'No valid punches in payload' };
     }
 
-    const jobData: PunchIngestionJobData = {
+    const result = await this.punchIngestion.submit({
       tenantId,
       integrationId: integration.id,
       providerName: body.provider,
-      events: events.map((e) => ({
-        employeeCode: e.employeeCode,
-        timestamp: e.timestamp.toISOString(),
-        punchType: e.punchType,
-        verifyMethod: e.verifyMethod,
-        providerName: e.providerName,
-        deviceId: e.deviceId,
-        rawPayload: e.rawPayload,
-      })),
-      requestId: randomUUID(),
-      submittedAt: new Date().toISOString(),
+      events,
+      requestId: replay.requestId,
       correlationId: req.correlationId as string | undefined,
-    };
+    });
 
-    try {
-      await this.punchQueue.add(PUNCH_INGESTION_JOB, jobData, {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5_000 },
-        removeOnComplete: { count: 1_000 },
-        removeOnFail: { count: 500 },
-      });
-    } catch {
       // Bull enqueue failed (transient Redis blip) — buffer to Redis list for drain on recovery
-      await this.offlineBuffer.buffer(tenantId, body.provider, jobData);
-      return {
-        success: true,
-        data: { buffered: events.length, provider: body.provider, requestId: jobData.requestId },
-        error: null,
-      };
-    }
 
     return {
       success: true,
-      data: { queued: events.length, provider: body.provider, requestId: jobData.requestId },
+      data: result.buffered > 0
+        ? { buffered: result.buffered, provider: result.provider, requestId: result.requestId }
+        : { queued: result.queued, provider: result.provider, requestId: result.requestId },
       error: null,
     };
   }
@@ -242,8 +247,19 @@ export class BiometricsController {
   @HttpCode(HttpStatus.OK)
   @ApiParam({ name: 'integrationId', description: 'Integration record UUID' })
   @ApiOperation({ summary: 'Manually trigger an EasyTimePro sync' })
-  async triggerSync(@Param('integrationId') integrationId: string) {
+  async triggerSync(@Req() req: any, @Param('integrationId') integrationId: string) {
     try {
+      const { rows } = await this.db.query(
+        `SELECT id
+         FROM integrations
+         WHERE id = $1
+           AND tenant_id = $2
+           AND type = 'easytimepro'
+           AND is_active = true`,
+        [integrationId, this._tenantId(req)],
+      );
+      if (!rows[0]) throw new NotFoundException(`Integration ${integrationId} not found`);
+
       const result = await this.easyTimeScheduler.triggerManualSync(integrationId);
       return { success: true, data: result, error: null };
     } catch (err: any) {
@@ -255,8 +271,10 @@ export class BiometricsController {
 
   @Get('queue/failed')
   @ApiOperation({ summary: 'List failed punch ingestion jobs (dead-letter queue)' })
-  async getFailedJobs() {
-    const failed = await this.punchQueue.getFailed(0, 99);
+  async getFailedJobs(@Req() req: any) {
+    const tenantId = this._tenantId(req);
+    const failed = (await this.punchQueue.getFailed(0, 99))
+      .filter((j) => this._jobTenant(j) === tenantId);
     return {
       success: true,
       data: failed.map((j) => ({
@@ -275,8 +293,10 @@ export class BiometricsController {
   @Post('queue/retry-failed')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Retry all failed punch ingestion jobs' })
-  async retryFailedJobs() {
-    const failed = await this.punchQueue.getFailed(0, 99);
+  async retryFailedJobs(@Req() req: any) {
+    const tenantId = this._tenantId(req);
+    const failed = (await this.punchQueue.getFailed(0, 99))
+      .filter((j) => this._jobTenant(j) === tenantId);
     await Promise.all(failed.map((j) => j.retry()));
     return { success: true, data: { retried: failed.length }, error: null };
   }
@@ -288,16 +308,56 @@ export class BiometricsController {
     return { success: true, data: snapshot, error: null };
   }
 
+  @Get('queue/diagnostics')
+  @ApiOperation({ summary: 'Queue diagnostics, durable offline-buffer state, and recent sync failures' })
+  async getQueueDiagnostics(@Req() req: any) {
+    const diagnostics = await this.queueHealthService.getDiagnostics(this._tenantId(req));
+    return { success: true, data: diagnostics, error: null };
+  }
+
+  @Get('operations/summary')
+  @ApiOperation({ summary: 'HR-safe biometrics operational dashboard summary' })
+  async getOperationsSummary(@Req() req: any) {
+    const summary = await this.queueHealthService.getOperationalSummary(this._tenantId(req));
+    return { success: true, data: summary, error: null };
+  }
+
+  @Post('queue/offline-buffer/replay')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Replay durable offline punch buffer for this tenant' })
+  async replayOfflineBuffer(@Req() req: any, @Body() body: { provider?: string; limit?: number }) {
+    const tenantId = this._tenantId(req);
+    const providers = body?.provider
+      ? [{ tenantId, provider: body.provider }]
+      : (await this.offlineBuffer.pendingProviders()).filter((item) => item.tenantId === tenantId);
+
+    let replayed = 0;
+    for (const item of providers) {
+      replayed += await this.offlineBuffer.drainDurable(
+        item.tenantId,
+        item.provider,
+        this.punchQueue,
+        body?.limit ?? 100,
+      );
+    }
+
+    return { success: true, data: { replayed }, error: null };
+  }
+
   @Get('queue/dlq')
   @ApiOperation({ summary: 'Paginated list of failed (dead-letter) jobs' })
   async getDlq(
+    @Req() req: any,
     @Query('offset') offset = '0',
     @Query('limit') limit = '50',
   ) {
     const o = parseInt(offset, 10);
     const l = parseInt(limit, 10);
-    const jobs = await this.punchQueue.getFailed(o, o + l - 1);
-    const total = await this.punchQueue.getFailedCount();
+    const tenantId = this._tenantId(req);
+    const allTenantJobs = (await this.punchQueue.getFailed(0, -1))
+      .filter((j) => this._jobTenant(j) === tenantId);
+    const jobs = allTenantJobs.slice(o, o + l);
+    const total = allTenantJobs.length;
     return {
       success: true,
       data: {
@@ -324,9 +384,10 @@ export class BiometricsController {
   @HttpCode(HttpStatus.OK)
   @ApiParam({ name: 'jobId', description: 'Bull job ID to retry' })
   @ApiOperation({ summary: 'Retry a single DLQ job by ID' })
-  async retryDlqJob(@Param('jobId') jobId: string) {
+  async retryDlqJob(@Req() req: any, @Param('jobId') jobId: string) {
     const job = await this.punchQueue.getJob(jobId);
     if (!job) throw new NotFoundException(`Job ${jobId} not found`);
+    this._assertJobTenant(job, this._tenantId(req));
     await job.retry();
     return { success: true, data: { retried: jobId }, error: null };
   }
@@ -334,11 +395,12 @@ export class BiometricsController {
   @Post('queue/dlq/bulk-retry')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Retry multiple DLQ jobs by ID' })
-  async bulkRetryDlq(@Body() body: { jobIds: string[] }) {
+  async bulkRetryDlq(@Req() req: any, @Body() body: { jobIds: string[] }) {
+    const tenantId = this._tenantId(req);
     const results = await Promise.allSettled(
       (body.jobIds ?? []).map(async (id) => {
         const job = await this.punchQueue.getJob(id);
-        if (job) await job.retry();
+        if (job && this._jobTenant(job) === tenantId) await job.retry();
       }),
     );
     const retried = results.filter((r) => r.status === 'fulfilled').length;
@@ -349,11 +411,61 @@ export class BiometricsController {
   @HttpCode(HttpStatus.OK)
   @ApiParam({ name: 'jobId', description: 'Bull job ID to discard' })
   @ApiOperation({ summary: 'Permanently discard a DLQ job' })
-  async discardDlqJob(@Param('jobId') jobId: string) {
+  async discardDlqJob(@Req() req: any, @Param('jobId') jobId: string) {
     const job = await this.punchQueue.getJob(jobId);
     if (!job) throw new NotFoundException(`Job ${jobId} not found`);
+    this._assertJobTenant(job, this._tenantId(req));
     await job.remove();
     return { success: true, data: { discarded: jobId }, error: null };
+  }
+
+  @Get('sync/dlq')
+  @ApiOperation({ summary: 'Paginated list of failed biometric sync jobs' })
+  async getSyncDlq(
+    @Req() req: any,
+    @Query('offset') offset = '0',
+    @Query('limit') limit = '50',
+  ) {
+    const o = parseInt(offset, 10);
+    const l = parseInt(limit, 10);
+    const tenantId = this._tenantId(req);
+    const allTenantJobs = (await this.syncQueue.getFailed(0, -1))
+      .filter((j) => this._jobTenant(j) === tenantId);
+    const jobs = allTenantJobs.slice(o, o + l);
+    const total = allTenantJobs.length;
+    return {
+      success: true,
+      data: {
+        total,
+        offset: o,
+        limit: l,
+        jobs: jobs.map((j) => ({
+          id: j.id,
+          provider: j.data?.providerName,
+          tenant: j.data?.tenantId,
+          integrationId: j.data?.integrationId,
+          cursorTypes: j.data?.cursorTypes ?? [],
+          failedReason: j.failedReason,
+          stacktrace: j.stacktrace,
+          attemptsMade: j.attemptsMade,
+          timestamp: new Date(j.timestamp).toISOString(),
+          data: j.data,
+        })),
+      },
+      error: null,
+    };
+  }
+
+  @Post('sync/dlq/:jobId/retry')
+  @HttpCode(HttpStatus.OK)
+  @ApiParam({ name: 'jobId', description: 'Bull sync job ID to retry' })
+  @ApiOperation({ summary: 'Retry a failed biometric sync job by ID' })
+  async retrySyncDlqJob(@Req() req: any, @Param('jobId') jobId: string) {
+    const job = await this.syncQueue.getJob(jobId);
+    if (!job) throw new NotFoundException(`Sync job ${jobId} not found`);
+    this._assertJobTenant(job, this._tenantId(req));
+    await job.retry();
+    return { success: true, data: { retried: jobId }, error: null };
   }
 
   // ── Audit Trail ─────────────────────────────────────────────────────────────
@@ -587,6 +699,104 @@ export class BiometricsController {
     return { success: true, data: { deactivated: id }, error: null };
   }
 
+  @Post('devices/:id/commands')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiParam({ name: 'id', description: 'Biometric device UUID' })
+  @ApiOperation({ summary: 'Queue an ADMS command for a biometric device' })
+  async queueDeviceCommand(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { commandType?: string; command: string; priority?: number; expiresAt?: string },
+  ) {
+    const tenantId = this._tenantId(req);
+    const device = await this.deviceService.getDevice(tenantId, id);
+    if (!device) throw new NotFoundException(`Device ${id} not found`);
+    if (!body?.command) {
+      return { success: false, data: null, error: 'command is required' };
+    }
+
+    const user = req.user ?? req;
+    const queued = await this.admsService.queueCommand({
+      tenantId,
+      deviceSerialNumber: device.serial_number,
+      biometricDeviceId: device.id,
+      commandType: body.commandType ?? 'custom',
+      command: body.command,
+      priority: body.priority,
+      expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+      createdBy: user.id ?? user.sub ?? null,
+    });
+
+    return { success: true, data: queued, error: null };
+  }
+
+  @Get('devices/:id/commands')
+  @ApiParam({ name: 'id', description: 'Biometric device UUID' })
+  @ApiOperation({ summary: 'List recent ADMS commands for a biometric device' })
+  async listDeviceCommands(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+  ) {
+    const tenantId = this._tenantId(req);
+    const device = await this.deviceService.getDevice(tenantId, id);
+    if (!device) throw new NotFoundException(`Device ${id} not found`);
+
+    const commands = await this.admsService.listCommands(
+      tenantId,
+      device.serial_number,
+      limit ? parseInt(limit, 10) : 50,
+    );
+    return { success: true, data: commands, error: null };
+  }
+
+  @Get('pending-punch-reviews')
+  @ApiOperation({ summary: 'List pending unknown-employee punch reviews' })
+  async listPendingPunchReviews(
+    @Req() req: any,
+    @Query('status') status?: string,
+    @Query('employeeCode') employeeCode?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const tenantId = this._tenantId(req);
+    const params: any[] = [tenantId, Math.max(1, Math.min(parseInt(limit ?? '100', 10) || 100, 500))];
+    const clauses = ['tenant_id = $1'];
+    if (status) {
+      params.push(status);
+      clauses.push(`status = $${params.length}`);
+    } else {
+      clauses.push(`status IN ('pending', 'failed')`);
+    }
+    if (employeeCode) {
+      params.push(employeeCode);
+      clauses.push(`employee_code = $${params.length}`);
+    }
+    const { rows } = await this.db.query(
+      `SELECT *
+       FROM pending_punch_reviews
+       WHERE ${clauses.join(' AND ')}
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      params,
+    );
+    return { success: true, data: rows, error: null };
+  }
+
+  @Post('pending-punch-reviews/retry')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Retry pending punch reviews after employee creation or mapping fixes' })
+  async retryPendingPunchReviews(
+    @Req() req: any,
+    @Body() body: { employeeCode?: string; limit?: number },
+  ) {
+    const result = await this.engine.retryPendingPunchReviews(
+      this._tenantId(req),
+      body?.employeeCode,
+      body?.limit,
+    );
+    return { success: true, data: result, error: null };
+  }
+
   // ── Attendance Terminal Management (admin) ────────────────────────────────────
 
   /**
@@ -697,6 +907,16 @@ export class BiometricsController {
     return user.tenantId ?? user.tenant_id;
   }
 
+  private _jobTenant(job: { data?: any }): string | undefined {
+    return job.data?.tenantId ?? job.data?.tenant_id;
+  }
+
+  private _assertJobTenant(job: { data?: any }, tenantId: string): void {
+    if (this._jobTenant(job) !== tenantId) {
+      throw new ForbiddenException('Job does not belong to the active tenant');
+    }
+  }
+
   private async _resolveIntegration(
     tenantId: string,
     providerName: string,
@@ -716,9 +936,207 @@ export class BiometricsController {
 
   private _normalizePunchType(raw?: string): PunchDirection {
     if (!raw) return PunchDirection.UNKNOWN;
-    const u = raw.toUpperCase();
-    if (u === 'IN' || u === '0') return PunchDirection.IN;
-    if (u === 'OUT' || u === '1') return PunchDirection.OUT;
+    const u = raw.toUpperCase().replace(/[\s-]+/g, '_');
+    if (u === 'IN' || u === 'CHECKIN' || u === 'CLOCK_IN' || u === '0') return PunchDirection.IN;
+    if (u === 'OUT' || u === 'CHECKOUT' || u === 'CLOCK_OUT' || u === '1') return PunchDirection.OUT;
+    if (u === 'BREAK_OUT' || u === 'BREAKOUT' || u === 'LUNCH_OUT' || u === '2') return PunchDirection.BREAK_OUT;
+    if (u === 'BREAK_IN' || u === 'BREAKIN' || u === 'LUNCH_IN' || u === '3') return PunchDirection.BREAK_IN;
     return PunchDirection.UNKNOWN;
+  }
+
+  private async requireSignedPunchSubmission(
+    req: any,
+    tenantId: string,
+    body: UnifiedPunchBody,
+  ): Promise<{ nonce: string; timestamp: string; requestId: string }> {
+    const nonce = String(req.headers['x-nonce'] ?? body.nonce ?? '').trim();
+    const timestamp = String(req.headers['x-timestamp'] ?? body.requestTimestamp ?? '').trim();
+    const signature = String(req.headers['x-signature'] ?? body.signature ?? '').trim();
+    if (!nonce || !timestamp || !signature) {
+      throw new UnprocessableEntityException('nonce, timestamp, and signature are required');
+    }
+
+    const requestTime = /^\d+$/.test(timestamp) ? Number(timestamp) * 1000 : new Date(timestamp).getTime();
+    if (!Number.isFinite(requestTime) || Math.abs(Date.now() - requestTime) > 5 * 60 * 1000) {
+      throw new UnprocessableEntityException('timestamp outside allowed 5-minute window');
+    }
+
+    const user = req.user ?? {};
+    const principalType = user.isServiceAccount ? 'service_api_key' : 'jwt_user';
+    const principalId = String(user.apiKeyId ?? user.sub ?? user.id ?? 'unknown');
+    const nonceKey = `nonce:punch:${tenantId}:${principalType}:${principalId}:${nonce}`;
+    const consumed = await this.redis.set(nonceKey, '1', 'EX', 600, 'NX');
+    if (consumed !== 'OK') {
+      await this.recordReplayBlocked(tenantId, {
+        source: 'punch_submission',
+        providerName: body.provider,
+        deviceId: body.deviceSn,
+        requestId: nonce,
+        principalType,
+        principalId,
+        reason: 'nonce_already_seen',
+      });
+      throw new ConflictException('Duplicate request detected (nonce already used)');
+    }
+
+    const { rowCount } = await this.db.query(
+      `INSERT INTO punch_submission_nonces
+         (tenant_id, principal_type, principal_id, nonce, request_timestamp,
+          request_id, source_ip, user_agent, expires_at, metadata)
+       VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7::inet, $8, NOW() + INTERVAL '10 minutes', $9::jsonb)
+       ON CONFLICT (tenant_id, principal_type, principal_id, nonce) DO NOTHING`,
+      [
+        tenantId,
+        principalType,
+        principalId,
+        nonce,
+        new Date(requestTime).toISOString(),
+        nonce,
+        this.requestIp(req),
+        req.get?.('user-agent') ?? req.headers?.['user-agent'] ?? null,
+        JSON.stringify({ provider: body.provider, device_sn: body.deviceSn ?? null }),
+      ],
+    );
+    if (rowCount === 0) {
+      await this.recordReplayBlocked(tenantId, {
+        source: 'punch_submission',
+        providerName: body.provider,
+        deviceId: body.deviceSn,
+        requestId: nonce,
+        principalType,
+        principalId,
+        reason: 'durable_nonce_conflict',
+      });
+      throw new ConflictException('Duplicate request detected (nonce already used)');
+    }
+
+    if (!user.isServiceAccount) {
+      this.verifyBodySignature(req, signature, timestamp, nonce);
+    }
+
+    return { nonce, timestamp, requestId: nonce };
+  }
+
+  private async recordReplayBlocked(
+    tenantId: string,
+    details: {
+      source: string;
+      providerName?: string;
+      deviceId?: string;
+      requestId?: string;
+      principalType?: string;
+      principalId?: string;
+      reason: string;
+    },
+  ): Promise<void> {
+    await this.db.query(
+      `INSERT INTO biometric_operational_events (
+         tenant_id, event_type, severity, source, provider_name, device_id,
+         request_id, summary, metadata
+       )
+       VALUES ($1, 'replay_attack_blocked', 'critical', $2, $3, $4, $5, $6, $7::jsonb)`,
+      [
+        tenantId,
+        details.source,
+        details.providerName ?? null,
+        details.deviceId ?? null,
+        details.requestId ?? null,
+        'Duplicate biometric punch request blocked',
+        JSON.stringify({
+          reason: details.reason,
+          principal_type: details.principalType ?? null,
+          principal_id: details.principalId ?? null,
+        }),
+      ],
+    ).catch(() => undefined);
+  }
+
+  private verifyBodySignature(req: any, signature: string, timestamp: string, nonce: string): void {
+    const secret = process.env.BIOMETRIC_HMAC_SECRET;
+    if (!secret) {
+      throw new UnprocessableEntityException('Signed punch submissions require BIOMETRIC_HMAC_SECRET');
+    }
+    const path = req.originalUrl?.split('?')[0] ?? req.url?.split('?')[0] ?? '';
+    const query = req.originalUrl?.includes('?') ? req.originalUrl.split('?').slice(1).join('?') : '';
+    const body = this.canonicalBody(Buffer.from(JSON.stringify(this.stripSignature(req.body ?? {}))));
+    const bodyHash = createHash('sha256').update(body).digest('hex');
+    const message = [req.method.toUpperCase(), path, query, timestamp, nonce, bodyHash].join('\n');
+    const expected = createHmac('sha256', secret).update(message).digest('hex');
+    if (!this.secureEqual(signature, expected)) {
+      throw new UnprocessableEntityException('Invalid request signature');
+    }
+  }
+
+  private canonicalBody(raw: Buffer | string): string {
+    const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : raw;
+    if (!text) return '';
+    try {
+      return JSON.stringify(this.sortJson(JSON.parse(text)));
+    } catch {
+      return text;
+    }
+  }
+
+  private sortJson(value: any): any {
+    if (Array.isArray(value)) return value.map((item) => this.sortJson(item));
+    if (value && typeof value === 'object') {
+      return Object.keys(value).sort().reduce((acc, key) => {
+        acc[key] = this.sortJson(value[key]);
+        return acc;
+      }, {} as Record<string, any>);
+    }
+    return value;
+  }
+
+  private stripSignature(value: any): any {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const { signature: _signature, ...rest } = value;
+    return rest;
+  }
+
+  private secureEqual(a: string, b: string): boolean {
+    const left = Buffer.from(a, 'utf8');
+    const right = Buffer.from(b, 'utf8');
+    return left.length === right.length && timingSafeEqual(left, right);
+  }
+
+  private requestIp(req: any): string | null {
+    return (
+      req.headers?.['x-real-ip'] ??
+      String(req.headers?.['x-forwarded-for'] ?? '').split(',')[0].trim() ??
+      req.ip ??
+      req.socket?.remoteAddress ??
+      null
+    ) || null;
+  }
+
+  private _normalizeVerifyMethod(raw?: string): VerifyMethod {
+    if (!raw) return VerifyMethod.OTHER;
+    const u = raw.toLowerCase();
+    if (u === 'fingerprint') return VerifyMethod.FINGERPRINT;
+    if (u === 'face') return VerifyMethod.FACE;
+    if (u === 'card') return VerifyMethod.CARD;
+    if (u === 'password') return VerifyMethod.PASSWORD;
+    if (u === 'hybrid') return VerifyMethod.HYBRID;
+    return VerifyMethod.OTHER;
+  }
+
+  private _normalizeAttendanceSource(raw?: string): AttendanceSource {
+    if (!raw) return AttendanceSource.BIOMETRIC_DEVICE;
+    const values = new Set(Object.values(AttendanceSource));
+    return values.has(raw as AttendanceSource)
+      ? raw as AttendanceSource
+      : AttendanceSource.BIOMETRIC_DEVICE;
+  }
+
+  private _normalizeGps(gps?: UnifiedPunchBody['punches'][number]['gps']): PunchEventDto['gps'] {
+    if (!gps) return undefined;
+    const recordedAt = gps.recordedAt ? new Date(gps.recordedAt) : undefined;
+    return {
+      latitude: gps.latitude,
+      longitude: gps.longitude,
+      accuracyMeters: gps.accuracyMeters,
+      recordedAt: recordedAt && !isNaN(recordedAt.getTime()) ? recordedAt : undefined,
+    };
   }
 }

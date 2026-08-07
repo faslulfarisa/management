@@ -6,6 +6,7 @@ import { LogOut, ChevronRight, User, Briefcase, Phone, Calendar, Users } from 'l
 import Link from 'next/link';
 import { clearTenantScopedStorage } from '@/lib/org-switch';
 import { cn } from '@/lib/utils';
+import { getPostLogoutRedirectPath } from '@/lib/auth/logout-redirect';
 
 export function PortalProfile() {
   const { employeeProfile, logout } = useAuthStore();
@@ -141,7 +142,12 @@ export function PortalProfile() {
             </div>
 
             <button
-              onClick={() => { clearTenantScopedStorage(); logout(); window.location.href = '/login'; }}
+              onClick={() => {
+                const redirectPath = getPostLogoutRedirectPath();
+                clearTenantScopedStorage();
+                logout();
+                window.location.href = redirectPath;
+              }}
               className="w-full flex items-center justify-center gap-2 h-9 rounded-xl border border-gray-200 bg-white text-[13px] font-medium text-gray-500 hover:border-red-200 hover:text-red-600 hover:bg-red-50 transition-colors shadow-sm"
             >
               <LogOut className="h-3.5 w-3.5" />

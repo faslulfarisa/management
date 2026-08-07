@@ -2,13 +2,27 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { DatabaseService } from '../../../shared/database.service';
 import { TemplateService } from '../../platform/services/template.service';
 import {
-  DEFAULT_BREAK_LIMITS,
+  BreakPolicyConfig,
+  BreakPolicyTemplateService,
+  BreakPolicyType,
+  BREAK_POLICY_TEMPLATE_TYPE,
+} from '../../platform/services/break-policy-template.service';
+import {
   getPunchOutReason,
 } from '../constants/punch-out-reasons';
 
 export interface BreakLimit {
   allowed_minutes: number | null;
   paid: boolean;
+  name?: string;
+  category?: string;
+  active?: boolean;
+  visible_to_employees?: boolean;
+  max_uses_per_day?: number | null;
+  max_total_minutes_per_day?: number | null;
+  remaining_uses?: number | null;
+  remaining_minutes?: number | null;
+  current_daily_usage_minutes?: number;
 }
 
 @Injectable()
@@ -16,6 +30,7 @@ export class BreakSessionService {
   constructor(
     private db: DatabaseService,
     private templateService: TemplateService,
+    private breakPolicyTemplateService: BreakPolicyTemplateService,
   ) {}
 
   /**
@@ -25,12 +40,41 @@ export class BreakSessionService {
    * Falls back to DEFAULT_BREAK_LIMITS when no template is configured.
    */
   async getResolvedLimits(tenantId: string, employeeId: string): Promise<Record<string, BreakLimit>> {
-    const template = await this.templateService.getResolved(tenantId, 'break_policy', 'employee', employeeId);
-    const limits = template?.config?.limits;
-    if (limits && typeof limits === 'object') {
-      return { ...DEFAULT_BREAK_LIMITS, ...limits };
-    }
-    return DEFAULT_BREAK_LIMITS;
+    const policy = await this.getResolvedPolicy(tenantId, employeeId);
+    const usage = await this.getDailyUsageByCode(tenantId, employeeId);
+    return Object.fromEntries(
+      policy.break_types
+        .filter((breakType) => breakType.active && breakType.visible_to_employees)
+        .map((breakType) => {
+          const used = usage[breakType.code] ?? { count: 0, minutes: 0 };
+          return [
+            breakType.code,
+            {
+              allowed_minutes: breakType.allowed_minutes,
+              paid: breakType.paid,
+              name: breakType.name,
+              category: breakType.category,
+              active: breakType.active,
+              visible_to_employees: breakType.visible_to_employees,
+              max_uses_per_day: breakType.max_uses_per_day,
+              max_total_minutes_per_day: breakType.max_total_minutes_per_day,
+              remaining_uses: breakType.max_uses_per_day == null ? null : Math.max(0, breakType.max_uses_per_day - used.count),
+              remaining_minutes: breakType.max_total_minutes_per_day == null ? null : Math.max(0, breakType.max_total_minutes_per_day - used.minutes),
+              current_daily_usage_minutes: used.minutes,
+            },
+          ];
+        }),
+    );
+  }
+
+  async getResolvedPolicy(tenantId: string, employeeId: string): Promise<BreakPolicyConfig & { template_id: string | null; template_name: string | null }> {
+    const template = await this.templateService.getResolved(tenantId, BREAK_POLICY_TEMPLATE_TYPE, 'employee', employeeId);
+    const config = this.breakPolicyTemplateService.validateConfig(template?.config || {});
+    return {
+      ...config,
+      template_id: template?.id ?? null,
+      template_name: template?.name ?? null,
+    };
   }
 
   async getActiveBreak(tenantId: string, employeeId: string) {
@@ -55,9 +99,8 @@ export class BreakSessionService {
    * attendance_records.clock_out — the attendance session stays active.
    */
   async startBreak(tenantId: string, employeeId: string, reasonCode: string, note?: string) {
-    const reason = getPunchOutReason(reasonCode);
-    if (!reason) throw new BadRequestException('Invalid punch-out reason');
-    if (reason.category === 'final_logout') {
+    const legacyReason = getPunchOutReason(reasonCode);
+    if (legacyReason?.category === 'final_logout') {
       throw new BadRequestException('This reason ends the attendance session and cannot start a break');
     }
 
@@ -77,8 +120,15 @@ export class BreakSessionService {
       throw new BadRequestException('A break is already in progress');
     }
 
-    const limits = await this.getResolvedLimits(tenantId, employeeId);
-    const limit = limits[reasonCode] ?? { allowed_minutes: null, paid: false };
+    const policy = await this.getResolvedPolicy(tenantId, employeeId);
+    const breakType = policy.break_types.find((item) => item.code === reasonCode);
+    if (!breakType || !breakType.active || !breakType.visible_to_employees) {
+      throw new BadRequestException('This break type is not available under your assigned break policy');
+    }
+    await this.assertBreakUsageAllowed(tenantId, employeeId, breakType);
+    if (breakType.requires_employee_reason && !note?.trim()) {
+      throw new BadRequestException('A reason is required for this break type');
+    }
 
     const { rows: breakRows } = await this.db.query(
       `INSERT INTO break_sessions (
@@ -89,8 +139,8 @@ export class BreakSessionService {
        RETURNING *`,
       [
         tenantId, employeeId, attendance.id, today,
-        reasonCode, reason.category, reason.label, note ?? null,
-        limit.allowed_minutes, limit.paid,
+        breakType.code, breakType.category, breakType.name, note ?? null,
+        breakType.allowed_minutes, breakType.paid,
       ],
     );
     const breakSession = breakRows[0];
@@ -106,7 +156,7 @@ export class BreakSessionService {
       [attendance.id, tenantId, breakSession.id, reasonCode, note ?? null],
     );
 
-    if (reason.category === 'emergency') {
+    if (breakType.category === 'emergency') {
       await this.db.query(
         `INSERT INTO attendance_requests (tenant_id, employee_id, date, request_type, reason)
          VALUES ($1, $2, $3, 'emergency_leave', $4)`,
@@ -236,5 +286,33 @@ export class BreakSessionService {
 
     const { rows } = await this.db.query(query, params);
     return rows;
+  }
+
+  private async assertBreakUsageAllowed(tenantId: string, employeeId: string, breakType: BreakPolicyType) {
+    const usage = (await this.getDailyUsageByCode(tenantId, employeeId))[breakType.code] ?? { count: 0, minutes: 0 };
+
+    if (!breakType.allow_multiple_sessions && usage.count > 0) {
+      throw new BadRequestException(`${breakType.name} can only be used once per day`);
+    }
+    if (breakType.max_uses_per_day != null && usage.count >= breakType.max_uses_per_day) {
+      throw new BadRequestException(`${breakType.name} daily use limit has been reached`);
+    }
+    if (breakType.max_total_minutes_per_day != null && usage.minutes >= breakType.max_total_minutes_per_day) {
+      throw new BadRequestException(`${breakType.name} daily minute limit has been reached`);
+    }
+  }
+
+  private async getDailyUsageByCode(tenantId: string, employeeId: string) {
+    const today = new Date().toISOString().split('T')[0];
+    const { rows } = await this.db.query(
+      `SELECT break_code,
+              COUNT(*)::int AS count,
+              COALESCE(SUM(COALESCE(duration_minutes, 0)), 0)::int AS minutes
+       FROM break_sessions
+       WHERE tenant_id = $1 AND employee_id = $2 AND date = $3
+       GROUP BY break_code`,
+      [tenantId, employeeId, today],
+    );
+    return Object.fromEntries(rows.map((row: any) => [row.break_code, { count: row.count, minutes: row.minutes }]));
   }
 }

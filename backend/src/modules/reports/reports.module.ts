@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { PlatformModule } from '../platform/platform.module';
+import { SharedModule } from '../../shared/shared.module';
 import { ReportsController } from './reports.controller';
 import { AttendanceReportsService } from './services/attendance-reports.service';
 import { HrReportsService } from './services/hr-reports.service';
@@ -16,7 +17,7 @@ import { PerformanceReportsService } from './services/performance-reports.servic
 import { RecruitmentReportsService } from './services/recruitment-reports.service';
 
 @Module({
-  imports: [forwardRef(() => AuthModule), forwardRef(() => PlatformModule)],
+  imports: [forwardRef(() => AuthModule), forwardRef(() => PlatformModule), SharedModule],
   controllers: [ReportsController],
   providers: [
     AttendanceReportsService,

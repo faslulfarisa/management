@@ -34,10 +34,13 @@ export interface Interview {
   cancelled_at: string | null;
   cancellation_reason: string | null;
   rescheduled_from_id: string | null;
+  created_by_email?: string | null;
   first_name?: string;
   last_name?: string;
   candidate_email?: string;
   vacancy_title?: string;
+  department_name?: string;
+  panel_members?: { id: string; name: string }[];
 }
 
 function qs(params: Record<string, any>): string {
@@ -53,7 +56,7 @@ export const interviewsApi = {
   get: (id: string): Promise<Interview> => api.get(`/recruitment/interviews/${id}`).then((r) => r.data.data),
   schedule: (data: {
     application_id: string; round_type?: string; round_number?: number; interview_type?: string;
-    scheduled_at: string; duration_minutes?: number; location?: string; meeting_link?: string; panel_member_ids?: string[];
+    scheduled_at: string; duration_minutes?: number; location?: string; meeting_link?: string; panel_member_ids?: string[]; notes?: string;
   }) => api.post('/recruitment/interviews', data).then((r) => r.data.data),
   reschedule: (id: string, scheduledAt: string, reason?: string) =>
     api.post(`/recruitment/interviews/${id}/reschedule`, { scheduled_at: scheduledAt, reason }).then((r) => r.data.data),

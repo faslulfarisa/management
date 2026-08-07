@@ -9,8 +9,10 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { DeleteWarningModal } from '@/components/ui/delete-warning-modal';
+import { ExportButton } from '@/components/export';
+import { ImportButton } from '@/components/import';
+import { PERMISSIONS } from '@/lib/permissions';
 import { useDependencyCheck } from '@/hooks/useDependencyCheck';
-import ManagerSelectCombobox from '@/components/ManagerSelectCombobox';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 
 type ScopeType = 'ORGANIZATION' | 'SELECTED_BRANCHES' | 'SINGLE_BRANCH';
@@ -24,11 +26,7 @@ interface Department {
   branch_id: string | null;
   branch_name: string | null;
   branch_ids: string[];
-  parent_id: string | null;
-  parent_name: string | null;
   property_name: string | null;
-  head_employee_id: string | null;
-  head_employee_name: string | null;
   employee_count: number;
   resigned_count: number;
 }
@@ -39,7 +37,7 @@ interface Branch {
   code: string;
 }
 
-type SortKey = 'code' | 'name' | 'scope_type' | 'parent_name' | 'head_employee_name' | 'employee_count' | 'resigned_count';
+type SortKey = 'code' | 'name' | 'scope_type' | 'employee_count' | 'resigned_count';
 
 const SCOPE_OPTIONS: { value: ScopeType; label: string; icon: typeof Globe }[] = [
   { value: 'ORGANIZATION', label: 'Organization Wide', icon: Globe },
@@ -67,8 +65,6 @@ function DeptDrawer({
     scope_type: dept?.scope_type || 'SINGLE_BRANCH' as ScopeType,
     branch_id: dept?.branch_id || '',
     branch_ids: dept?.branch_ids || [] as string[],
-    parent_id: dept?.parent_id || '',
-    head_employee_id: dept?.head_employee_id || '',
   });
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -81,22 +77,12 @@ function DeptDrawer({
     );
   }, [form.name, dept, departments]);
 
-  /* Filter parent options to same branch only when scoped to a single branch */
-  const parentOptions = useMemo(() => {
-    return departments.filter(d => {
-      if (d.id === dept?.id) return false;
-      if (form.scope_type === 'SINGLE_BRANCH' && form.branch_id) return d.branch_id === form.branch_id;
-      return true;
-    });
-  }, [departments, dept, form.scope_type, form.branch_id]);
-
   const setScopeType = (scope_type: ScopeType) => {
     setForm(f => ({
       ...f,
       scope_type,
       branch_id: scope_type === 'SINGLE_BRANCH' ? f.branch_id : '',
       branch_ids: scope_type === 'SELECTED_BRANCHES' ? f.branch_ids : [],
-      parent_id: '',
     }));
     setErrors(prev => ({ ...prev, branch_id: '', branch_ids: '' }));
     setApiError('');
@@ -130,13 +116,6 @@ function DeptDrawer({
     if (form.scope_type === 'SELECTED_BRANCHES' && form.branch_ids.length === 0) {
       e.branch_ids = 'Select at least one branch';
     }
-    if (!form.parent_id) {
-      e.parent_id = 'Parent department is required';
-    }
-    if (!form.head_employee_id) {
-      e.head_employee_id = 'Department head is required';
-    }
-
     setErrors(e);
     setApiError('');
 
@@ -160,8 +139,7 @@ function DeptDrawer({
       const payload = {
         name: form.name,
         code: form.code,
-        parent_id: form.parent_id || null,
-        head_employee_id: form.head_employee_id || null,
+        parent_id: null,
         scope_type: form.scope_type,
         branch_id: form.scope_type === 'SINGLE_BRANCH' ? form.branch_id : null,
         branch_ids: form.scope_type === 'SELECTED_BRANCHES' ? form.branch_ids : [],
@@ -269,7 +247,7 @@ function DeptDrawer({
                 id="branch_id"
                 value={form.branch_id}
                 onChange={e => {
-                  setForm(f => ({ ...f, branch_id: e.target.value, parent_id: '' }));
+                  setForm(f => ({ ...f, branch_id: e.target.value }));
                   setErrors(prev => ({ ...prev, branch_id: '' }));
                 }}
                 className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 ${errors.branch_id ? 'border-red-400' : 'border-border'}`}
@@ -330,53 +308,6 @@ function DeptDrawer({
             )}
           </div>
 
-          {/* Department Head */}
-          <div id="head_employee_id">
-            <label className="text-xs font-medium text-muted-foreground block mb-1">
-              Department Head <span className="text-red-500">*</span>
-            </label>
-            <ManagerSelectCombobox
-              value={form.head_employee_id}
-              onChange={v => {
-                setForm(f => ({ ...f, head_employee_id: v }));
-                setErrors(prev => ({ ...prev, head_employee_id: '' }));
-              }}
-              branchId={form.scope_type === 'SINGLE_BRANCH' ? form.branch_id : undefined}
-              className={errors.head_employee_id ? 'ring-1 ring-red-400 rounded-lg' : ''}
-            />
-            {errors.head_employee_id && (
-              <p className="text-xs text-red-500 mt-1">{errors.head_employee_id}</p>
-            )}
-          </div>
-
-          {/* Parent Department */}
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">
-              Parent Department <span className="text-red-500">*</span>
-            </label>
-            <select
-              id="parent_id"
-              value={form.parent_id}
-              onChange={e => {
-                setForm(f => ({ ...f, parent_id: e.target.value }));
-                setErrors(prev => ({ ...prev, parent_id: '' }));
-              }}
-              className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 ${errors.parent_id ? 'border-red-400' : 'border-border'}`}
-            >
-              <option value="">— None (top level) —</option>
-              {parentOptions.map(d => (
-                <option key={d.id} value={d.id}>{d.code ? `${d.code} – ` : ''}{d.name}</option>
-              ))}
-            </select>
-            {errors.parent_id && (
-              <p className="text-xs text-red-500 mt-1">{errors.parent_id}</p>
-            )}
-            {form.scope_type === 'SINGLE_BRANCH' && form.branch_id && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Showing departments from the selected branch only.
-              </p>
-            )}
-          </div>
         </div>
         <div className="shrink-0 border-t px-6 py-4 flex items-center justify-end gap-3">
           <button onClick={onClose} className="border border-border rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-muted">
@@ -425,9 +356,7 @@ export default function DepartmentsPage() {
   const [search, setSearch] = useState('');
   const [branchFilter, setBranchFilter] = useState('');
   const [scopeFilter, setScopeFilter] = useState('');
-  const [headFilter, setHeadFilter] = useState('');
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [headEmployees, setHeadEmployees] = useState<{ id: string; first_name: string; last_name: string }[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -441,10 +370,9 @@ export default function DepartmentsPage() {
 
   useEffect(() => {
     api.get('/branches').then(r => setBranches(r.data.data || [])).catch(() => {});
-    api.get('/employees/manager-select', { params: { limit: 500 } }).then(r => setHeadEmployees(r.data.data || [])).catch(() => {});
   }, []);
 
-  useEffect(() => { fetchDepartments(); }, [branchFilter, scopeFilter, headFilter]);
+  useEffect(() => { fetchDepartments(); }, [branchFilter, scopeFilter]);
 
   const fetchDepartments = async () => {
     setLoading(true);
@@ -452,7 +380,6 @@ export default function DepartmentsPage() {
       const params: any = {};
       if (branchFilter) params.branch_id = branchFilter;
       if (scopeFilter) params.scope_type = scopeFilter;
-      if (headFilter) params.head_employee_id = headFilter;
       const res = await api.get('/departments', { params });
       setDepartments(res.data.data || []);
       setSelected(new Set());
@@ -496,9 +423,7 @@ export default function DepartmentsPage() {
       ? departments.filter(d =>
           d.name.toLowerCase().includes(q) ||
           (d.code || '').toLowerCase().includes(q) ||
-          branchLabel(d).toLowerCase().includes(q) ||
-          (d.parent_name || '').toLowerCase().includes(q) ||
-          (d.head_employee_name || '').toLowerCase().includes(q),
+          branchLabel(d).toLowerCase().includes(q),
         )
       : [...departments];
 
@@ -588,9 +513,35 @@ export default function DepartmentsPage() {
             <h1 className="text-2xl font-bold text-foreground">Departments</h1>
             <p className="text-sm text-muted-foreground mt-1">Manage organizational departments</p>
           </div>
-          <Button onClick={() => { setEditDept(null); setShowDrawer(true); }}>
-            Add Department
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExportButton
+              config={{
+                module: 'departments',
+                title: 'Departments',
+                permission: PERMISSIONS.PLATFORM_DEPARTMENTS_VIEW,
+                columns: [
+                  { key: 'name', header: 'Department Name' },
+                  { key: 'code', header: 'Code' },
+                  { key: 'is_active', header: 'Active' },
+                  { key: 'created_at', header: 'Created At', type: 'date' },
+                ],
+                defaultColumns: ['name', 'code', 'is_active', 'created_at'],
+                filenamePrefix: 'departments',
+              }}
+              filters={{ search }}
+              currentPageData={filtered}
+            />
+            <ImportButton
+              config={{
+                module: 'departments',
+                title: 'Departments',
+                permission: PERMISSIONS.PLATFORM_ORGANIZATIONS_CREATE,
+              }}
+            />
+            <Button onClick={() => { setEditDept(null); setShowDrawer(true); }}>
+              Add Department
+            </Button>
+          </div>
         </div>
 
         {/* Stats */}
@@ -706,14 +657,6 @@ export default function DepartmentsPage() {
               <option value="">All Scopes</option>
               {SCOPE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
-            <select
-              value={headFilter}
-              onChange={e => setHeadFilter(e.target.value)}
-              className="border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-background"
-            >
-              <option value="">All Department Heads</option>
-              {headEmployees.map(e => <option key={e.id} value={e.id}>{e.first_name} {e.last_name}</option>)}
-            </select>
             <Button
               size="sm"
               variant="outline"
@@ -739,8 +682,6 @@ export default function DepartmentsPage() {
                 <SortTh col="code" current={sortKey} dir={sortDir} onSort={handleSort}>Code</SortTh>
                 <SortTh col="name" current={sortKey} dir={sortDir} onSort={handleSort}>Department Name</SortTh>
                 <SortTh col="scope_type" current={sortKey} dir={sortDir} onSort={handleSort}>Scope</SortTh>
-                <SortTh col="parent_name" current={sortKey} dir={sortDir} onSort={handleSort}>Parent</SortTh>
-                <SortTh col="head_employee_name" current={sortKey} dir={sortDir} onSort={handleSort}>Department Head</SortTh>
                 <SortTh col="employee_count" current={sortKey} dir={sortDir} onSort={handleSort}>Employees</SortTh>
                 <SortTh col="resigned_count" current={sortKey} dir={sortDir} onSort={handleSort}>Resigned</SortTh>
                 <TableHead className="text-right px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Actions</TableHead>
@@ -749,14 +690,14 @@ export default function DepartmentsPage() {
             <TableBody className="divide-y divide-border">
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-16">
+                  <TableCell colSpan={7} className="text-center py-16">
                     <div className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-3" />
                     <p className="text-sm text-muted-foreground">Loading departments...</p>
                   </TableCell>
                 </TableRow>
               ) : filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-12">
+                  <TableCell colSpan={7} className="text-center py-12">
                     <Building2 className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
                     <p className="text-sm text-muted-foreground">
                       {search ? 'No departments match your search' : 'No departments found'}
@@ -812,8 +753,6 @@ export default function DepartmentsPage() {
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </TableCell>
-                      <TableCell className="px-4 py-3 text-sm text-muted-foreground">{dept.parent_name || '—'}</TableCell>
-                      <TableCell className="px-4 py-3 text-sm text-muted-foreground">{dept.head_employee_name?.trim() || '—'}</TableCell>
                       <TableCell className="px-4 py-3 text-sm text-foreground">{Number(dept.employee_count || 0)}</TableCell>
                       <TableCell className="px-4 py-3 text-sm text-foreground">{Number(dept.resigned_count || 0)}</TableCell>
                       <TableCell className="px-4 py-3 text-right">

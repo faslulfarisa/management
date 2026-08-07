@@ -1,5 +1,4 @@
 import { Injectable, Logger, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { DatabaseService } from '../../../shared/database.service';
@@ -8,7 +7,7 @@ import { AuditLogService } from '../../platform/services/audit-log.service';
 import { SignupOfferService } from '../../platform/services/signup-offer.service';
 import { NotificationEmitterService } from '../../notifications/services/notification-emitter.service';
 import {
-  CreateAccountDto, RegistrationSessionDto, VerifyEmailDto, VerifyMobileDto, SubmitOrganizationDto,
+  CreateAccountDto, RegistrationSessionDto, VerifyMobileDto, SubmitOrganizationDto,
 } from '../dto/registration.dto';
 
 @Injectable()
@@ -17,7 +16,6 @@ export class RegistrationService {
 
   constructor(
     private db: DatabaseService,
-    private config: ConfigService,
     private emailService: EmailService,
     private auditLog: AuditLogService,
     private signupOfferService: SignupOfferService,
@@ -26,10 +24,6 @@ export class RegistrationService {
 
   private sha256(value: string): string {
     return crypto.createHash('sha256').update(value).digest('hex');
-  }
-
-  private frontendUrl(): string {
-    return this.config.get<string>('FRONTEND_URL', 'http://localhost:3000');
   }
 
   private async getSessionOrThrow(registrationId: string, accessToken: string) {
@@ -41,6 +35,26 @@ export class RegistrationService {
     return rows[0];
   }
 
+  private async retireStaleRegistrationOwner(email: string, client: Pick<DatabaseService, 'query'> = this.db) {
+    await client.query(
+      `UPDATE users u
+       SET deleted_at = now(), updated_at = now()
+       WHERE LOWER(u.email) = $1
+         AND u.deleted_at IS NULL
+         AND u.is_registration_owner = true
+         AND NOT EXISTS (SELECT 1 FROM user_tenants ut WHERE ut.user_id = u.id)
+         AND NOT EXISTS (
+           SELECT 1 FROM tenants t
+           WHERE t.deleted_at IS NULL
+             AND (
+               t.organization_admin_user_id = u.id
+               OR t.registration_owner_user_id = u.id
+             )
+         )`,
+      [email],
+    );
+  }
+
   // ── Step 1: account creation ────────────────────────────────────
 
   async createAccount(dto: CreateAccountDto) {
@@ -49,8 +63,10 @@ export class RegistrationService {
     }
     const email = dto.email.toLowerCase().trim();
 
+    await this.retireStaleRegistrationOwner(email);
+
     const { rows: existingUser } = await this.db.query(
-      'SELECT 1 FROM users WHERE email = $1 AND deleted_at IS NULL LIMIT 1',
+      'SELECT 1 FROM users WHERE LOWER(email) = $1 AND deleted_at IS NULL LIMIT 1',
       [email],
     );
     if (existingUser.length) {
@@ -64,66 +80,18 @@ export class RegistrationService {
     const passwordHash = await bcrypt.hash(dto.password, 12);
     const accessToken = crypto.randomBytes(32).toString('hex');
     const accessTokenHash = this.sha256(accessToken);
-    const emailToken = crypto.randomBytes(32).toString('hex');
-    const emailTokenHash = this.sha256(emailToken);
-    const emailTokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     const { rows } = await this.db.query(
       `INSERT INTO pending_registrations
-         (full_name, email, mobile, password_hash, access_token_hash, email_token_hash, email_token_expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (full_name, email, mobile, password_hash, access_token_hash)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING id`,
-      [dto.fullName, email, dto.mobile || null, passwordHash, accessTokenHash, emailTokenHash, emailTokenExpiresAt],
+      [dto.fullName, email, dto.mobile || null, passwordHash, accessTokenHash],
     );
 
     const registrationId = rows[0].id;
-    const verifyUrl = `${this.frontendUrl()}/register/verify-email?registrationId=${registrationId}&token=${emailToken}`;
-
-    try {
-      await this.emailService.sendRegistrationEmailVerification(email, verifyUrl, dto.fullName);
-    } catch {
-      // Email delivery failures shouldn't block account creation — resend is available.
-    }
 
     return { registrationId, accessToken };
-  }
-
-  async verifyEmail(dto: VerifyEmailDto) {
-    const { rows } = await this.db.query(
-      'SELECT id, email_token_hash, email_token_expires_at, email_verified_at FROM pending_registrations WHERE id = $1',
-      [dto.registrationId],
-    );
-    if (!rows.length) throw new BadRequestException('Registration not found or already completed');
-    const reg = rows[0];
-    if (reg.email_verified_at) return { success: true, alreadyVerified: true };
-    if (!reg.email_token_hash || !reg.email_token_expires_at || new Date(reg.email_token_expires_at) < new Date()) {
-      throw new BadRequestException('Verification link has expired. Please request a new one.');
-    }
-    if (this.sha256(dto.token) !== reg.email_token_hash) {
-      throw new BadRequestException('Invalid verification link');
-    }
-    await this.db.query('UPDATE pending_registrations SET email_verified_at = now() WHERE id = $1', [dto.registrationId]);
-    return { success: true };
-  }
-
-  async resendVerification(dto: RegistrationSessionDto) {
-    const reg = await this.getSessionOrThrow(dto.registrationId, dto.accessToken);
-    if (reg.email_verified_at) return { success: true, alreadyVerified: true };
-
-    const emailToken = crypto.randomBytes(32).toString('hex');
-    const emailTokenHash = this.sha256(emailToken);
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    await this.db.query(
-      'UPDATE pending_registrations SET email_token_hash = $1, email_token_expires_at = $2 WHERE id = $3',
-      [emailTokenHash, expiresAt, reg.id],
-    );
-    const verifyUrl = `${this.frontendUrl()}/register/verify-email?registrationId=${reg.id}&token=${emailToken}`;
-    try {
-      await this.emailService.sendRegistrationEmailVerification(reg.email, verifyUrl, reg.full_name);
-    } catch {
-      // ignore delivery failures
-    }
-    return { success: true };
   }
 
   // ── Mobile verification (optional, best-effort — no SMS provider exists) ──
@@ -167,15 +135,15 @@ export class RegistrationService {
       fullName: reg.full_name,
       email: reg.email,
       mobile: reg.mobile,
-      emailVerified: !!reg.email_verified_at,
       mobileVerified: !!reg.mobile_verified_at,
     };
   }
 
   // ── Step 2: organization submission ─────────────────────────────
 
-  private async assertNoDuplicateOrg(opts: { gstin?: string; registrationNumber?: string; corporateEmail: string }) {
+  private async assertNoDuplicateOrg(opts: { gstin?: string; registrationNumber?: string; corporateEmail: string; companyCode: string }) {
     const checks: { label: string; column: string; value?: string }[] = [
+      { label: 'company code', column: 'company_code', value: opts.companyCode },
       { label: 'GST number', column: 'gstin', value: opts.gstin },
       { label: 'registration number', column: 'registration_number', value: opts.registrationNumber },
       { label: 'corporate email', column: 'primary_email', value: opts.corporateEmail },
@@ -183,7 +151,7 @@ export class RegistrationService {
     for (const check of checks) {
       if (!check.value) continue;
       const { rows } = await this.db.query(
-        `SELECT 1 FROM tenants WHERE ${check.column} = $1 AND deleted_at IS NULL LIMIT 1`,
+        `SELECT 1 FROM tenants WHERE LOWER(${check.column}) = LOWER($1) AND deleted_at IS NULL LIMIT 1`,
         [check.value],
       );
       if (rows.length) {
@@ -205,12 +173,10 @@ export class RegistrationService {
 
   async submitOrganization(dto: SubmitOrganizationDto, ipAddress?: string, userAgent?: string) {
     const reg = await this.getSessionOrThrow(dto.registrationId, dto.accessToken);
-    if (!reg.email_verified_at) {
-      throw new ForbiddenException('Please verify your email before submitting your organization details');
-    }
 
     const corporateEmail = dto.corporateEmail.toLowerCase().trim();
-    await this.assertNoDuplicateOrg({ gstin: dto.gstin, registrationNumber: dto.registrationNumber, corporateEmail });
+    const companyCode = dto.companyCode.trim();
+    await this.assertNoDuplicateOrg({ gstin: dto.gstin, registrationNumber: dto.registrationNumber, corporateEmail, companyCode });
 
     const name = dto.tradeName || dto.legalName;
     const slug = await this.generateUniqueSlug(name);
@@ -218,37 +184,36 @@ export class RegistrationService {
     const { tenant, userId, offerApplied, trialEndsAt } = await this.db.transaction(async (client) => {
       const { rows: tenantRows } = await client.query(
         `INSERT INTO tenants (
-           name, slug, legal_name, trade_name, company_type, registration_number, gstin,
+           name, slug, legal_name, trade_name, company_code, company_type, registration_number, gstin,
            pan_number, cin_number, industry, website_url, primary_email, support_email,
            phone_number, alternate_phone, registered_address, operational_address,
-           business_category, current_hr_system, company_size, payroll_requirement, attendance_requirement,
-           biometric_requirement, recruitment_requirement, performance_requirement,
+           business_category, current_hr_system, company_size,
            estimated_branch_count, estimated_employee_count,
            contact_person_name, contact_designation, contact_person_mobile, contact_person_email,
            approval_status, status, submitted_at
          ) VALUES (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,
            'pending_review', 'pending', now()
          ) RETURNING *`,
         [
-          name, slug, dto.legalName, dto.tradeName || null, dto.companyType, dto.registrationNumber || null,
+          name, slug, dto.legalName, dto.tradeName || null, companyCode, dto.companyType, dto.registrationNumber || null,
           dto.gstin || null, dto.panNumber || null, dto.cinNumber || null, dto.industry || null,
           dto.websiteUrl || null, corporateEmail, dto.supportEmail || null, dto.phoneNumber,
           dto.alternatePhone || null, JSON.stringify(dto.registeredAddress),
           dto.operationalAddress ? JSON.stringify(dto.operationalAddress) : null,
           dto.businessCategory || null, dto.currentHrSystem || null, dto.companySize || null,
-          !!dto.payrollRequirement, !!dto.attendanceRequirement, !!dto.biometricRequirement,
-          !!dto.recruitmentRequirement, !!dto.performanceRequirement,
           dto.estimatedBranchCount || null, dto.estimatedEmployeeCount || null,
           dto.contactPersonName, dto.contactDesignation, dto.contactPersonMobile, dto.contactPersonEmail,
         ],
       );
       const tenant = tenantRows[0];
 
+      await this.retireStaleRegistrationOwner(reg.email, client);
+
       const { rows: userRows } = await client.query(
-        `INSERT INTO users (tenant_id, email, phone, password_hash, is_registration_owner, email_verified_at, mobile_verified_at)
-         VALUES ($1, $2, $3, $4, true, $5, $6) RETURNING id`,
-        [tenant.id, reg.email, reg.mobile, reg.password_hash, reg.email_verified_at, reg.mobile_verified_at],
+        `INSERT INTO users (tenant_id, email, phone, password_hash, is_registration_owner, mobile_verified_at)
+         VALUES ($1, $2, $3, $4, true, $5) RETURNING id`,
+        [tenant.id, reg.email, reg.mobile, reg.password_hash, reg.mobile_verified_at],
       );
       const userId = userRows[0].id;
 
@@ -330,11 +295,25 @@ export class RegistrationService {
 
   async getOrganizationStatus(tenantId: string) {
     const { rows } = await this.db.query(
-      `SELECT id, name, approval_status, rejection_reason, submitted_at, reviewed_at, trial_ends_at
+      `SELECT id, name, status, lifecycle_stage, approval_status, rejection_reason, submitted_at, reviewed_at, trial_ends_at
        FROM tenants WHERE id = $1 AND deleted_at IS NULL`,
       [tenantId],
     );
     if (!rows.length) throw new BadRequestException('Organization not found');
-    return rows[0];
+    const organization = rows[0];
+    return {
+      ...organization,
+      approval_status: this.getEffectiveOrganizationStatus(organization),
+    };
+  }
+
+  private getEffectiveOrganizationStatus(organization: any): string {
+    if (organization.status !== 'active' && organization.lifecycle_stage && organization.lifecycle_stage !== 'active') {
+      return organization.lifecycle_stage;
+    }
+    if (organization.approval_status && organization.approval_status !== 'approved') {
+      return organization.approval_status;
+    }
+    return organization.status === 'active' ? 'approved' : 'pending_review';
   }
 }

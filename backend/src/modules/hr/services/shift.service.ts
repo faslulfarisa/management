@@ -179,8 +179,37 @@ export class ShiftService {
     return results;
   }
 
-  async getTodayShiftForEmployee(tenantId: string, employeeId: string): Promise<any | null> {
-    const today = this.getLocalDate();
+  async getTodayShiftForEmployee(tenantId: string, employeeId: string, customDate?: string): Promise<any | null> {
+    const today = customDate || this.getLocalDate();
+
+    // Check shift overrides first
+    const { rows: overrideRows } = await this.db.query(
+      `SELECT so.*, sd.name as shift_name, sd.code as shift_code
+       FROM shift_overrides so
+       LEFT JOIN shift_definitions sd ON so.shift_id = sd.id
+       WHERE so.tenant_id = $1 AND so.employee_id = $2 AND so.date = $3`,
+      [tenantId, employeeId, today],
+    );
+    if (overrideRows.length) {
+      const override = overrideRows[0];
+      if (['cancelled', 'leave', 'replaced'].includes(override.override_type)) {
+        return null;
+      }
+      return {
+        id: override.id,
+        tenant_id: tenantId,
+        employee_id: employeeId,
+        date: today,
+        shift_id: override.shift_id ?? null,
+        shift_name: override.shift_name ?? 'Custom Shift',
+        shift_code: override.shift_code ?? 'CUST',
+        start_time: override.start_time,
+        end_time: override.end_time,
+        break_minutes: override.break_minutes ?? 0,
+        grace_period_minutes: override.grace_period_minutes ?? 15,
+        source: 'override',
+      };
+    }
 
     // Check day-specific schedule first
     const { rows: scheduleRows } = await this.db.query(
@@ -212,6 +241,55 @@ export class ShiftService {
     if (assignRows.length) return assignRows[0];
 
     return this.getShiftFromTemplate(tenantId, employeeId, today);
+  }
+
+  async getEmployeeScheduleRange(tenantId: string, employeeId: string, filters: { date_from?: string; date_to?: string }) {
+    const dateFrom = filters.date_from || this.getLocalDate();
+    const dateTo = filters.date_to || dateFrom;
+    const start = new Date(`${dateFrom}T00:00:00`);
+    const end = new Date(`${dateTo}T00:00:00`);
+
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+      return [];
+    }
+
+    const maxDays = 62;
+    const dates: string[] = [];
+    for (let cursor = new Date(start); cursor <= end && dates.length < maxDays; cursor.setDate(cursor.getDate() + 1)) {
+      dates.push(this.getLocalDate(cursor));
+    }
+
+    const shifts: any[] = [];
+    for (const date of dates) {
+      const shift = await this.getTodayShiftForEmployee(tenantId, employeeId, date);
+      if (!shift) continue;
+      shifts.push({
+        ...shift,
+        id: shift.id || `${employeeId}-${date}`,
+        date,
+        status: shift.status || 'scheduled',
+      });
+    }
+
+    return shifts;
+  }
+
+  async getOverrides(tenantId: string, filters: any) {
+    const { employee_id, date_from, date_to } = filters;
+    let query = `SELECT so.*, sd.name as shift_name, sd.code as shift_code,
+      e.first_name, e.last_name, e.employee_code
+      FROM shift_overrides so
+      LEFT JOIN shift_definitions sd ON so.shift_id = sd.id
+      JOIN employees e ON so.employee_id = e.id
+      WHERE so.tenant_id = $1`;
+    const params: any[] = [tenantId];
+    let idx = 2;
+    if (employee_id) { query += ` AND so.employee_id = $${idx++}`; params.push(employee_id); }
+    if (date_from) { query += ` AND so.date >= $${idx++}`; params.push(date_from); }
+    if (date_to) { query += ` AND so.date <= $${idx++}`; params.push(date_to); }
+    query += ' ORDER BY so.date';
+    const { rows } = await this.db.query(query, params);
+    return rows;
   }
 
   private getLocalDate(date = new Date()) {

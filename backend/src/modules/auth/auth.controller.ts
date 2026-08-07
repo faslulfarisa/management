@@ -2,11 +2,14 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
   Delete,
   Body,
+  UploadedFile,
   Param,
   Req,
   Res,
+  UseInterceptors,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -17,10 +20,14 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthService } from './auth.service';
+import { AccountProfileService } from './account-profile.service';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AuthorizationService } from '../platform/services/authorization.service';
+import { detectPortalFromRequest, PortalKind } from '../../shared/portal-host.util';
+import { getClearCookieOptions, getCookieOptions } from '../../shared/http-config.util';
 import {
   ForgotPasswordDto,
   ResetPasswordDto,
@@ -31,6 +38,7 @@ import {
   MfaLoginVerifyDto,
   RecoveryCodesRegenerateDto,
   ChangePasswordVerifyDto,
+  AdminLoginDto,
 } from './dto/auth.dto';
 
 @ApiTags('Auth')
@@ -38,11 +46,13 @@ import {
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
+    private readonly accountProfileService: AccountProfileService,
     @Inject(forwardRef(() => AuthorizationService))
     private readonly authorizationService: AuthorizationService,
   ) {}
 
   @Post('login')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @UseGuards(LocalAuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Email + password login' })
@@ -51,12 +61,13 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
     @Body('portal') portal?: 'platform' | 'customer',
   ) {
+    const resolvedPortal = (req as any).resolvedPortal ?? detectPortalFromRequest(req, portal as PortalKind | undefined);
     const result: any = await this.authService.login(
       req.user,
       req.ip || '',
       req.headers['user-agent'] as string,
       req.cookies?.trusted_device_token,
-      portal,
+      resolvedPortal,
     );
 
     if (result.requiresPasswordChange) {
@@ -85,17 +96,87 @@ export class AuthController {
       };
     }
 
-    res.cookie('refresh_token', result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    if (result.refreshToken) {
+      res.cookie('refresh_token', result.refreshToken, getCookieOptions(7 * 24 * 60 * 60 * 1000));
+    }
 
     return {
       success: true,
       data: {
         accessToken: result.accessToken,
+        email: result.email,
+        requiresMfa: false,
+        isSuperAdmin: result.isSuperAdmin,
+        isInternalStaff: result.isInternalStaff,
+        internalRole: result.internalRole,
+        tenants: result.tenants,
+        selectedTenantId: result.selectedTenantId,
+        pendingOrganization: result.pendingOrganization,
+      },
+      meta: null,
+      error: null,
+    };
+  }
+
+  @Post('admin-login')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Company code + organization admin login' })
+  async adminLogin(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Body() dto: AdminLoginDto,
+  ) {
+    const user = await this.authService.validateAdminUser(
+      dto.companyCode,
+      dto.email,
+      dto.password,
+      req.ip || '',
+      req.headers['user-agent'] as string,
+    );
+    const result: any = await this.authService.login(
+      user,
+      req.ip || '',
+      req.headers['user-agent'] as string,
+      req.cookies?.trusted_device_token,
+      'customer',
+    );
+
+    if (result.requiresPasswordChange) {
+      return {
+        success: true,
+        data: {
+          requiresPasswordChange: true,
+          changeSessionId: result.changeSessionId,
+          expiresIn: result.expiresIn,
+        },
+        meta: null,
+        error: null,
+      };
+    }
+
+    if (result.requiresMfa) {
+      return {
+        success: true,
+        data: {
+          requiresMfa: true,
+          loginSessionId: result.loginSessionId,
+          expiresIn: result.expiresIn,
+        },
+        meta: null,
+        error: null,
+      };
+    }
+
+    if (result.refreshToken) {
+      res.cookie('refresh_token', result.refreshToken, getCookieOptions(7 * 24 * 60 * 60 * 1000));
+    }
+
+    return {
+      success: true,
+      data: {
+        accessToken: result.accessToken,
+        email: result.email,
         requiresMfa: false,
         isSuperAdmin: result.isSuperAdmin,
         isInternalStaff: result.isInternalStaff,
@@ -134,17 +215,15 @@ export class AuthController {
       };
     }
 
-    res.cookie('refresh_token', result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    if (result.refreshToken) {
+      res.cookie('refresh_token', result.refreshToken, getCookieOptions(7 * 24 * 60 * 60 * 1000));
+    }
 
     return {
       success: true,
       data: {
         accessToken: result.accessToken,
+        email: result.email,
         requiresMfa: false,
         isSuperAdmin: result.isSuperAdmin,
         isInternalStaff: result.isInternalStaff,
@@ -163,33 +242,26 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @ApiOperation({ summary: 'Verify TOTP or recovery code to complete an MFA-gated login (10 req/min per IP)' })
   async verifyMfaLogin(@Body() dto: MfaLoginVerifyDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const result = await this.authService.verifyMfaLogin(
+    const result: any = await this.authService.verifyMfaLogin(
       dto.loginSessionId,
       { token: dto.token, recoveryCode: dto.recoveryCode, trustDevice: dto.trustDevice },
       req.ip || '',
       req.headers['user-agent'] as string,
     );
 
-    res.cookie('refresh_token', result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    if (result.refreshToken) {
+      res.cookie('refresh_token', result.refreshToken, getCookieOptions(7 * 24 * 60 * 60 * 1000));
+    }
 
-    if (result.trustedDeviceToken) {
-      res.cookie('trusted_device_token', result.trustedDeviceToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-      });
+    if (result.refreshToken && result.trustedDeviceToken) {
+      res.cookie('trusted_device_token', result.trustedDeviceToken, getCookieOptions(30 * 24 * 60 * 60 * 1000));
     }
 
     return {
       success: true,
       data: {
         accessToken: result.accessToken,
+        email: result.email,
         requiresMfa: false,
         isSuperAdmin: result.isSuperAdmin,
         isInternalStaff: result.isInternalStaff,
@@ -222,6 +294,52 @@ export class AuthController {
       meta: null,
       error: null,
     };
+  }
+
+  @Get('profile')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get the current authenticated user global profile and settings context' })
+  async getGlobalProfile(@Req() req: Request) {
+    const data = await this.accountProfileService.getProfile((req as any).user);
+    return { success: true, data, meta: null, error: null };
+  }
+
+  @Patch('profile/personal')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update safe personal profile fields for the current authenticated user' })
+  async updateGlobalPersonalProfile(@Req() req: Request, @Body() body: any) {
+    const data = await this.accountProfileService.updatePersonal((req as any).user, body);
+    return { success: true, data, meta: null, error: null };
+  }
+
+  @Patch('profile/account')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update account identifiers for the current authenticated user' })
+  async updateGlobalAccountProfile(@Req() req: Request, @Body() body: any) {
+    const data = await this.accountProfileService.updateAccount((req as any).user, body);
+    return { success: true, data, meta: null, error: null };
+  }
+
+  @Post('profile/photo')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Upload or replace the current authenticated user profile photo' })
+  async uploadGlobalProfilePhoto(@Req() req: Request, @UploadedFile() file: Express.Multer.File) {
+    const data = await this.accountProfileService.uploadPhoto((req as any).user, file);
+    return { success: true, data, meta: null, error: null };
+  }
+
+  @Delete('profile/photo')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete the current authenticated user profile photo' })
+  async deleteGlobalProfilePhoto(@Req() req: Request) {
+    const data = await this.accountProfileService.deletePhoto((req as any).user);
+    return { success: true, data, meta: null, error: null };
   }
 
   @Post('select-tenant')
@@ -259,12 +377,7 @@ export class AuthController {
 
     const result = await this.authService.refreshTokens(refreshToken);
 
-    res.cookie('refresh_token', result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    res.cookie('refresh_token', result.refreshToken, getCookieOptions(7 * 24 * 60 * 60 * 1000));
 
     return {
       success: true,
@@ -286,7 +399,7 @@ export class AuthController {
       await this.authService.logout(user.sub, refreshToken);
     }
 
-    res.clearCookie('refresh_token');
+    res.clearCookie('refresh_token', getClearCookieOptions());
 
     return { success: true, data: null, meta: null, error: null };
   }

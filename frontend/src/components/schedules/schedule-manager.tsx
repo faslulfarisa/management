@@ -69,19 +69,49 @@ const TEMPLATE_CATEGORIES = [
     borderColor: 'border-rose-200',
     description: 'Shift timings, rotation, weekly off patterns',
   },
+  {
+    key: 'holiday_policy',
+    label: 'Holiday Policy',
+    icon: CalendarDays,
+    gradient: 'from-cyan-500 to-teal-600',
+    lightBg: 'bg-cyan-50',
+    textColor: 'text-cyan-700',
+    borderColor: 'border-cyan-200',
+    description: 'Holiday calendars, public holidays, optional holidays',
+  },
 ];
 
+const getCategoryRoute = (key: string) => {
+  switch (key) {
+    case 'attendance_policy':
+      return '/dashboard/templates/attendance-policy';
+    case 'leave_policy':
+      return '/dashboard/templates/leave-policy';
+    case 'salary_structure':
+      return '/dashboard/templates/salary-structure';
+    case 'overtime_policy':
+      return '/dashboard/templates/overtime-policy';
+    case 'shift_management':
+      return '/dashboard/templates/shifts';
+    case 'holiday_policy':
+      return '/dashboard/templates/holiday-policy';
+    default:
+      return '/dashboard/templates';
+  }
+};
+
+
 const SCOPE_LABELS: Record<string, string> = {
-  employee: 'Employee', designation: 'Designation', department: 'Department', property: 'Branch',
+  employee: 'Employee', designation: 'Designation', department: 'Department', branch: 'Branch', property: 'Property', organization: 'Organization',
 };
 const SCOPE_PLURALS: Record<string, string> = {
-  employee: 'Employees', designation: 'Designations', department: 'Departments', property: 'Branches',
+  employee: 'Employees', designation: 'Designations', department: 'Departments', branch: 'Branches', property: 'Properties', organization: 'Organization',
 };
 const SCOPE_ICONS: Record<string, any> = {
-  employee: User, designation: Briefcase, department: Building2, property: GitBranch,
+  employee: User, designation: Briefcase, department: Building2, branch: GitBranch, property: Hash, organization: Layers,
 };
 const SCOPE_PRIORITY: Record<string, number> = {
-  employee: 100, designation: 50, department: 30, property: 10,
+  employee: 100, designation: 50, department: 30, branch: 10, property: 10, organization: 0,
 };
 
 // ─── Assign Drawer ─────────────────────────────────────────────────────────────
@@ -133,8 +163,13 @@ function AssignDrawer({
     setScopeSearch('');
     const ep: Record<string, string> = {
       employee: '/employees', designation: '/designations',
-      department: '/departments', property: '/properties',
+      department: '/departments', branch: '/branches', property: '/properties',
     };
+    if (scopeType === 'organization') {
+      setScopeOptions([{ id: 'organization', name: 'Organization' }]);
+      setScopeLoading(false);
+      return;
+    }
     api.get(ep[scopeType] || '/employees')
       .then(r => {
         const raw: any[] = r.data.data || [];
@@ -296,7 +331,7 @@ function AssignDrawer({
                 ) : templates.length === 0 ? (
                   <div className="text-center py-8 text-sm text-muted-foreground border border-dashed rounded-xl">
                     No templates found.{' '}
-                    <Link href="/dashboard/templates" className="text-primary underline">Create one</Link>
+                    <Link href={getCategoryRoute(categoryKey)} className="text-primary underline">Create one</Link>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -344,7 +379,9 @@ function AssignDrawer({
               <div>
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-2">Assign To</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {Object.entries(SCOPE_LABELS).map(([key, label]) => {
+                  {Object.entries(SCOPE_LABELS)
+                    .filter(([key]) => key === 'employee' || key === 'designation')
+                    .map(([key, label]) => {
                     const Icon = SCOPE_ICONS[key];
                     const active = scopeType === key;
                     return (
@@ -1093,12 +1130,12 @@ export function ScheduleManager({ activeTab }: { activeTab: 'overview' | 'assign
   // Exclusion drawer
   const [exclusionDrawerAssignment, setExclusionDrawerAssignment] = useState<any | null>(null);
 
-  const [unassigned, setUnassigned] = useState<Record<string, any[]>>({ employee: [], designation: [], department: [], property: [] });
+  const [unassigned, setUnassigned] = useState<Record<string, any[]>>({ employee: [], designation: [], department: [], branch: [], property: [] });
   const [unassignedByCategory, setUnassignedByCategory] = useState<Record<string, Record<string, any[]>>>({});
   const [unassignedLoading, setUnassignedLoading] = useState(false);
   const [unassignedLoaded, setUnassignedLoaded] = useState(false);
   const [unassignedSearch, setUnassignedSearch] = useState('');
-  const [unassignedScopeTab, setUnassignedScopeTab] = useState<'employee' | 'designation' | 'department' | 'property'>('employee');
+  const [unassignedScopeTab, setUnassignedScopeTab] = useState<'employee' | 'designation' | 'department' | 'branch' | 'property'>('employee');
   const [unassignedCategoryFilter, setUnassignedCategoryFilter] = useState<string>('all');
 
   // ── Data fetching ─────────────────────────────────────────────────────────
@@ -1175,20 +1212,21 @@ export function ScheduleManager({ activeTab }: { activeTab: 'overview' | 'assign
   const fetchUnassigned = useCallback(async () => {
     setUnassignedLoading(true);
     try {
-      const [empRes, desRes, deptRes, propRes] = await Promise.all([
+      const [empRes, desRes, deptRes, branchRes, propRes] = await Promise.all([
         api.get('/employees').catch(() => ({ data: { data: [] } })),
         api.get('/designations').catch(() => ({ data: { data: [] } })),
         api.get('/departments').catch(() => ({ data: { data: [] } })),
+        api.get('/branches').catch(() => ({ data: { data: [] } })),
         api.get('/properties').catch(() => ({ data: { data: [] } })),
       ]);
 
       const assignedIds: Record<string, Set<string>> = {
-        employee: new Set(), designation: new Set(), department: new Set(), property: new Set(),
+        employee: new Set(), designation: new Set(), department: new Set(), branch: new Set(), property: new Set(),
       };
       const assignedIdsByCategory: Record<string, Record<string, Set<string>>> = {};
       TEMPLATE_CATEGORIES.forEach(cat => {
         assignedIdsByCategory[cat.key] = {
-          employee: new Set(), designation: new Set(), department: new Set(), property: new Set(),
+          employee: new Set(), designation: new Set(), department: new Set(), branch: new Set(), property: new Set(),
         };
       });
 
@@ -1212,6 +1250,7 @@ export function ScheduleManager({ activeTab }: { activeTab: 'overview' | 'assign
         employee: empRes.data.data || [],
         designation: desRes.data.data || [],
         department: deptRes.data.data || [],
+        branch: branchRes.data.data || [],
         property: propRes.data.data || [],
       };
 
@@ -1219,6 +1258,7 @@ export function ScheduleManager({ activeTab }: { activeTab: 'overview' | 'assign
         employee: entitiesByScope.employee.filter((e: any) => !assignedIds.employee.has(e.id)),
         designation: entitiesByScope.designation.filter((d: any) => !assignedIds.designation.has(d.id)),
         department: entitiesByScope.department.filter((d: any) => !assignedIds.department.has(d.id)),
+        branch: entitiesByScope.branch.filter((b: any) => !assignedIds.branch.has(b.id)),
         property: entitiesByScope.property.filter((p: any) => !assignedIds.property.has(p.id)),
       });
 
@@ -1229,6 +1269,7 @@ export function ScheduleManager({ activeTab }: { activeTab: 'overview' | 'assign
           employee: entitiesByScope.employee.filter((e: any) => !ids.employee.has(e.id)),
           designation: entitiesByScope.designation.filter((d: any) => !ids.designation.has(d.id)),
           department: entitiesByScope.department.filter((d: any) => !ids.department.has(d.id)),
+          branch: entitiesByScope.branch.filter((b: any) => !ids.branch.has(b.id)),
           property: entitiesByScope.property.filter((p: any) => !ids.property.has(p.id)),
         };
       });
@@ -1299,7 +1340,7 @@ export function ScheduleManager({ activeTab }: { activeTab: 'overview' | 'assign
 
   const activeUnassignedByScope = unassignedCategoryFilter === 'all'
     ? unassigned
-    : (unassignedByCategory[unassignedCategoryFilter] || { employee: [], designation: [], department: [], property: [] });
+    : (unassignedByCategory[unassignedCategoryFilter] || { employee: [], designation: [], department: [], branch: [], property: [] });
 
   const filteredUnassigned = (activeUnassignedByScope[unassignedScopeTab] || []).filter(entity => {
     const q = unassignedSearch.toLowerCase();
@@ -1421,7 +1462,7 @@ export function ScheduleManager({ activeTab }: { activeTab: 'overview' | 'assign
                             </button>
                           )}
                           <Link
-                            href="/dashboard/templates"
+                            href={getCategoryRoute(cat.key)}
                             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-border hover:bg-muted transition-colors ${cat.textColor}`}
                           >
                             <Settings2 className="w-3.5 h-3.5" />
@@ -1658,7 +1699,7 @@ export function ScheduleManager({ activeTab }: { activeTab: 'overview' | 'assign
 
             {unassignedLoaded && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {(['employee', 'designation', 'department', 'property'] as const).map(scope => {
+                {(['employee', 'designation', 'department', 'branch', 'property'] as const).map(scope => {
                   const Icon = SCOPE_ICONS[scope];
                   const count = activeUnassignedByScope[scope].length;
                   const active = unassignedScopeTab === scope;
@@ -1687,7 +1728,7 @@ export function ScheduleManager({ activeTab }: { activeTab: 'overview' | 'assign
                 <CardHeader className="pb-0 pt-4 px-4">
                   <div className="flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-1 flex-wrap">
-                      {(['employee', 'designation', 'department', 'property'] as const).map(scope => {
+                      {(['employee', 'designation', 'department', 'branch', 'property'] as const).map(scope => {
                         const count = activeUnassignedByScope[scope].length;
                         const Icon = SCOPE_ICONS[scope];
                         const active = unassignedScopeTab === scope;

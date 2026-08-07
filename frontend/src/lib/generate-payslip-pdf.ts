@@ -1,16 +1,13 @@
 import type { jsPDF as JsPDFType } from 'jspdf';
 import { urlToBase64, hexToRgb, numberToWords } from './pdf-utils';
 import type { EnrichedPayslipDetail } from '@/types/employee';
+import { formatCurrency } from './currency';
 
 // A4 in points
 const PAGE_W = 595;
 const PAGE_H = 842;
 const MARGIN = 36;
 const CONTENT_W = PAGE_W - MARGIN * 2;
-
-function fmt(n: number): string {
-  return 'Rs. ' + Math.round(n).toLocaleString('en-IN');
-}
 
 function imgFormat(dataUrl: string): string {
   const m = dataUrl.match(/data:image\/([^;]+);/);
@@ -21,6 +18,21 @@ function imgFormat(dataUrl: string): string {
   return 'JPEG';
 }
 
+function buildSalaryCalculationLines(
+  data: EnrichedPayslipDetail,
+  fmt: (amount: number) => string,
+  payBasisText: string | null,
+) {
+  return [
+    payBasisText ? `Pay basis: ${payBasisText}` : null,
+    data.attendance && data.worked_units !== null && data.worked_units !== undefined
+      ? `Attendance basis: ${data.worked_units} payable unit(s) from ${data.attendance.total_working_days} working day(s)`
+      : null,
+    `Gross Salary = earnings total ${fmt(data.totals.gross_salary)}`,
+    `Net Pay = Gross ${fmt(data.totals.gross_salary)} - Deductions ${fmt(data.totals.total_deductions)} = ${fmt(data.totals.net_salary)}`,
+  ].filter(Boolean) as string[];
+}
+
 export async function generatePayslipPdf(
   data: EnrichedPayslipDetail,
   opts?: { download?: boolean; filename?: string },
@@ -29,11 +41,27 @@ export async function generatePayslipPdf(
   const { default: autoTable } = await import('jspdf-autotable');
   const doc: JsPDFType = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
   const { company, employee, period, earnings, deductions, fines, totals, attendance, payment } = data;
+  const fmt = (n: number) => formatCurrency(n, data.currency?.code, { maximumFractionDigits: 0 });
 
   const headerColor = company.header_color || '#1e40af';
   const accentColor = company.accent_color || '#1e40af';
   const [hr, hg, hb] = hexToRgb(headerColor);
   const [ar, ag, ab] = hexToRgb(accentColor);
+  const payBasisText = (() => {
+    if (!data.pay_basis) return null;
+    const rate = Number(data.rate || 0);
+    const units = data.worked_units || 0;
+    if (data.pay_basis === 'weekly_salary') return `Weekly: ${fmt(rate)} x ${units} Weeks`;
+    if (['daily_wage', 'daily_weekly_payroll', 'daily_monthly_payroll'].includes(data.pay_basis)) {
+      return `Daily: ${fmt(rate)} x ${units} Days`;
+    }
+    if (['hourly_wage', 'hourly_weekly_payroll', 'hourly_monthly_payroll'].includes(data.pay_basis)) {
+      return `Hourly: ${fmt(rate)} x ${units} Hours`;
+    }
+    if (data.pay_basis === 'half_day_rate') return `Half-Day: ${fmt(rate)} x ${units} Half-Days`;
+    return `Monthly: ${fmt(rate || totals.gross_salary)}`;
+  })();
+  const salaryCalculationLines = buildSalaryCalculationLines(data, fmt, payBasisText);
 
   // ── Watermark — drawn first so it renders behind all content ─────────────
   if (company.watermark_enabled && company.watermark_text) {
@@ -107,12 +135,13 @@ export async function generatePayslipPdf(
   }
 
   // ── Employee information band (y: 92–160) ────────────────────────────────
+  const infoHeight = data.pay_basis ? 76 : 64;
   doc.setFillColor(249, 250, 251);
-  doc.rect(MARGIN, 92, CONTENT_W, 64, 'F');
+  doc.rect(MARGIN, 92, CONTENT_W, infoHeight, 'F');
 
   doc.setDrawColor(229, 231, 235);
   doc.setLineWidth(0.5);
-  doc.rect(MARGIN, 92, CONTENT_W, 64, 'S');
+  doc.rect(MARGIN, 92, CONTENT_W, infoHeight, 'S');
 
   // Left column: name, designation, DOJ, UAN
   doc.setFontSize(10);
@@ -141,11 +170,14 @@ export async function generatePayslipPdf(
     doc.text('Payment Date: ' + new Date(payDate).toLocaleDateString('en-IN'), rx, 144);
   }
   if (employee.pan_number) doc.text('PAN: ' + employee.pan_number, rx, 156);
+  if (payBasisText) {
+    doc.text('Pay Basis: ' + payBasisText, rx, 156 + 12);
+  }
 
   // Divider below employee band
   doc.setDrawColor(209, 213, 219);
   doc.setLineWidth(0.5);
-  doc.line(MARGIN, 162, PAGE_W - MARGIN, 162);
+  doc.line(MARGIN, 92 + infoHeight + 6, PAGE_W - MARGIN, 92 + infoHeight + 6);
 
   // ── Earnings / Deductions side-by-side ────────────────────────────────────
   const tblW = (CONTENT_W - 10) / 2;
@@ -169,7 +201,7 @@ export async function generatePayslipPdf(
   autoTable(doc, {
     head: [['Earnings', 'Amount']],
     body: earnBody,
-    startY: 168,
+    startY: 92 + infoHeight + 12,
     margin: { left: MARGIN, right: PAGE_W - MARGIN - tblW },
     styles: tableStyles,
     headStyles: tableHeadStyle,
@@ -181,7 +213,7 @@ export async function generatePayslipPdf(
   autoTable(doc, {
     head: [['Deductions', 'Amount']],
     body: dedBody,
-    startY: 168,
+    startY: 92 + infoHeight + 12,
     margin: { left: rTableLeft, right: MARGIN },
     styles: tableStyles,
     headStyles: tableHeadStyle,
@@ -216,6 +248,27 @@ export async function generatePayslipPdf(
   }
 
   // ── Net pay — professional box with left accent border ────────────────────
+  doc.setFillColor(249, 250, 251);
+  doc.rect(MARGIN, curY, CONTENT_W, 42, 'F');
+  doc.setDrawColor(229, 231, 235);
+  doc.setLineWidth(0.5);
+  doc.rect(MARGIN, curY, CONTENT_W, 42, 'S');
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(75, 85, 99);
+  doc.text('SALARY CALCULATION', MARGIN + 8, curY + 12);
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(107, 114, 128);
+  salaryCalculationLines.forEach((line, index) => {
+    const col = index % 2;
+    const row = Math.floor(index / 2);
+    const x = MARGIN + 8 + col * (CONTENT_W / 2);
+    const y = curY + 24 + row * 10;
+    doc.text(line, x, y, { maxWidth: CONTENT_W / 2 - 16 });
+  });
+  curY += 50;
+
   const netPayH = 54;
 
   // Box fill

@@ -1,9 +1,14 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '../../../shared/database.service';
+import { ApprovalEngineService } from '../../approvals/services/approval-engine.service';
 
 @Injectable()
 export class BranchTransferService {
-  constructor(private db: DatabaseService) {}
+  constructor(
+    private db: DatabaseService,
+    @Inject(forwardRef(() => ApprovalEngineService))
+    private approvalEngine: ApprovalEngineService,
+  ) {}
 
   async findAll(tenantId: string, filters: any = {}) {
     const { status, branch_id, employee_id } = filters;
@@ -87,42 +92,22 @@ export class BranchTransferService {
         requestedBy,
       ],
     );
-    return rows[0];
+    const transfer = rows[0];
+    await this.submitApproval(tenantId, transfer, requestedBy);
+    return transfer;
   }
 
   async approve(id: string, tenantId: string, approvedBy: string) {
     const transfer = await this.findOne(id, tenantId);
     if (transfer.status !== 'pending') throw new BadRequestException('Only pending transfers can be approved');
 
-    await this.db.query(
-      `UPDATE employee_branch_transfers
-       SET status = 'approved', approved_by = $3, approved_at = now(), updated_at = now()
-       WHERE id = $1 AND tenant_id = $2`,
-      [id, tenantId, approvedBy],
-    );
-
-    await this.db.query(
-      `UPDATE employees
-       SET branch_id      = $3,
-           department_id  = COALESCE($4, department_id),
-           updated_at     = now()
-       WHERE id = $2 AND tenant_id = $1`,
-      [tenantId, transfer.employee_id, transfer.to_branch_id, transfer.to_department_id],
-    );
-
-    await this.db.query(
-      `INSERT INTO employee_lifecycle_events
-         (tenant_id, employee_id, event_type, effective_date, old_values, new_values, remarks, created_by)
-       VALUES ($1,$2,'branch_transfer',$3,$4,$5,$6,$7)`,
-      [
-        tenantId,
-        transfer.employee_id,
-        transfer.effective_date,
-        JSON.stringify({ branch_id: transfer.from_branch_id, department_id: transfer.from_department_id }),
-        JSON.stringify({ branch_id: transfer.to_branch_id,   department_id: transfer.to_department_id }),
-        transfer.remarks,
-        approvedBy,
-      ],
+    await this.ensureApprovalRequest(tenantId, transfer, transfer.requested_by ?? approvedBy);
+    await this.approvalEngine.approveByEntity(
+      id,
+      'employee_branch_transfers',
+      tenantId,
+      approvedBy,
+      'Approved transfer',
     );
 
     return this.findOne(id, tenantId);
@@ -132,13 +117,15 @@ export class BranchTransferService {
     const transfer = await this.findOne(id, tenantId);
     if (transfer.status !== 'pending') throw new BadRequestException('Only pending transfers can be rejected');
 
-    const { rows } = await this.db.query(
-      `UPDATE employee_branch_transfers
-       SET status = 'rejected', rejected_by = $3, rejected_at = now(), rejection_reason = $4, updated_at = now()
-       WHERE id = $1 AND tenant_id = $2 RETURNING *`,
-      [id, tenantId, rejectedBy, reason || null],
+    await this.ensureApprovalRequest(tenantId, transfer, transfer.requested_by ?? rejectedBy);
+    await this.approvalEngine.rejectByEntity(
+      id,
+      'employee_branch_transfers',
+      tenantId,
+      rejectedBy,
+      reason || 'Rejected transfer',
     );
-    return rows[0];
+    return this.findOne(id, tenantId);
   }
 
   async cancel(id: string, tenantId: string) {
@@ -184,7 +171,9 @@ export class BranchTransferService {
         requestedBy,
       ],
     );
-    return rows[0];
+    const transfer = rows[0];
+    await this.submitApproval(tenantId, transfer, requestedBy);
+    return transfer;
   }
 
   async getActiveDeputations(tenantId: string, branchId?: string) {
@@ -262,5 +251,39 @@ export class BranchTransferService {
     }
 
     return { reverted: reverted.length, ids: reverted };
+  }
+
+  private async ensureApprovalRequest(tenantId: string, transfer: any, submittedBy: string) {
+    const { rows } = await this.db.query(
+      `SELECT 1 FROM approval_requests
+       WHERE tenant_id = $1
+         AND entity_id = $2
+         AND entity_table = 'employee_branch_transfers'
+         AND status IN ('pending', 'under_review', 'escalated')
+       LIMIT 1`,
+      [tenantId, transfer.id],
+    );
+    if (rows.length) return;
+    await this.submitApproval(tenantId, transfer, submittedBy);
+  }
+
+  private async submitApproval(tenantId: string, transfer: any, submittedBy: string) {
+    await this.approvalEngine.submit({
+      tenantId,
+      workflowType: 'transfer',
+      entityId: transfer.id,
+      entityTable: 'employee_branch_transfers',
+      submittedBy,
+      branchId: transfer.from_branch_id ?? transfer.to_branch_id ?? null,
+      title: 'Branch transfer',
+      description: transfer.remarks ?? null,
+      metadata: {
+        employee_id: transfer.employee_id,
+        from_branch_id: transfer.from_branch_id,
+        to_branch_id: transfer.to_branch_id,
+        transfer_type: transfer.transfer_type,
+        effective_date: transfer.effective_date,
+      },
+    });
   }
 }

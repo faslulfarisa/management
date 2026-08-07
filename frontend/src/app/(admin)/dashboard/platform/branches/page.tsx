@@ -8,14 +8,18 @@ import {
   Building2, Users, CheckCircle2,
   ShieldCheck, UserPlus, ChevronDown,
   PowerOff, RotateCcw, AlertTriangle,
-  Lock, Unlock, Circle, Sparkles,
+  Lock, Unlock, Circle, Sparkles, Plus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { DeleteWarningModal } from '@/components/ui/delete-warning-modal';
-import { useDependencyCheck } from '@/hooks/useDependencyCheck';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 import { profileApi, type OrganizationProfile } from '@/lib/company-profile-api';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import { ExportButton } from '@/components/export';
+import { ImportButton } from '@/components/import';
+import { PERMISSIONS } from '@/lib/permissions';
+import { useDependencyCheck } from '@/hooks/useDependencyCheck';
 
 type ActivationStatus = 'active' | 'inactive' | 'locked_by_plan';
 
@@ -463,8 +467,7 @@ function BranchDrawer({
           <div className="grid grid-cols-2 gap-3">
             <div>
               {field('Phone')}
-              <input value={form.phone} onChange={e => f('phone', e.target.value)}
-                placeholder="+91 98765 43210" className={inputCls} />
+              <PhoneNumberInput value={form.phone} onChange={value => f('phone', value)} />
             </div>
             <div>
               {field('Email')}
@@ -789,26 +792,59 @@ export default function BranchesPage() {
 
       <div className="animate-fade-in">
         {/* Page header */}
-        <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+        <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-foreground">Branches</h1>
             <p className="text-sm text-muted-foreground mt-1">
               Manage operational branches — departments and employees are scoped to a branch
             </p>
           </div>
-          <div className="flex items-center bg-gray-100 rounded-lg p-1 gap-1">
-            <button
-              onClick={() => setTab('list')}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${tab === 'list' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              List
-            </button>
-            <button
-              onClick={() => setTab('hierarchy')}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${tab === 'hierarchy' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              Hierarchy
-            </button>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center bg-gray-100 rounded-lg p-1 gap-1 mr-2">
+              <button
+                onClick={() => setTab('list')}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${tab === 'list' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                List
+              </button>
+              <button
+                onClick={() => setTab('hierarchy')}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${tab === 'hierarchy' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Hierarchy
+              </button>
+            </div>
+            <ExportButton
+              config={{
+                module: 'branches',
+                title: 'Branches',
+                permission: PERMISSIONS.PLATFORM_BRANCHES_VIEW,
+                columns: [
+                  { key: 'name', header: 'Branch Name' },
+                  { key: 'code', header: 'Branch Code' },
+                  { key: 'area_name', header: 'Area' },
+                  { key: 'is_active', header: 'Active' },
+                  { key: 'address', header: 'Address' },
+                  { key: 'contact_number', header: 'Contact' },
+                  { key: 'contact_email', header: 'Email' },
+                  { key: 'created_at', header: 'Created At', type: 'date' },
+                ],
+                defaultColumns: ['name', 'code', 'area_name', 'is_active', 'address'],
+                filenamePrefix: 'branches',
+              }}
+              filters={{ search, is_active: showInactive ? undefined : true }}
+              currentPageData={branches}
+            />
+            <ImportButton
+              config={{
+                module: 'branches',
+                title: 'Branches',
+                permission: PERMISSIONS.PLATFORM_ORGANIZATIONS_CREATE,
+              }}
+            />
+            <Button onClick={() => { setEditBranch(null); setShowDrawer(true); }} className="gap-2">
+              <Plus className="w-4 h-4" /> Add Branch
+            </Button>
           </div>
         </div>
 
@@ -915,9 +951,14 @@ export default function BranchesPage() {
         {tab === 'list' && (
           <Card className="border-0 shadow-sm overflow-hidden">
             <div className="px-4 py-3 border-b border-border flex items-center gap-2 flex-wrap">
-              <Button size="sm" onClick={() => { setEditBranch(null); setShowDrawer(true); }}>
-                Add Branch
-              </Button>
+              <div className="flex-1 min-w-[160px]">
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search branches..."
+                  className="w-full border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
               {/* Show inactive toggle */}
               <button
                 onClick={() => setShowInactive(v => !v)}
@@ -934,14 +975,6 @@ export default function BranchesPage() {
                   </span>
                 )}
               </button>
-              <div className="flex-1 min-w-[160px]">
-                <input
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  placeholder="Search branches..."
-                  className="w-full border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                />
-              </div>
             </div>
 
             <Table>

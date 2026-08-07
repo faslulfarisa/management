@@ -1,9 +1,10 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { DatabaseService } from '../../../shared/database.service';
 import { TenantService } from '../../platform/services/tenant.service';
 import { AuditLogService } from '../../platform/services/audit-log.service';
 import { UserHierarchyService } from '../../platform/services/user-hierarchy.service';
+import { validatePasswordPolicy } from '../../../shared/credential-generator.util';
 import {
   ORG_LIFECYCLE_STAGES,
   OrgLifecycleStage,
@@ -150,6 +151,9 @@ export class OrganizationLifecycleService {
   }
 
   async remove(id: string, actor: OpsActor) {
+    const existing = await this.tenantService.findOne(id);
+    await this.assertNoActivePaidSubscription(id, existing.name, 'delete');
+
     const tenant = await this.tenantService.remove(id);
 
     await this.auditLog.log({
@@ -200,6 +204,150 @@ export class OrganizationLifecycleService {
     });
 
     return access;
+  }
+
+  async getOwnershipCandidates(id: string, search?: string) {
+    const tenant = await this.tenantService.findOne(id);
+    const normalizedSearch = String(search ?? '').trim();
+    const currentAdminId = tenant.organization_admin_user_id || '00000000-0000-0000-0000-000000000000';
+    const params: any[] = [id, currentAdminId];
+    let searchClause = '';
+
+    if (normalizedSearch) {
+      params.push(`%${normalizedSearch}%`);
+      searchClause = `
+        AND (
+          u.email ILIKE $3
+          OR u.username ILIKE $3
+          OR u.full_name ILIKE $3
+          OR e.first_name ILIKE $3
+          OR e.last_name ILIKE $3
+          OR e.employee_code ILIKE $3
+        )`;
+    }
+
+    const { rows } = await this.db.query(
+      `SELECT
+         u.id,
+         u.email,
+         u.username,
+         u.full_name,
+         u.is_active,
+         ut.user_type,
+         ut.is_org_admin,
+         e.first_name,
+         e.last_name,
+         e.employee_code,
+         d.name AS department,
+         (u.id = $2::uuid) AS is_current_admin
+       FROM user_tenants ut
+       JOIN users u ON u.id = ut.user_id
+       LEFT JOIN employees e ON e.id = u.employee_id AND e.deleted_at IS NULL
+       LEFT JOIN departments d ON d.id = e.department_id
+       WHERE ut.tenant_id = $1
+         AND u.deleted_at IS NULL
+         AND u.is_internal_staff = false
+         AND u.is_active = true
+         ${searchClause}
+       ORDER BY (u.id = $2::uuid) DESC, COALESCE(NULLIF(u.full_name, ''), NULLIF(CONCAT_WS(' ', e.first_name, e.last_name), ''), u.email) ASC
+       LIMIT 50`,
+      params,
+    );
+
+    return rows;
+  }
+
+  async getMembers(id: string) {
+    await this.tenantService.findOne(id);
+
+    const { rows } = await this.db.query(
+      `SELECT
+         u.id,
+         u.email,
+         u.phone,
+         u.username,
+         u.full_name,
+         u.is_active,
+         ut.user_type,
+         ut.is_org_admin,
+         ut.created_at AS membership_created_at,
+         e.first_name,
+         e.last_name,
+         e.employee_code,
+         pos.name AS position_name,
+         d.name AS department,
+         (u.id = t.organization_admin_user_id) AS is_current_admin
+       FROM user_tenants ut
+       JOIN tenants t ON t.id = ut.tenant_id
+       JOIN users u ON u.id = ut.user_id
+       LEFT JOIN employees e ON e.id = u.employee_id AND e.deleted_at IS NULL
+       LEFT JOIN positions pos ON pos.id = e.position_id
+       LEFT JOIN departments d ON d.id = e.department_id
+       WHERE ut.tenant_id = $1
+         AND t.deleted_at IS NULL
+         AND u.deleted_at IS NULL
+         AND COALESCE(u.is_internal_staff, false) = false
+       ORDER BY
+         (u.id = t.organization_admin_user_id) DESC,
+         (ut.user_type = 'org_admin' OR ut.is_org_admin = true) DESC,
+         COALESCE(NULLIF(u.full_name, ''), NULLIF(CONCAT_WS(' ', e.first_name, e.last_name), ''), u.email) ASC`,
+      [id],
+    );
+
+    return rows;
+  }
+
+  async resetOrganizationAdminPassword(id: string, newPassword: string, actor: OpsActor) {
+    const policyErrors = validatePasswordPolicy(newPassword);
+    if (policyErrors.length) {
+      throw new BadRequestException(`Password does not meet policy: ${policyErrors.join(', ')}`);
+    }
+
+    await this.tenantService.findOne(id);
+
+    const { rows } = await this.db.query(
+      `SELECT u.id, u.email
+       FROM tenants t
+       JOIN users u ON u.id = t.organization_admin_user_id
+       JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = t.id
+       WHERE t.id = $1
+         AND t.deleted_at IS NULL
+         AND u.deleted_at IS NULL
+         AND u.is_internal_staff = false
+         AND (ut.user_type = 'org_admin' OR ut.is_org_admin = true)
+       LIMIT 1`,
+      [id],
+    );
+
+    if (!rows.length) {
+      throw new BadRequestException('This organization does not have an assigned organization admin');
+    }
+
+    const admin = rows[0];
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    await this.db.query(
+      `UPDATE users
+       SET password_hash = $1, must_change_password = true, failed_login_count = 0, locked_until = NULL, updated_at = now()
+       WHERE id = $2`,
+      [passwordHash, admin.id],
+    );
+    await this.db.query(
+      `UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`,
+      [admin.id],
+    );
+    await this.db.query('DELETE FROM password_change_sessions WHERE user_id = $1', [admin.id]);
+
+    await this.auditLog.log({
+      tenantId: id,
+      userId: actor.sub,
+      entityType: 'organization',
+      entityId: id,
+      action: 'organization_admin_password_reset',
+      newValues: { adminUserId: admin.id, adminEmail: admin.email },
+    });
+
+    return { success: true };
   }
 
   async getActivity(id: string, filters: any) {
@@ -288,6 +436,10 @@ export class OrganizationLifecycleService {
       throw new BadRequestException(`Cannot move an organization from "${fromStage}" to "${toStage}"`);
     }
 
+    if (toStage === 'suspended' || toStage === 'archived') {
+      await this.assertNoActivePaidSubscription(id, tenant.name, toStage === 'suspended' ? 'suspend' : 'archive');
+    }
+
     const status = statusForLifecycleStage(toStage);
     const { rows } = await this.db.query(
       `UPDATE tenants SET lifecycle_stage = $1, status = $2, updated_at = now() WHERE id = $3 RETURNING *`,
@@ -306,5 +458,30 @@ export class OrganizationLifecycleService {
     });
 
     return updated;
+  }
+
+  private async assertNoActivePaidSubscription(id: string, organizationName: string, action: 'delete' | 'suspend' | 'archive') {
+    const { rows } = await this.db.query(
+      `SELECT COALESCE(sbp.name, sp.name, 'Upgraded') AS plan_name
+       FROM tenant_subscriptions ts
+       JOIN tenants t ON t.id = ts.tenant_id
+       LEFT JOIN saas_base_plans sbp ON sbp.id = ts.plan_id
+       LEFT JOIN subscription_plans sp ON sp.id = ts.plan_id
+       WHERE ts.tenant_id = $1
+         AND ts.status = 'active'
+         AND (t.trial_ends_at IS NULL OR t.trial_ends_at <= now())
+         AND LOWER(COALESCE(sbp.slug, sp.slug, '')) NOT IN ('free', 'free-plan', 'free_plan')
+         AND LOWER(COALESCE(sbp.name, sp.name, '')) NOT IN ('free', 'free plan', 'free trial')
+       ORDER BY ts.created_at DESC
+       LIMIT 1`,
+      [id],
+    );
+
+    if (!rows.length) return;
+
+    const planName = rows[0].plan_name || 'paid';
+    throw new ConflictException(
+      `Heads up: ${organizationName} is currently on the ${planName} subscription. Please cancel the active subscription before you ${action} this organization.`,
+    );
   }
 }

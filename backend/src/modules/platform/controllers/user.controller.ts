@@ -33,7 +33,8 @@ export class UserController {
     const user = (req as any).user;
     const { organizationId, ...rest } = data;
     const targetTenantId = user.isSuperAdmin && organizationId ? organizationId : user.tenantId;
-    const newUser = await this.service.create(targetTenantId, rest, user.sub);
+    const actor = { sub: user.sub, isSuperAdmin: user.isSuperAdmin, userType: user.isSuperAdmin ? 'super_admin' as const : user.userType };
+    const newUser = await this.service.create(targetTenantId, rest, actor);
     return { success: true, data: newUser, meta: null, error: null };
   }
 

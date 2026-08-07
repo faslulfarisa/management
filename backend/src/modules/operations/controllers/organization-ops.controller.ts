@@ -44,6 +44,22 @@ export class OrganizationOpsController {
     return { success: true, ...result, error: null };
   }
 
+  @Get(':id/members')
+  @RequireOpsPermission(OPS_PERMISSIONS.ORGANIZATIONS_VIEW)
+  @ApiOperation({ summary: 'List organization admins and members' })
+  async getMembers(@Param('id') id: string) {
+    const data = await this.lifecycleService.getMembers(id);
+    return { success: true, data, meta: null, error: null };
+  }
+
+  @Get(':id/ownership-candidates')
+  @RequireOpsPermission(OPS_PERMISSIONS.ORGANIZATIONS_MANAGE_LIFECYCLE)
+  @ApiOperation({ summary: 'List organization users eligible for ownership transfer' })
+  async getOwnershipCandidates(@Param('id') id: string, @Query('search') search?: string) {
+    const data = await this.lifecycleService.getOwnershipCandidates(id, search);
+    return { success: true, data, meta: null, error: null };
+  }
+
   @Post()
   @RequireOpsPermission(OPS_PERMISSIONS.ORGANIZATIONS_CREATE)
   @ApiOperation({ summary: 'Create a new organization (Sales)' })
@@ -113,6 +129,15 @@ export class OrganizationOpsController {
   async changeOwnership(@Req() req: Request, @Param('id') id: string, @Body() body: { newOwnerUserId: string }) {
     const user = (req as any).user;
     const data = await this.lifecycleService.changeOwnership(id, body.newOwnerUserId, { sub: user.sub });
+    return { success: true, data, meta: null, error: null };
+  }
+
+  @Post(':id/admin/reset-password')
+  @RequireOpsPermission(OPS_PERMISSIONS.ORGANIZATIONS_MANAGE_LIFECYCLE)
+  @ApiOperation({ summary: 'Reset the assigned organization admin password' })
+  async resetAdminPassword(@Req() req: Request, @Param('id') id: string, @Body() body: { password: string }) {
+    const user = (req as any).user;
+    const data = await this.lifecycleService.resetOrganizationAdminPassword(id, body.password, { sub: user.sub });
     return { success: true, data, meta: null, error: null };
   }
 }

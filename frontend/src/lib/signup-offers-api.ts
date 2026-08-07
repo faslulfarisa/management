@@ -64,6 +64,7 @@ export interface PublicSignupOffer {
   trial_days: number | null;
   discount_percent: string | null;
   discount_amount: string | null;
+  code: string | null;
   applicable_plan_id: string | null;
   valid_until: string | null;
 }

@@ -13,6 +13,11 @@ export class BranchApprovalChainController {
     return { success: true, data };
   }
 
+  @Get('workflows')
+  async workflows() {
+    return { success: true, data: this.service.getWorkflowDefinitions() };
+  }
+
   @Get(':id')
   async findOne(@Param('id') id: string, @Req() req: any) {
     const data = await this.service.findOne(id, req.user.tenantId);

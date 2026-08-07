@@ -54,6 +54,30 @@ export interface JobPosting {
   share_token: string | null;
 }
 
+export type JobBoardProvider = 'linkedin' | 'indeed' | 'naukri' | 'monster' | 'glassdoor' | 'foundit' | 'ziprecruiter' | 'other';
+export type JobBoardPostingStatus = 'ready_to_post' | 'published' | 'failed' | 'unpublished' | 'expired';
+
+export interface JobBoardPosting {
+  id: string;
+  tenant_id: string;
+  vacancy_id: string;
+  job_description_id: string;
+  job_posting_id: string;
+  provider: JobBoardProvider;
+  status: JobBoardPostingStatus;
+  apply_url: string;
+  external_job_id: string | null;
+  external_url: string | null;
+  provider_payload: Record<string, any>;
+  error_message: string | null;
+  published_at: string | null;
+  last_synced_at: string | null;
+  job_title?: string;
+  job_description_title?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 function qs(params: Record<string, any>): string {
   const usp = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '') usp.set(k, String(v)); });
@@ -84,4 +108,13 @@ export const jobPostingsApi = {
   unpublish: (id: string) => api.post(`/recruitment/jobs/${id}/unpublish`).then((r) => r.data.data),
   republish: (id: string) => api.post(`/recruitment/jobs/${id}/republish`).then((r) => r.data.data),
   share: (id: string): Promise<{ url: string; qrCodeDataUrl: string }> => api.get(`/recruitment/jobs/${id}/share`).then((r) => r.data.data),
+  boards: {
+    list: (vacancyId: string): Promise<JobBoardPosting[]> =>
+      api.get('/recruitment/jobs/boards', { params: { vacancy_id: vacancyId } }).then((r) => r.data.data),
+    publish: (data: { vacancy_id: string; job_description_id: string; provider: JobBoardProvider; external_url?: string; external_job_id?: string; closes_at?: string; payload?: Record<string, any> }): Promise<JobBoardPosting> =>
+      api.post('/recruitment/jobs/boards', data).then((r) => r.data.data),
+    update: (id: string, data: { status?: JobBoardPostingStatus; external_url?: string; external_job_id?: string; error_message?: string; payload?: Record<string, any> }): Promise<JobBoardPosting> =>
+      api.put(`/recruitment/jobs/boards/${id}`, data).then((r) => r.data.data),
+    unpublish: (id: string): Promise<JobBoardPosting> => api.post(`/recruitment/jobs/boards/${id}/unpublish`).then((r) => r.data.data),
+  },
 };

@@ -11,7 +11,7 @@
 -- One JSONB-config row per tenant. Holds weightages, penalty/bonus
 -- parameters, and rating buckets — see AttendanceBehaviourConfigService for
 -- the shape (DEFAULT_CONFIG) and validation rules. Mirrors the JSONB-config
--- pattern already used by document_branding_config / automation_rules rather
+-- pattern already used by document_branding_config rather
 -- than adding ~15 individual typed columns for values admins should be able
 -- to retune without a migration.
 CREATE TABLE IF NOT EXISTS performance_configuration (

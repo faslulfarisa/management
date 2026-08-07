@@ -40,9 +40,9 @@ export class BranchActivationService {
   /** Returns the tenant's plan name and max active branches from their subscription, or the Free-plan default if unsubscribed. NULL limit = unlimited. */
   async getPlanInfo(tenantId: string): Promise<{ planName: string; maxActiveBranches: number | null }> {
     const { rows } = await this.db.query(
-      `SELECT sp.name
+      `SELECT COALESCE(sp.name, ts.custom_plan_name, 'Custom plan') AS name
        FROM tenant_subscriptions ts
-       JOIN saas_base_plans sp ON sp.id = ts.plan_id
+       LEFT JOIN saas_base_plans sp ON sp.id = ts.plan_id
        WHERE ts.tenant_id = $1 AND ts.status = 'active'
        ORDER BY ts.created_at DESC LIMIT 1`,
       [tenantId],

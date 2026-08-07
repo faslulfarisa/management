@@ -1,36 +1,37 @@
 'use client';
 
-import { useState, Suspense, forwardRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense, forwardRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useForm } from 'react-hook-form';
+import { FieldErrors, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import {
   AlertCircle,
   ArrowLeft,
   Building2,
-  Calendar,
   Check,
   ChevronLeft,
   ChevronRight,
   Copy,
-  Fingerprint,
   Globe,
   MapPin,
   Phone,
   Settings,
-  TrendingUp,
   UserSquare2,
-  Wallet,
-  UsersRound,
   Lock,
   Mail,
   Eye,
   EyeOff,
+  Loader2,
+  Search,
+  UserCheck,
 } from 'lucide-react';
-import { createOpsOrganization } from '@/lib/operations-api';
+import { createOpsOrganization, searchOpsClientUsers, type OpsClientUserCandidate } from '@/lib/operations-api';
+import { organizationChangeRequestApi, type OrganizationChangeRequest } from '@/lib/organization-registration-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import AddressFields, { type AddressValue } from '@/components/forms/AddressFields';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -45,13 +46,20 @@ const COMPANY_TYPES = [
   { value: 'other', label: 'Other' },
 ];
 
-const COMPANY_SIZES = [
-  { value: '1-50', label: '1–50 employees' },
-  { value: '51-200', label: '51–200 employees' },
-  { value: '201-500', label: '201–500 employees' },
-  { value: '501-1000', label: '501–1000 employees' },
-  { value: '1000+', label: '1000+ employees' },
-];
+const COMPANY_TYPE_ALIASES: Record<string, string> = {
+  private_limited: 'private_limited',
+  'private limited': 'private_limited',
+  public_limited: 'public_limited',
+  'public limited': 'public_limited',
+  llp: 'llp',
+  partnership: 'partnership',
+  sole_proprietorship: 'sole_proprietorship',
+  'sole proprietorship': 'sole_proprietorship',
+  ngo: 'ngo',
+  'ngo / non-profit': 'ngo',
+  government: 'government',
+  other: 'other',
+};
 
 const FISCAL_MONTHS = [
   { value: 1, label: 'January' }, { value: 2, label: 'February' },
@@ -62,7 +70,55 @@ const FISCAL_MONTHS = [
   { value: 11, label: 'November' },{ value: 12, label: 'December' },
 ];
 
-const DATE_FORMATS = ['DD/MM/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD', 'DD-MM-YYYY', 'MMM DD, YYYY'];
+const TIMEZONE_OPTIONS = [
+  { value: 'Asia/Kolkata', label: 'Asia/Kolkata (India)', currency: 'INR' },
+  { value: 'Asia/Dubai', label: 'Asia/Dubai (United Arab Emirates)', currency: 'AED' },
+  { value: 'Asia/Singapore', label: 'Asia/Singapore (Singapore)', currency: 'SGD' },
+  { value: 'Asia/Tokyo', label: 'Asia/Tokyo (Japan)', currency: 'JPY' },
+  { value: 'Asia/Hong_Kong', label: 'Asia/Hong_Kong (Hong Kong)', currency: 'HKD' },
+  { value: 'Asia/Bangkok', label: 'Asia/Bangkok (Thailand)', currency: 'THB' },
+  { value: 'Asia/Kuala_Lumpur', label: 'Asia/Kuala_Lumpur (Malaysia)', currency: 'MYR' },
+  { value: 'Asia/Jakarta', label: 'Asia/Jakarta (Indonesia)', currency: 'IDR' },
+  { value: 'Asia/Manila', label: 'Asia/Manila (Philippines)', currency: 'PHP' },
+  { value: 'Asia/Riyadh', label: 'Asia/Riyadh (Saudi Arabia)', currency: 'SAR' },
+  { value: 'Europe/London', label: 'Europe/London (United Kingdom)', currency: 'GBP' },
+  { value: 'Europe/Paris', label: 'Europe/Paris (France)', currency: 'EUR' },
+  { value: 'Europe/Berlin', label: 'Europe/Berlin (Germany)', currency: 'EUR' },
+  { value: 'Europe/Amsterdam', label: 'Europe/Amsterdam (Netherlands)', currency: 'EUR' },
+  { value: 'Europe/Madrid', label: 'Europe/Madrid (Spain)', currency: 'EUR' },
+  { value: 'America/New_York', label: 'America/New_York (US Eastern)', currency: 'USD' },
+  { value: 'America/Chicago', label: 'America/Chicago (US Central)', currency: 'USD' },
+  { value: 'America/Denver', label: 'America/Denver (US Mountain)', currency: 'USD' },
+  { value: 'America/Los_Angeles', label: 'America/Los_Angeles (US Pacific)', currency: 'USD' },
+  { value: 'America/Toronto', label: 'America/Toronto (Canada Eastern)', currency: 'CAD' },
+  { value: 'America/Vancouver', label: 'America/Vancouver (Canada Pacific)', currency: 'CAD' },
+  { value: 'America/Sao_Paulo', label: 'America/Sao_Paulo (Brazil)', currency: 'BRL' },
+  { value: 'Australia/Sydney', label: 'Australia/Sydney (Australia Eastern)', currency: 'AUD' },
+  { value: 'Australia/Perth', label: 'Australia/Perth (Australia Western)', currency: 'AUD' },
+  { value: 'Pacific/Auckland', label: 'Pacific/Auckland (New Zealand)', currency: 'NZD' },
+  { value: 'Africa/Johannesburg', label: 'Africa/Johannesburg (South Africa)', currency: 'ZAR' },
+];
+
+const CURRENCY_OPTIONS = [
+  { value: 'INR', label: 'INR - Indian Rupee' },
+  { value: 'USD', label: 'USD - US Dollar' },
+  { value: 'EUR', label: 'EUR - Euro' },
+  { value: 'GBP', label: 'GBP - British Pound' },
+  { value: 'AED', label: 'AED - UAE Dirham' },
+  { value: 'SGD', label: 'SGD - Singapore Dollar' },
+  { value: 'JPY', label: 'JPY - Japanese Yen' },
+  { value: 'CAD', label: 'CAD - Canadian Dollar' },
+  { value: 'AUD', label: 'AUD - Australian Dollar' },
+  { value: 'NZD', label: 'NZD - New Zealand Dollar' },
+  { value: 'HKD', label: 'HKD - Hong Kong Dollar' },
+  { value: 'THB', label: 'THB - Thai Baht' },
+  { value: 'MYR', label: 'MYR - Malaysian Ringgit' },
+  { value: 'IDR', label: 'IDR - Indonesian Rupiah' },
+  { value: 'PHP', label: 'PHP - Philippine Peso' },
+  { value: 'SAR', label: 'SAR - Saudi Riyal' },
+  { value: 'BRL', label: 'BRL - Brazilian Real' },
+  { value: 'ZAR', label: 'ZAR - South African Rand' },
+];
 
 const DAYS = [
   { key: 'mon', label: 'Mon' }, { key: 'tue', label: 'Tue' },
@@ -73,14 +129,6 @@ const DAYS = [
 
 type DayKey = typeof DAYS[number]['key'];
 
-const REQUIREMENTS: { key: string; icon: React.ElementType; title: string; desc: string }[] = [
-  { key: 'attendanceRequirement', icon: Calendar,   title: 'Attendance Management', desc: 'Check-ins, shifts, and leave tracking.' },
-  { key: 'payrollRequirement',    icon: Wallet,      title: 'Payroll Management',    desc: 'Payroll runs, payslips, compliance.' },
-  { key: 'recruitmentRequirement',icon: UsersRound,  title: 'Recruitment Module',    desc: 'Source, screen, and hire candidates.' },
-  { key: 'performanceRequirement',icon: TrendingUp,  title: 'Performance Management',desc: 'Goals, reviews, feedback cycles.' },
-  { key: 'biometricRequirement',  icon: Fingerprint, title: 'Biometric Integration', desc: 'Connect biometric attendance devices.' },
-];
-
 // ── Schema ───────────────────────────────────────────────────────────────────
 
 const addressSchema = z.object({
@@ -88,7 +136,9 @@ const addressSchema = z.object({
   line2:       z.string().optional(),
   city:        z.string().min(1, 'Required'),
   state:       z.string().min(1, 'Required'),
+  stateCode:   z.string().optional(),
   country:     z.string().min(1, 'Required'),
+  countryCode: z.string().optional(),
   postal_code: z.string().min(1, 'Required'),
 });
 
@@ -96,14 +146,13 @@ const schema = z.object({
   // Identity
   legalName:          z.string().min(1, 'Legal name is required'),
   tradeName:          z.string().optional(),
-  companyCode:        z.string().optional(),
+  companyCode:        z.string().trim().min(1, 'Company code is required'),
   companyType:        z.string().min(1, 'Company type is required'),
   registrationNumber: z.string().optional(),
   gstin:              z.string().optional(),
   panNumber:          z.string().optional(),
   cinNumber:          z.string().optional(),
   industry:           z.string().optional(),
-  companySize:        z.string().optional(),
   estimatedEmployeeCount: z.union([z.coerce.number().int().min(1), z.literal('')]).optional(),
   estimatedBranchCount:   z.union([z.coerce.number().int().min(1), z.literal('')]).optional(),
   // Contact
@@ -120,14 +169,8 @@ const schema = z.object({
   fiscalYearStart:    z.coerce.number().int().min(1).max(12),
   timezone:           z.string().min(1, 'Required'),
   currency:           z.string().min(1, 'Required'),
-  dateFormat:         z.string().min(1, 'Required'),
   businessCategory:   z.string().optional(),
   currentHrSystem:    z.string().optional(),
-  payrollRequirement:     z.boolean().optional(),
-  attendanceRequirement:  z.boolean().optional(),
-  recruitmentRequirement: z.boolean().optional(),
-  performanceRequirement: z.boolean().optional(),
-  biometricRequirement:   z.boolean().optional(),
   // Addresses
   registeredAddress:  addressSchema,
   sameAsRegistered:   z.boolean().optional(),
@@ -160,9 +203,9 @@ const STEPS = [
 ];
 
 const STEP_FIELDS: (keyof FormData)[][] = [
-  ['legalName', 'companyType'],
+  ['legalName', 'companyCode', 'companyType'],
   ['corporateEmail', 'phoneNumber', 'contactPersonName', 'contactRole', 'contactPersonMobile', 'contactPersonEmail'],
-  ['timezone', 'currency', 'dateFormat', 'fiscalYearStart'],
+  ['timezone', 'currency', 'fiscalYearStart'],
   ['registeredAddress'],
   ['adminEmail', 'adminFullName', 'adminPassword'],
   [],
@@ -172,10 +215,19 @@ const STEP_FIELDS: (keyof FormData)[][] = [
 
 function CreateOrgPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const sourceRequestId = searchParams.get('sourceRequestId');
+  const formTopRef = useRef<HTMLDivElement | null>(null);
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [sourceRequest, setSourceRequest] = useState<OrganizationChangeRequest | null>(null);
+  const [sourceRequestLoading, setSourceRequestLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [clientUserSearch, setClientUserSearch] = useState('');
+  const [clientUsers, setClientUsers] = useState<OpsClientUserCandidate[]>([]);
+  const [clientUsersLoading, setClientUsersLoading] = useState(false);
+  const [clientUsersError, setClientUsersError] = useState('');
   const [workWeek, setWorkWeek] = useState<Record<DayKey, boolean>>({
     mon: true, tue: true, wed: true, thu: true, fri: true, sat: false, sun: false,
   });
@@ -184,11 +236,9 @@ function CreateOrgPageInner() {
     useForm<FormData>({
       resolver: zodResolver(schema),
       defaultValues: {
-        companyType: '', companySize: '',
-        fiscalYearStart: 4, timezone: 'Asia/Kolkata', currency: 'INR', dateFormat: 'DD/MM/YYYY',
+        companyCode: '', companyType: '',
+        fiscalYearStart: 4, timezone: 'Asia/Kolkata', currency: 'INR',
         sameAsRegistered: true,
-        payrollRequirement: false, attendanceRequirement: false,
-        recruitmentRequirement: false, performanceRequirement: false, biometricRequirement: false,
         registeredAddress: { line1: '', line2: '', city: '', state: '', country: '', postal_code: '' },
         isExistingUser: false,
       },
@@ -196,18 +246,125 @@ function CreateOrgPageInner() {
 
   const sameAsRegistered = watch('sameAsRegistered');
   const isExistingUser = watch('isExistingUser');
+  const registeredAddress = watch('registeredAddress') as AddressValue;
+  const operationalAddress = watch('operationalAddress') as AddressValue;
 
   const toggleDay = (key: DayKey) => setWorkWeek((w) => ({ ...w, [key]: !w[key] }));
 
+  const handleTimezoneChange = (timezone: string) => {
+    const currency = TIMEZONE_OPTIONS.find((option) => option.value === timezone)?.currency;
+    setValue('timezone', timezone, { shouldDirty: true, shouldValidate: true });
+    if (currency) {
+      setValue('currency', currency, { shouldDirty: true, shouldValidate: true });
+    }
+  };
+
   const copyRegistered = () => setValue('operationalAddress', { ...getValues('registeredAddress') });
+  const setAddress = (key: 'registeredAddress' | 'operationalAddress', address: AddressValue) => {
+    setValue(key, address as any, { shouldDirty: true, shouldValidate: true });
+  };
+
+  useEffect(() => {
+    if (!sourceRequestId) return;
+    let mounted = true;
+    setSourceRequestLoading(true);
+    setError('');
+    organizationChangeRequestApi.getOne(sourceRequestId)
+      .then((request) => {
+        if (!mounted) return;
+        const details = request.changes.additionalOrganization?.new ?? {};
+        if (!details.organizationName) {
+          setError('This source request is not an additional organization request.');
+          return;
+        }
+
+        const organizationName = String(details.organizationName || '');
+        setSourceRequest(request);
+        setValue('legalName', organizationName, { shouldDirty: true, shouldValidate: true });
+        setValue('tradeName', organizationName, { shouldDirty: true });
+        setValue('companyCode', deriveCompanyCode(organizationName), { shouldDirty: true, shouldValidate: true });
+        setValue('companyType', normalizeCompanyType(details.companyType), { shouldDirty: true, shouldValidate: true });
+        setValue('registrationNumber', details.registrationNumber || '', { shouldDirty: true });
+        setValue('gstin', details.gstin || '', { shouldDirty: true });
+        setValue('panNumber', details.panNumber || '', { shouldDirty: true });
+        setValue('corporateEmail', emailOrBlank(request.requested_by_email) || emailOrBlank(details.contactEmail) || '', { shouldDirty: true, shouldValidate: true });
+        setValue('phoneNumber', details.phoneNumber || '', { shouldDirty: true, shouldValidate: true });
+        setValue('estimatedBranchCount', details.estimatedBranchCount ?? '', { shouldDirty: true });
+        setValue('estimatedEmployeeCount', details.estimatedEmployeeCount ?? '', { shouldDirty: true });
+        setValue('contactPersonName', details.contactName || request.requested_by_name || '', { shouldDirty: true, shouldValidate: true });
+        setValue('contactRole', 'Owner', { shouldDirty: true, shouldValidate: true });
+        setValue('contactPersonMobile', details.contactPhone || '', { shouldDirty: true, shouldValidate: true });
+        setValue('contactPersonEmail', emailOrBlank(details.contactEmail) || emailOrBlank(request.requested_by_email) || '', { shouldDirty: true, shouldValidate: true });
+        setValue('isExistingUser', true, { shouldDirty: true, shouldValidate: true });
+        setValue('adminEmail', emailOrBlank(request.requested_by_email) || emailOrBlank(details.contactEmail) || '', { shouldDirty: true, shouldValidate: true });
+        setClientUserSearch(emailOrBlank(request.requested_by_email) || emailOrBlank(details.contactEmail) || '');
+      })
+      .catch((err: any) => {
+        if (!mounted) return;
+        setError(err.response?.data?.error?.message ?? err.response?.data?.message ?? 'Failed to load source organization request.');
+      })
+      .finally(() => {
+        if (mounted) setSourceRequestLoading(false);
+      });
+
+    return () => { mounted = false; };
+  }, [sourceRequestId, setValue]);
+
+  useEffect(() => {
+    if (!isExistingUser) return;
+
+    let mounted = true;
+    const timer = window.setTimeout(() => {
+      setClientUsersLoading(true);
+      setClientUsersError('');
+      searchOpsClientUsers(clientUserSearch)
+        .then((users) => {
+          if (mounted) setClientUsers(users);
+        })
+        .catch(() => {
+          if (!mounted) return;
+          setClientUsers([]);
+          setClientUsersError('Unable to load client-side users.');
+        })
+        .finally(() => {
+          if (mounted) setClientUsersLoading(false);
+        });
+    }, 250);
+
+    return () => {
+      mounted = false;
+      window.clearTimeout(timer);
+    };
+  }, [isExistingUser, clientUserSearch]);
+
+  const selectExistingUser = (user: OpsClientUserCandidate) => {
+    setClientUserSearch(user.email);
+    setValue('adminEmail', user.email, { shouldDirty: true, shouldValidate: true });
+  };
+
+  const scrollToFormTop = () => {
+    window.requestAnimationFrame(() => {
+      const top = formTopRef.current
+        ? formTopRef.current.getBoundingClientRect().top + window.scrollY - 88
+        : 0;
+      window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
+    });
+  };
 
   const next = async () => {
     const valid = await trigger(STEP_FIELDS[step] as any);
-    if (valid) setStep((s) => Math.min(s + 1, STEPS.length - 1));
+    if (valid) {
+      setStep((s) => Math.min(s + 1, STEPS.length - 1));
+      scrollToFormTop();
+    }
   };
-  const back = () => setStep((s) => Math.max(s - 1, 0));
+  const back = () => {
+    setStep((s) => Math.max(s - 1, 0));
+    scrollToFormTop();
+  };
 
   const onSubmit = async (data: FormData) => {
+    if (step !== STEPS.length - 1) return;
     setSubmitting(true);
     setError('');
     try {
@@ -216,6 +373,7 @@ function CreateOrgPageInner() {
         slug: data.legalName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 50),
         legal_name: data.legalName,
         trade_name: data.tradeName || undefined,
+        company_code: data.companyCode,
         company_type: data.companyType,
         registration_number: data.registrationNumber || undefined,
         gstin: data.gstin || undefined,
@@ -227,18 +385,12 @@ function CreateOrgPageInner() {
         support_email: data.supportEmail || undefined,
         phone_number: data.phoneNumber,
         alternate_phone: data.alternatePhone || undefined,
-        registered_address: data.registeredAddress,
-        operational_address: data.sameAsRegistered ? undefined : data.operationalAddress,
+        registered_address: cleanAddressForPayload(data.registeredAddress),
+        operational_address: data.sameAsRegistered ? undefined : cleanAddressForPayload(data.operationalAddress as any),
         estimated_branch_count: data.estimatedBranchCount ? Number(data.estimatedBranchCount) : undefined,
         estimated_employee_count: data.estimatedEmployeeCount ? Number(data.estimatedEmployeeCount) : undefined,
         business_category: data.businessCategory || undefined,
         current_hr_system: data.currentHrSystem || undefined,
-        company_size: data.companySize || undefined,
-        payroll_requirement: !!data.payrollRequirement,
-        attendance_requirement: !!data.attendanceRequirement,
-        recruitment_requirement: !!data.recruitmentRequirement,
-        performance_requirement: !!data.performanceRequirement,
-        biometric_requirement: !!data.biometricRequirement,
         contact_person_name: data.contactPersonName,
         contact_designation: data.contactRole,
         contact_person_mobile: data.contactPersonMobile,
@@ -246,7 +398,6 @@ function CreateOrgPageInner() {
         fiscal_year_start: data.fiscalYearStart,
         timezone: data.timezone,
         currency: data.currency,
-        date_format: data.dateFormat,
         lifecycleStage: 'pending_review',
         // Admin fields (used by backend to provision admin account)
         adminFullName: data.isExistingUser ? undefined : data.adminFullName,
@@ -255,6 +406,9 @@ function CreateOrgPageInner() {
       };
 
       const result = await createOpsOrganization(payload);
+      if (sourceRequestId) {
+        await organizationChangeRequestApi.fulfill(sourceRequestId, result.id);
+      }
       router.push(`/operations/organizations/new/success?tenantId=${result.id}&name=${encodeURIComponent(data.legalName)}`);
     } catch (err: any) {
       const msg = err.response?.data?.error?.message ?? err.response?.data?.message ?? 'Organization creation failed';
@@ -262,6 +416,11 @@ function CreateOrgPageInner() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const onInvalidSubmit = (formErrors: FieldErrors<FormData>) => {
+    const firstMessage = findFirstErrorMessage(formErrors);
+    setError(firstMessage ? `Cannot create organization: ${firstMessage}` : 'Complete the required fields before creating the organization.');
   };
 
   return (
@@ -277,6 +436,20 @@ function CreateOrgPageInner() {
         <h1 className="text-2xl font-bold text-foreground">New Organization</h1>
         <p className="text-muted-foreground">Create a new customer organization in the platform pipeline.</p>
       </div>
+
+      {sourceRequestLoading && (
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-3 text-sm text-muted-foreground">
+          <span className="animate-spin h-4 w-4 rounded-full border-2 border-violet-500 border-t-transparent inline-block" />
+          Loading requested organization details...
+        </div>
+      )}
+
+      {sourceRequest && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          Creating from request for <span className="font-semibold">{sourceRequest.changes.additionalOrganization?.new?.organizationName}</span>.
+          The request will be approved after this organization is created and assigned to {sourceRequest.requested_by_email}.
+        </div>
+      )}
 
       {/* Progress bar */}
       <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
@@ -294,7 +467,7 @@ function CreateOrgPageInner() {
         </div>
       )}
 
-      <form onSubmit={handleSubmit(onSubmit)}>
+      <form onSubmit={(event) => event.preventDefault()}>
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
           {/* Left: step context card */}
           <div className="xl:col-span-1">
@@ -326,7 +499,7 @@ function CreateOrgPageInner() {
           </div>
 
           {/* Right: form fields */}
-          <div className="xl:col-span-3 space-y-4">
+          <div ref={formTopRef} className="xl:col-span-3 space-y-4">
 
             {/* ── Step 0: Identity ─────────────────────────────────────────── */}
             {step === 0 && (
@@ -339,8 +512,8 @@ function CreateOrgPageInner() {
                     <Field label="Trade / Display Name" className="col-span-2 sm:col-span-1">
                       <Input {...register('tradeName')} placeholder="Acme (defaults to legal name)" />
                     </Field>
-                    <Field label="Company Code">
-                      <Input {...register('companyCode')} placeholder="ACME001" />
+                    <Field label="Company Code *" error={errors.companyCode?.message}>
+                      <Input {...register('companyCode')} placeholder="ACME-CORP" />
                     </Field>
                     <Field label="Company Type *" error={errors.companyType?.message}>
                       <Select {...register('companyType')}>
@@ -350,12 +523,6 @@ function CreateOrgPageInner() {
                     </Field>
                     <Field label="Industry">
                       <Input {...register('industry')} placeholder="e.g. Information Technology" />
-                    </Field>
-                    <Field label="Company Size">
-                      <Select {...register('companySize')}>
-                        <option value="">— Select size —</option>
-                        {COMPANY_SIZES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                      </Select>
                     </Field>
                     <Field label="Estimated Employees">
                       <Input type="number" min={1} {...register('estimatedEmployeeCount')} placeholder="e.g. 120" />
@@ -406,14 +573,10 @@ function CreateOrgPageInner() {
                 <Panel title="Phone & Web">
                   <Grid2>
                     <Field label="Primary Phone *" error={errors.phoneNumber?.message}>
-                      <InputIcon icon={<Phone className="h-4 w-4" />}>
-                        <Input type="tel" {...register('phoneNumber')} placeholder="+91 98765 43210" className="pl-9" />
-                      </InputIcon>
+                      <PhoneNumberInput value={watch('phoneNumber') || ''} onChange={(value) => setValue('phoneNumber', value, { shouldDirty: true, shouldValidate: true })} required />
                     </Field>
                     <Field label="Alternate Phone">
-                      <InputIcon icon={<Phone className="h-4 w-4" />}>
-                        <Input type="tel" {...register('alternatePhone')} placeholder="+91 98765 43211" className="pl-9" />
-                      </InputIcon>
+                      <PhoneNumberInput value={watch('alternatePhone') || ''} onChange={(value) => setValue('alternatePhone', value, { shouldDirty: true, shouldValidate: true })} />
                     </Field>
                     <Field label="Website URL" className="col-span-2">
                       <InputIcon icon={<Globe className="h-4 w-4" />}>
@@ -432,9 +595,7 @@ function CreateOrgPageInner() {
                       <Input {...register('contactRole')} placeholder="HR Manager" />
                     </Field>
                     <Field label="Mobile *" error={errors.contactPersonMobile?.message}>
-                      <InputIcon icon={<Phone className="h-4 w-4" />}>
-                        <Input type="tel" {...register('contactPersonMobile')} placeholder="+91 98765 43210" className="pl-9" />
-                      </InputIcon>
+                      <PhoneNumberInput value={watch('contactPersonMobile') || ''} onChange={(value) => setValue('contactPersonMobile', value, { shouldDirty: true, shouldValidate: true })} required />
                     </Field>
                     <Field label="Email *" error={errors.contactPersonEmail?.message}>
                       <InputIcon icon={<Mail className="h-4 w-4" />}>
@@ -452,15 +613,19 @@ function CreateOrgPageInner() {
                 <Panel title="Locale & Formatting">
                   <Grid2>
                     <Field label="Timezone *" error={errors.timezone?.message} className="col-span-2">
-                      <Input {...register('timezone')} placeholder="Asia/Kolkata" />
-                      <p className="text-xs text-muted-foreground mt-1">IANA timezone, e.g. Asia/Kolkata, America/New_York</p>
+                      <TimezoneSearchInput
+                        value={watch('timezone')}
+                        onChange={handleTimezoneChange}
+                      />
                     </Field>
                     <Field label="Default Currency *" error={errors.currency?.message}>
-                      <Input {...register('currency')} placeholder="INR" maxLength={3} />
-                    </Field>
-                    <Field label="Date Format *" error={errors.dateFormat?.message}>
-                      <Select {...register('dateFormat')}>
-                        {DATE_FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
+                      <Select
+                        value={watch('currency')}
+                        onChange={(event) => setValue('currency', event.target.value, { shouldDirty: true, shouldValidate: true })}
+                      >
+                        {CURRENCY_OPTIONS.map((currency) => (
+                          <option key={currency.value} value={currency.value}>{currency.label}</option>
+                        ))}
                       </Select>
                     </Field>
                   </Grid2>
@@ -495,29 +660,8 @@ function CreateOrgPageInner() {
                   </div>
                 </Panel>
 
-                <Panel title="Module Requirements" subtitle="Select the HRMS modules this organisation needs">
-                  <div className="space-y-2">
-                    {REQUIREMENTS.map((r) => {
-                      const Icon = r.icon;
-                      return (
-                        <label key={r.key} className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50/50 p-3 cursor-pointer hover:bg-slate-100/50 transition-colors">
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
-                            <Icon className="h-4 w-4" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-medium text-slate-700">{r.title}</div>
-                            <div className="text-xs text-slate-400">{r.desc}</div>
-                          </div>
-                          <input
-                            type="checkbox"
-                            {...register(r.key as any)}
-                            className="h-4 w-4 rounded border-slate-300 accent-violet-600"
-                          />
-                        </label>
-                      );
-                    })}
-                  </div>
-                  <Grid2 className="mt-3">
+                <Panel title="Business Context" subtitle="Optional details for onboarding">
+                  <Grid2>
                     <Field label="Business Category">
                       <Input {...register('businessCategory')} placeholder="e.g. Manufacturing, IT Services" />
                     </Field>
@@ -533,26 +677,8 @@ function CreateOrgPageInner() {
             {step === 3 && (
               <>
                 <Panel title="Registered Address" subtitle="Legal registration address as per government records">
-                  <Field label="Address Line 1 *" error={errors.registeredAddress?.line1?.message}>
-                    <Input {...register('registeredAddress.line1')} placeholder="Building / Street" />
-                  </Field>
-                  <Field label="Address Line 2">
-                    <Input {...register('registeredAddress.line2')} placeholder="Area / Locality (optional)" />
-                  </Field>
-                  <Grid2>
-                    <Field label="City *" error={errors.registeredAddress?.city?.message}>
-                      <Input {...register('registeredAddress.city')} placeholder="Mumbai" />
-                    </Field>
-                    <Field label="State / Province *" error={errors.registeredAddress?.state?.message}>
-                      <Input {...register('registeredAddress.state')} placeholder="Maharashtra" />
-                    </Field>
-                    <Field label="Country *" error={errors.registeredAddress?.country?.message}>
-                      <Input {...register('registeredAddress.country')} placeholder="India" />
-                    </Field>
-                    <Field label="Postal Code *" error={errors.registeredAddress?.postal_code?.message}>
-                      <Input {...register('registeredAddress.postal_code')} placeholder="400001" />
-                    </Field>
-                  </Grid2>
+                  <AddressFields value={registeredAddress} onChange={(address) => setAddress('registeredAddress', address)} postalCodeKey="postal_code" required />
+                  {errors.registeredAddress && <p className="text-xs text-destructive">Complete the required registered address fields.</p>}
                 </Panel>
 
                 <label className="flex items-center gap-2.5 text-sm text-slate-600 cursor-pointer">
@@ -571,18 +697,7 @@ function CreateOrgPageInner() {
                         <Copy className="h-3 w-3" /> Copy from registered
                       </Button>
                     </div>
-                    <Field label="Address Line 1" error={errors.operationalAddress?.line1?.message}>
-                      <Input {...register('operationalAddress.line1')} placeholder="Building / Street" />
-                    </Field>
-                    <Field label="Address Line 2">
-                      <Input {...register('operationalAddress.line2')} placeholder="Area / Locality (optional)" />
-                    </Field>
-                    <Grid2>
-                      <Field label="City"><Input {...register('operationalAddress.city')} placeholder="Mumbai" /></Field>
-                      <Field label="State"><Input {...register('operationalAddress.state')} placeholder="Maharashtra" /></Field>
-                      <Field label="Country"><Input {...register('operationalAddress.country')} placeholder="India" /></Field>
-                      <Field label="Postal Code"><Input {...register('operationalAddress.postal_code')} placeholder="400001" /></Field>
-                    </Grid2>
+                    <AddressFields value={operationalAddress || {}} onChange={(address) => setAddress('operationalAddress', address)} postalCodeKey="postal_code" />
                   </Panel>
                 )}
               </>
@@ -602,7 +717,16 @@ function CreateOrgPageInner() {
                       <span className="text-sm font-medium">Create New Account</span>
                     </label>
                     <label className={`flex-1 flex items-center justify-center gap-2 rounded-xl border p-3 cursor-pointer transition-colors ${isExistingUser ? 'border-violet-600 bg-violet-50 text-violet-700' : 'border-border bg-white text-slate-500 hover:bg-slate-50'}`}>
-                      <input type="radio" className="hidden" checked={isExistingUser} onChange={() => { setValue('isExistingUser', true); trigger(['adminFullName', 'adminPassword']); }} />
+                      <input
+                        type="radio"
+                        className="hidden"
+                        checked={isExistingUser}
+                        onChange={() => {
+                          setValue('isExistingUser', true);
+                          setClientUserSearch(getValues('adminEmail') || '');
+                          trigger(['adminFullName', 'adminPassword']);
+                        }}
+                      />
                       <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${isExistingUser ? 'border-violet-600' : 'border-slate-300'}`}>
                         {isExistingUser && <div className="w-2 h-2 rounded-full bg-violet-600" />}
                       </div>
@@ -615,12 +739,67 @@ function CreateOrgPageInner() {
                       <Input {...register('adminFullName')} placeholder="Jane Smith" />
                     </Field>
                   )}
-                  <Field label="Email Address *" error={errors.adminEmail?.message}>
-                    <InputIcon icon={<Mail className="h-4 w-4" />}>
-                      <Input type="email" {...register('adminEmail')} placeholder="admin@company.com" className="pl-9" />
-                    </InputIcon>
-                    {isExistingUser && <p className="text-xs text-muted-foreground mt-1">We will look up this user by email and grant them Admin access to this organization.</p>}
-                  </Field>
+                  {!isExistingUser ? (
+                    <Field label="Email Address *" error={errors.adminEmail?.message}>
+                      <InputIcon icon={<Mail className="h-4 w-4" />}>
+                        <Input type="email" {...register('adminEmail')} placeholder="admin@company.com" className="pl-9" />
+                      </InputIcon>
+                    </Field>
+                  ) : (
+                    <Field label="Search Client-Side User *" error={errors.adminEmail?.message}>
+                      <div className="relative">
+                        <InputIcon icon={<Search className="h-4 w-4" />}>
+                          <Input
+                            type="search"
+                            value={clientUserSearch}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setClientUserSearch(value);
+                              setValue('adminEmail', value, { shouldDirty: true, shouldValidate: true });
+                            }}
+                            placeholder="Search by name, email, phone, employee code, or company"
+                            className="pl-9 pr-10"
+                          />
+                        </InputIcon>
+                        {clientUsersLoading && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />}
+                      </div>
+                      <div className="mt-2 overflow-hidden rounded-lg border border-slate-100 bg-white">
+                        {clientUsersError ? (
+                          <div className="px-3 py-2 text-xs text-destructive">{clientUsersError}</div>
+                        ) : clientUsers.length ? (
+                          <div className="max-h-60 overflow-y-auto">
+                            {clientUsers.map((user) => (
+                              <button
+                                key={user.id}
+                                type="button"
+                                onClick={() => selectExistingUser(user)}
+                                className={`flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-violet-50 ${
+                                  watch('adminEmail') === user.email ? 'bg-violet-50' : ''
+                                }`}
+                              >
+                                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
+                                  <UserCheck className="h-4 w-4" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-sm font-medium text-slate-700">{user.display_name || user.email}</div>
+                                  <div className="truncate text-xs text-slate-500">
+                                    {user.email}
+                                    {user.tenant_name ? ` · ${user.tenant_name}` : ''}
+                                  </div>
+                                </div>
+                                {!user.is_active && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">Inactive</span>}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="px-3 py-2 text-xs text-muted-foreground">
+                            {clientUsersLoading ? 'Searching client-side users...' : 'No client-side users found.'}
+                          </div>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">Select a customer user, or enter the exact email address if you already know it.</p>
+                    </Field>
+                  )}
                   {!isExistingUser && (
                     <Field label="Password *" error={errors.adminPassword?.message}>
                       <div className="relative">
@@ -656,7 +835,6 @@ function CreateOrgPageInner() {
                   <Row label="Company Code"       value={watch('companyCode')} />
                   <Row label="Company Type"       value={COMPANY_TYPES.find((t) => t.value === watch('companyType'))?.label} />
                   <Row label="Industry"           value={watch('industry')} />
-                  <Row label="Company Size"       value={COMPANY_SIZES.find((s) => s.value === watch('companySize'))?.label} />
                   <Row label="Employees"          value={watch('estimatedEmployeeCount')?.toString()} />
                   <Row label="Branches"           value={watch('estimatedBranchCount')?.toString()} />
                   <Row label="Registration No."   value={watch('registrationNumber')} />
@@ -677,10 +855,8 @@ function CreateOrgPageInner() {
                 <ReviewPanel title="Operations">
                   <Row label="Timezone"     value={watch('timezone')} />
                   <Row label="Currency"     value={watch('currency')} />
-                  <Row label="Date Format"  value={watch('dateFormat')} />
                   <Row label="Fiscal Year"  value={FISCAL_MONTHS.find((m) => m.value === Number(watch('fiscalYearStart')))?.label} />
                   <Row label="Work Week"    value={DAYS.filter(({ key }) => workWeek[key]).map(({ label }) => label).join(', ')} />
-                  <Row label="Modules"      value={REQUIREMENTS.filter((r) => !!watch(r.key as any)).map((r) => r.title).join(', ') || 'None'} />
                 </ReviewPanel>
                 <ReviewPanel title="Address">
                   <Row label="Registered" value={[watch('registeredAddress.line1'), watch('registeredAddress.city'), watch('registeredAddress.state'), watch('registeredAddress.country')].filter(Boolean).join(', ')} />
@@ -704,7 +880,7 @@ function CreateOrgPageInner() {
                   Continue <ChevronRight className="h-4 w-4" />
                 </Button>
               ) : (
-                <Button type="submit" disabled={submitting} className="gap-2 bg-violet-600 hover:bg-violet-700 min-w-[160px]">
+                <Button type="button" onClick={handleSubmit(onSubmit, onInvalidSubmit)} disabled={submitting} className="gap-2 bg-violet-600 hover:bg-violet-700 min-w-[160px]">
                   {submitting ? (
                     <><span className="animate-spin h-4 w-4 rounded-full border-2 border-white border-t-transparent inline-block" />Creating…</>
                   ) : (
@@ -730,6 +906,50 @@ export default function CreateOrgPage() {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
+function cleanAddressForPayload(address: AddressValue) {
+  return {
+    line1: address.line1 || '',
+    line2: address.line2 || '',
+    city: address.city || '',
+    state: address.state || '',
+    country: address.country || '',
+    postal_code: address.postal_code || address.pincode || '',
+  };
+}
+
+function normalizeCompanyType(value: unknown) {
+  const key = String(value ?? '').trim().toLowerCase().replace(/-/g, '_');
+  return COMPANY_TYPE_ALIASES[key] ?? COMPANY_TYPE_ALIASES[key.replace(/_/g, ' ')] ?? '';
+}
+
+function deriveCompanyCode(name: string) {
+  const code = name
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .slice(0, 20);
+  return code || 'ORG';
+}
+
+function emailOrBlank(value: unknown) {
+  const email = String(value ?? '').trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+}
+
+function findFirstErrorMessage(errors: FieldErrors<FormData>): string {
+  for (const value of Object.values(errors)) {
+    if (!value) continue;
+    if (typeof value === 'object' && 'message' in value && typeof value.message === 'string') {
+      return value.message;
+    }
+    if (typeof value === 'object') {
+      const nested = findFirstErrorMessage(value as FieldErrors<FormData>);
+      if (nested) return nested;
+    }
+  }
+  return '';
+}
+
 function Panel({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
     <div className="ops-panel overflow-hidden">
@@ -754,6 +974,189 @@ function Field({ label, error, className, children }: { label: string; error?: s
       <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">{label}</label>
       {children}
       {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+function TimezoneSearchInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const selected = TIMEZONE_OPTIONS.find((timezone) => timezone.value === value) ?? TIMEZONE_OPTIONS[0];
+  const [query, setQuery] = useState(selected.label);
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const positionDropdown = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    const viewportPadding = 12;
+    const preferredHeight = 260;
+    const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+    const spaceAbove = rect.top - viewportPadding;
+    const openAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
+
+    setDropdownStyle({
+      position: 'fixed',
+      left: rect.left,
+      width: rect.width,
+      top: openAbove ? undefined : rect.bottom + 4,
+      bottom: openAbove ? window.innerHeight - rect.top + 4 : undefined,
+      maxHeight: Math.max(140, Math.min(preferredHeight, openAbove ? spaceAbove : spaceBelow)),
+    });
+  }, []);
+
+  useEffect(() => {
+    setQuery(selected.label);
+  }, [selected.label]);
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setQuery(selected.label);
+      }
+    };
+
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, [selected.label]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    positionDropdown();
+    const updatePosition = () => positionDropdown();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [open, positionDropdown]);
+
+  const filteredTimezones = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return TIMEZONE_OPTIONS;
+
+    return TIMEZONE_OPTIONS.filter((timezone) =>
+      timezone.value.toLowerCase().includes(normalized) ||
+      timezone.label.toLowerCase().includes(normalized)
+    );
+  }, [query]);
+
+  const findTimezone = (input: string) => {
+    const normalized = input.trim().toLowerCase();
+    if (!normalized) return undefined;
+
+    return TIMEZONE_OPTIONS.find((timezone) =>
+      timezone.value.toLowerCase() === normalized ||
+      timezone.label.toLowerCase() === normalized
+    ) ?? TIMEZONE_OPTIONS.find((timezone) =>
+      timezone.value.toLowerCase().includes(normalized) ||
+      timezone.label.toLowerCase().includes(normalized)
+    );
+  };
+
+  const commit = (input: string) => {
+    const match = findTimezone(input);
+    if (match) {
+      onChange(match.value);
+      setQuery(match.label);
+      setOpen(false);
+      return;
+    }
+    setQuery(selected.label);
+    setOpen(false);
+  };
+
+  const chooseTimezone = (timezone: (typeof TIMEZONE_OPTIONS)[number]) => {
+    onChange(timezone.value);
+    setQuery(timezone.label);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <InputIcon icon={<Search className="h-4 w-4" />}>
+        <Input
+          value={query}
+          onFocus={() => setOpen(true)}
+          onChange={(event) => {
+            const next = event.target.value;
+            setQuery(next);
+            setOpen(true);
+            setActiveIndex(0);
+
+            const exact = findTimezone(next);
+            if (exact && (exact.label === next || exact.value === next)) {
+              onChange(exact.value);
+            }
+          }}
+          onBlur={(event) => {
+            if (!containerRef.current?.contains(event.relatedTarget as Node)) {
+              commit(event.target.value);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowDown') {
+              event.preventDefault();
+              setOpen(true);
+              setActiveIndex((index) => Math.min(index + 1, filteredTimezones.length - 1));
+            } else if (event.key === 'ArrowUp') {
+              event.preventDefault();
+              setActiveIndex((index) => Math.max(index - 1, 0));
+            } else if (event.key === 'Enter') {
+              event.preventDefault();
+              const timezone = filteredTimezones[activeIndex] ?? findTimezone(query);
+              if (timezone) chooseTimezone(timezone);
+            } else if (event.key === 'Escape') {
+              setOpen(false);
+              setQuery(selected.label);
+            }
+          }}
+          placeholder="Search timezone"
+          className="pl-9"
+          role="combobox"
+          aria-expanded={open}
+          aria-autocomplete="list"
+        />
+      </InputIcon>
+
+      {open && (
+        <div
+          className="z-[100] overflow-hidden rounded-md border border-input bg-background shadow-lg"
+          style={dropdownStyle}
+        >
+          <div className="max-h-64 overflow-y-auto py-1" role="listbox">
+            {filteredTimezones.length ? (
+              filteredTimezones.map((timezone, index) => (
+                <button
+                  key={timezone.value}
+                  type="button"
+                  role="option"
+                  aria-selected={timezone.value === value}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => chooseTimezone(timezone)}
+                  className={[
+                    'flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors',
+                    index === activeIndex ? 'bg-slate-100 text-slate-900' : 'text-slate-700 hover:bg-slate-50',
+                    timezone.value === value ? 'font-medium text-primary' : '',
+                  ].join(' ')}
+                >
+                  <span className="truncate">{timezone.label}</span>
+                  {timezone.value === value && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                </button>
+              ))
+            ) : (
+              <div className="px-3 py-6 text-center text-sm text-muted-foreground">No timezone found</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

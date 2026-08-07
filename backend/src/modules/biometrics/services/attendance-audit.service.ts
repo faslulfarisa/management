@@ -3,6 +3,8 @@ import { DatabaseService } from '../../../shared/database.service';
 
 export type AuditEventType =
   | 'punch_received'
+  | 'unknown_punch_pending'
+  | 'pending_punch_processed'
   | 'record_created'
   | 'record_updated'
   | 'manual_correction'

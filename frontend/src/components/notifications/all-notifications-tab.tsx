@@ -1,15 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, Check, Archive, RotateCcw, ExternalLink, Loader2 } from 'lucide-react';
-import { notificationsApi, NotificationListFilters } from '@/lib/notifications-api';
+import { notificationsApi, NotificationListFilters, type NotificationItem } from '@/lib/notifications-api';
+import { useNotificationAction, toActionableNotification } from '@/lib/notification-action-registry';
 import { EmptyState, PriorityBadge, TypeBadge, timeAgo } from './shared';
 import { FiltersBar } from './filters-bar';
 
 export function AllNotificationsTab() {
-  const router = useRouter();
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<NotificationListFilters>({ page: 1, limit: 20, status: 'active' });
   const [actingId, setActingId] = useState<string | null>(null);
@@ -24,6 +23,13 @@ export function AllNotificationsTab() {
     queryClient.invalidateQueries({ queryKey: ['notifications-unread-count'] });
     queryClient.invalidateQueries({ queryKey: ['notifications-overview'] });
   };
+
+  const openNotification = useNotificationAction({
+    onNavigated: () => {
+      invalidate();
+      refetch();
+    },
+  });
 
   const handleAction = async (id: string, action: 'read' | 'unread' | 'archive') => {
     setActingId(id);
@@ -40,9 +46,8 @@ export function AllNotificationsTab() {
     }
   };
 
-  const handleOpen = (n: { id: string; is_read: boolean; action_url: string | null }) => {
-    if (!n.is_read) handleAction(n.id, 'read');
-    if (n.action_url) router.push(n.action_url);
+  const handleOpen = (n: NotificationItem) => {
+    openNotification(toActionableNotification(n));
   };
 
   const items = data?.data ?? [];

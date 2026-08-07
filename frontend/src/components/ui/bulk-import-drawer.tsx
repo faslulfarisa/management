@@ -123,6 +123,16 @@ export default function BulkImportDrawer({
     setSubmitting(true);
     setResults(rows.map(() => ({ status: 'pending' })));
     for (let i = 0; i < rows.length; i++) {
+      // Validate required fields client-side first
+      const missingFields = columns
+        .filter(c => c.required && !String(rows[i][c.key] ?? '').trim())
+        .map(c => c.label);
+      if (missingFields.length > 0) {
+        setResults(r => r.map((res, idx) =>
+          idx === i ? { status: 'error', message: `Missing required fields: ${missingFields.join(', ')}` } : res
+        ));
+        continue;
+      }
       try {
         await onSubmitRow(rows[i]);
         setResults(r => r.map((res, idx) => idx === i ? { status: 'success' } : res));

@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { AlertCircle, Eye, EyeOff, Lock, Mail, Phone, ShieldCheck, Building2, User, ClipboardCheck } from 'lucide-react';
+import { AlertCircle, Eye, EyeOff, Lock, Mail, ShieldCheck, Building2, User, ClipboardCheck } from 'lucide-react';
 import { registrationApi } from '@/lib/organization-registration-api';
 import { useRegistrationStore } from '@/store/registration.store';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { AuthHeroPanel, AuthBrandMark, HeroFeature } from '@/components/auth/auth-hero-panel';
 import { RegistrationProgress } from '@/components/auth/registration-progress';
 import { PasswordStrengthMeter } from '@/components/auth/password-strength-meter';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 
 const schema = z
   .object({
@@ -40,7 +41,7 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  const { register, handleSubmit, watch, formState: { errors } } = useForm<FormData>({
+  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: { fullName: '', email: '', mobile: '', password: '', confirmPassword: '' },
   });
@@ -53,7 +54,7 @@ export default function RegisterPage() {
     try {
       const { registrationId, accessToken } = await registrationApi.createAccount(data);
       setSession({ registrationId, accessToken, email: data.email, fullName: data.fullName, mobile: data.mobile });
-      router.push('/register/verify-email');
+      router.push('/register/organization');
     } catch (err: any) {
       setError(err.response?.data?.error?.message ?? err.response?.data?.message ?? 'Registration failed');
     } finally {
@@ -73,10 +74,9 @@ export default function RegisterPage() {
         description="Create your account, tell us about your organization, and our onboarding team will review and activate your HRMS workspace."
       >
         <div className="space-y-4">
-          <HeroFeature icon={<User className="h-5 w-5" />} title="Step 1 of 4" desc="Create your personal account." />
-          <HeroFeature icon={<Building2 className="h-5 w-5" />} title="Step 2 of 4" desc="Tell us about your organization." />
-          <HeroFeature icon={<ClipboardCheck className="h-5 w-5" />} title="Step 3 of 4" desc="Share your business requirements." />
-          <HeroFeature icon={<ShieldCheck className="h-5 w-5" />} title="Step 4 of 4" desc="Review, submit, and we'll take it from there." />
+          <HeroFeature icon={<User className="h-5 w-5" />} title="Step 1 of 3" desc="Create your personal account." />
+          <HeroFeature icon={<Building2 className="h-5 w-5" />} title="Step 2 of 3" desc="Tell us about your organization and business requirements." />
+          <HeroFeature icon={<ClipboardCheck className="h-5 w-5" />} title="Step 3 of 3" desc="Review, submit, and we'll take it from there." />
         </div>
       </AuthHeroPanel>
 
@@ -124,10 +124,7 @@ export default function RegisterPage() {
 
             <div className="space-y-2">
               <label htmlFor="mobile" className="text-sm font-medium text-foreground">Mobile Number <span className="text-muted-foreground font-normal">(optional)</span></label>
-              <div className="relative">
-                <Phone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input id="mobile" placeholder="+1 555 000 0000" className="pl-10 h-11" autoComplete="tel" {...register('mobile')} />
-              </div>
+              <PhoneNumberInput value={watch('mobile') || ''} onChange={(value) => setValue('mobile', value, { shouldDirty: true, shouldValidate: true })} />
             </div>
 
             <div className="space-y-2">

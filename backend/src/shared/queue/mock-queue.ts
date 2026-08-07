@@ -41,6 +41,14 @@ export class MockQueue {
     return 0;
   }
 
+  async getCompletedCount(): Promise<number> {
+    return 0;
+  }
+
+  async isPaused(): Promise<boolean> {
+    return false;
+  }
+
   async getWorkers(): Promise<unknown[]> {
     return [];
   }

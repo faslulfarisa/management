@@ -57,6 +57,7 @@ export class TerminalAuthGuard implements CanActivate {
     }
 
     request.terminal = terminal;
+    request.terminalRawToken = rawToken;
     request.user = {
       tenantId:   terminal['tenant_id'] as string,
       terminalId: terminal['id'] as string,

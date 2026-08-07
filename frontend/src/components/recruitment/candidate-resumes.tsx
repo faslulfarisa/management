@@ -42,7 +42,7 @@ export function CandidateResumes({ candidateId }: { candidateId: string }) {
 
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold text-foreground">Resumes</h3>
+      <h3 className="text-base font-bold text-foreground">Resumes</h3>
       {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>}
       {loading ? (
         <p className="text-xs text-muted-foreground">Loading…</p>

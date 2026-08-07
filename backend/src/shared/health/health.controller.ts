@@ -6,6 +6,8 @@ import { DbHealthIndicator } from './db-health.indicator';
 import { RedisHealthIndicator } from './redis-health.indicator';
 import { BiometricsMetricsService } from '../metrics/biometrics-metrics.service';
 import { WebVitalDto } from './web-vitals.dto';
+import { DatabaseService } from '../database.service';
+import { SchedulerControlService } from '../scheduler-control.service';
 
 @ApiTags('Health')
 @Controller('health')
@@ -15,6 +17,8 @@ export class HealthController {
     private readonly db: DbHealthIndicator,
     private readonly redis: RedisHealthIndicator,
     private readonly metrics: BiometricsMetricsService,
+    private readonly database: DatabaseService,
+    private readonly schedulerControl: SchedulerControlService,
   ) {}
 
   @Get()
@@ -52,5 +56,18 @@ export class HealthController {
   @ApiOperation({ summary: 'Browser-reported Core Web Vitals (FCP/LCP/TTFB/INP) — feeds the Grafana performance dashboard' })
   reportWebVital(@Body() body: WebVitalDto) {
     this.metrics.webVitals.observe({ metric: body.name }, body.value);
+  }
+
+  @Get('diagnostics')
+  @ApiOperation({ summary: 'Development diagnostics for database pool and scheduler state' })
+  diagnostics() {
+    return {
+      timestamp: new Date().toISOString(),
+      databasePool: this.database.getPoolStats(),
+      schedulers: this.schedulerControl.getSnapshot(),
+      queues: {
+        note: 'Queue depth and worker gauges are exposed through /health/metrics when Redis-backed queues are enabled.',
+      },
+    };
   }
 }

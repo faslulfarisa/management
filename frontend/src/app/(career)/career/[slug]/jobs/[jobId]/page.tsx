@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, CheckCircle2, Loader2, Upload } from 'lucide-react';
 import { careerPortalApi, PublicJobDetail, PublicOrganization } from '@/lib/career-portal-api';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 
 function TagList({ items }: { items: any[] }) {
   if (!items?.length) return null;
@@ -17,6 +18,7 @@ function TagList({ items }: { items: any[] }) {
 export default function CareerJobDetailPage() {
   const { slug, jobId } = useParams<{ slug: string; jobId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [organization, setOrganization] = useState<PublicOrganization | null>(null);
   const [job, setJob] = useState<PublicJobDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -45,7 +47,12 @@ export default function CareerJobDetailPage() {
     setSubmitting(true);
     setSubmitError('');
     try {
-      const data = await careerPortalApi.apply(slug, jobId, { ...form, resume: file || undefined });
+      const data = await careerPortalApi.apply(slug, jobId, {
+        ...form,
+        source: searchParams.get('source') || undefined,
+        campaign_id: searchParams.get('campaign_id') || undefined,
+        resume: file || undefined,
+      });
       setResult(data);
     } catch (err: any) {
       setSubmitError(err.response?.data?.message || err.response?.data?.error || 'Failed to submit application');
@@ -109,7 +116,7 @@ export default function CareerJobDetailPage() {
               <div><label className="text-xs font-medium text-muted-foreground block mb-1">Last Name *</label><input value={form.last_name} onChange={(e) => set('last_name', e.target.value)} className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" /></div>
             </div>
             <div><label className="text-xs font-medium text-muted-foreground block mb-1">Email *</label><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" /></div>
-            <div><label className="text-xs font-medium text-muted-foreground block mb-1">Phone</label><input value={form.phone} onChange={(e) => set('phone', e.target.value)} className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" /></div>
+            <div><label className="text-xs font-medium text-muted-foreground block mb-1">Phone</label><PhoneNumberInput value={form.phone} onChange={(value) => set('phone', value)} /></div>
             <div className="grid grid-cols-2 gap-3">
               <div><label className="text-xs font-medium text-muted-foreground block mb-1">Current Company</label><input value={form.current_company} onChange={(e) => set('current_company', e.target.value)} className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" /></div>
               <div><label className="text-xs font-medium text-muted-foreground block mb-1">Current Role</label><input value={form.current_designation} onChange={(e) => set('current_designation', e.target.value)} className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" /></div>

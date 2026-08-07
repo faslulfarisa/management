@@ -1,12 +1,14 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DatabaseService } from '../../../shared/database.service';
 import { BillingEngineService } from './billing-engine.service';
+import { CurrencyService } from '../../../shared/currency.service';
 
 @Injectable()
 export class BillingService {
   constructor(
     private db: DatabaseService,
-    private engine: BillingEngineService
+    private engine: BillingEngineService,
+    private currencyService: CurrencyService,
   ) {}
 
   async getPlans(includeInactive = false) {
@@ -158,13 +160,45 @@ export class BillingService {
 
   async getSubscription(tenantId: string) {
     const { rows } = await this.db.query(
-      `SELECT ts.*, sp.name as plan_name, sp.slug as plan_slug
+      `SELECT ts.*, COALESCE(sp.name, ts.custom_plan_name, 'Custom plan') as plan_name, sp.slug as plan_slug
         FROM tenant_subscriptions ts
-        JOIN saas_base_plans sp ON ts.plan_id = sp.id
+        LEFT JOIN saas_base_plans sp ON ts.plan_id = sp.id
         WHERE ts.tenant_id = $1 ORDER BY ts.created_at DESC LIMIT 1`,
       [tenantId],
     );
     return rows[0] || null;
+  }
+
+  async submitPlanUpgradeRequest(tenantId: string, data: any, userId: string) {
+    const { rows: existing } = await this.db.query(
+      `SELECT 1 FROM organization_change_requests 
+       WHERE tenant_id = $1 AND status = 'pending' AND changes->>'requestType' = 'plan_upgrade'`,
+      [tenantId]
+    );
+    if (existing.length) {
+      throw new BadRequestException('A plan upgrade request is already pending approval.');
+    }
+
+    const { rows: planRows } = await this.db.query('SELECT name FROM saas_base_plans WHERE id = $1', [data.plan_id]);
+    const planName = planRows[0]?.name || 'Unknown Plan';
+
+    const changes = {
+      requestType: 'plan_upgrade',
+      plan_id: data.plan_id,
+      plan_name: planName,
+      billing_cycle: data.billing_cycle,
+      selected_modules: data.selected_modules || [],
+      selected_features: data.selected_features || [],
+      resource_quantities: data.resource_quantities || {}
+    };
+
+    const { rows } = await this.db.query(
+      `INSERT INTO organization_change_requests (tenant_id, requested_by_user_id, changes, reason, status)
+       VALUES ($1, $2, $3, $4, 'pending') RETURNING *`,
+      [tenantId, userId, JSON.stringify(changes), 'Request to upgrade SaaS plan']
+    );
+
+    return rows[0];
   }
 
   async subscribe(tenantId: string, data: { plan_id: string; billing_cycle: 'monthly' | 'yearly'; selected_modules?: string[]; selected_features?: string[]; resource_quantities?: Record<string, number>; discount_code?: string }) {
@@ -205,13 +239,26 @@ export class BillingService {
     const now = new Date();
     const periodEnd = new Date(now);
     periodEnd.setMonth(periodEnd.getMonth() + (data.billing_cycle === 'yearly' ? 12 : 1));
+    const currency = await this.currencyService.getTenantCurrencySnapshot(tenantId);
 
     await this.db.query('BEGIN');
     try {
       const { rows } = await this.db.query(
-        `INSERT INTO tenant_subscriptions (tenant_id, plan_id, status, billing_cycle, current_period_start, current_period_end, next_billing_date, amount, base_price, is_custom_pricing, custom_pricing_notes)
-          VALUES ($1, $2, 'active', $3, $4, $5, $6, $7, $8, false, $9) RETURNING *`,
-        [tenantId, data.plan_id, data.billing_cycle, now.toISOString().split('T')[0], periodEnd.toISOString().split('T')[0], periodEnd.toISOString().split('T')[0], amount, pricing.basePrice, JSON.stringify(pricing.breakdown)],
+        `INSERT INTO tenant_subscriptions (
+          tenant_id, plan_id, status, billing_cycle, current_period_start, current_period_end,
+          next_billing_date, amount, base_price, currency, currency_symbol, exchange_rate,
+          base_currency, exchange_rate_to_base, exchange_rate_source, exchange_rate_as_of,
+          currency_snapshot, is_custom_pricing, custom_pricing_notes
+        )
+          VALUES ($1, $2, 'active', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, false, $17) RETURNING *`,
+        [
+          tenantId, data.plan_id, data.billing_cycle, now.toISOString().split('T')[0],
+          periodEnd.toISOString().split('T')[0], periodEnd.toISOString().split('T')[0],
+          amount, pricing.basePrice, currency.currencyCode, currency.currencySymbol,
+          currency.exchangeRate, currency.baseCurrency, currency.exchangeRateToBase,
+          currency.exchangeRateSource, currency.exchangeRateAsOf, JSON.stringify(currency.snapshot),
+          JSON.stringify(pricing.breakdown),
+        ],
       );
 
       const subId = rows[0].id;
@@ -262,6 +309,7 @@ export class BillingService {
   }
 
   async createInvoice(tenantId: string, subscriptionId: string, amount: number) {
+    const currency = await this.currencyService.getTenantCurrencySnapshot(tenantId);
     const count = await this.db.query('SELECT COUNT(*) FROM subscription_invoices WHERE tenant_id = $1', [tenantId]);
     const invoiceNum = `INV-${String(parseInt(count.rows[0].count) + 1).padStart(4, '0')}`;
     const dueDate = new Date();
@@ -271,9 +319,18 @@ export class BillingService {
     const totalAmount = amount + taxAmount;
 
     const { rows } = await this.db.query(
-      `INSERT INTO subscription_invoices (tenant_id, subscription_id, invoice_number, amount, tax_amount, total_amount, due_date)
-        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [tenantId, subscriptionId, invoiceNum, amount, taxAmount, totalAmount, dueDate.toISOString().split('T')[0]],
+      `INSERT INTO subscription_invoices (
+        tenant_id, subscription_id, invoice_number, amount, tax_amount, total_amount,
+        currency, currency_symbol, exchange_rate, base_currency, exchange_rate_to_base,
+        exchange_rate_source, exchange_rate_as_of, currency_snapshot, due_date
+      )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15) RETURNING *`,
+      [
+        tenantId, subscriptionId, invoiceNum, amount, taxAmount, totalAmount,
+        currency.currencyCode, currency.currencySymbol, currency.exchangeRate,
+        currency.baseCurrency, currency.exchangeRateToBase, currency.exchangeRateSource,
+        currency.exchangeRateAsOf, JSON.stringify(currency.snapshot), dueDate.toISOString().split('T')[0],
+      ],
     );
     return rows[0];
   }
@@ -289,8 +346,19 @@ export class BillingService {
     );
 
     await this.db.query(
-      'INSERT INTO payment_transactions (tenant_id, invoice_id, amount, gateway, gateway_transaction_id, status) VALUES ($1, $2, $3, $4, $5, $6)',
-      [tenantId, invoiceId, invoice.rows[0].total_amount, data.gateway || 'manual', data.gateway_transaction_id || null, 'completed'],
+      `INSERT INTO payment_transactions (
+        tenant_id, invoice_id, amount, currency, currency_symbol, exchange_rate,
+        base_currency, exchange_rate_to_base, exchange_rate_source, exchange_rate_as_of,
+        currency_snapshot, gateway, gateway_transaction_id, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)`,
+      [
+        tenantId, invoiceId, invoice.rows[0].total_amount, invoice.rows[0].currency,
+        invoice.rows[0].currency_symbol, invoice.rows[0].exchange_rate,
+        invoice.rows[0].base_currency, invoice.rows[0].exchange_rate_to_base,
+        invoice.rows[0].exchange_rate_source, invoice.rows[0].exchange_rate_as_of,
+        JSON.stringify(invoice.rows[0].currency_snapshot ?? {}), data.gateway || 'manual',
+        data.gateway_transaction_id || null, 'completed',
+      ],
     );
 
     return rows[0];
@@ -314,5 +382,9 @@ export class BillingService {
       [tenantId, 'pending'],
     );
     return { total_paid: totalPaid.rows[0].total, total_pending: totalPending.rows[0].total };
+  }
+
+  async getTenantCurrency(tenantId: string) {
+    return this.db.query('SELECT currency, currency_symbol FROM tenants WHERE id = $1', [tenantId]);
   }
 }

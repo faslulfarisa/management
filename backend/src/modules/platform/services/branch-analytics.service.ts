@@ -81,9 +81,9 @@ export class BranchAnalyticsService {
          COUNT(DISTINCT e.id)
            FILTER (WHERE e.status = 'active' AND e.deleted_at IS NULL)    AS headcount,
          COUNT(ar.id)                                                      AS total_records,
-         COUNT(ar.id) FILTER (WHERE ar.status = 'present')                AS present,
+         COUNT(ar.id) FILTER (WHERE ar.status = 'present' OR ar.status = 'late') AS present,
          COUNT(ar.id) FILTER (WHERE ar.status = 'absent')                 AS absent,
-         COUNT(ar.id) FILTER (WHERE ar.status = 'late')                   AS late,
+         COUNT(ar.id) FILTER (WHERE ar.status = 'late' OR ar.late_minutes > 0) AS late,
          COUNT(ar.id) FILTER (WHERE ar.status = 'half_day')               AS half_day,
          COUNT(ar.id) FILTER (WHERE ar.status = 'on_leave')               AS on_leave,
          ROUND(AVG(ar.late_minutes)     FILTER (WHERE ar.late_minutes     > 0)) AS avg_late_minutes,

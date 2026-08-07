@@ -35,13 +35,30 @@ export class ApprovalsController {
   @Get('submitted')
   @RequirePermission(PERMISSIONS.APPROVALS_VIEW)
   async getSubmitted(@Req() req: any, @Query() query: any) {
-    const { tenantId, sub: userId } = req.user;
-    return this.engine.getSubmitted(tenantId, userId, {
+    const { tenantId, sub: userId, isSuperAdmin } = req.user;
+    const accessScope = await this.userHierarchyService.getAccessScope(req.user, tenantId);
+    return this.engine.getSubmitted(tenantId, userId, !!isSuperAdmin, {
       page: query.page,
       limit: query.limit,
       workflowType: query.workflow_type,
       status: query.status,
-    });
+    }, accessScope);
+  }
+
+  @Get('history')
+  @RequirePermission(PERMISSIONS.APPROVALS_VIEW)
+  async getHistory(@Req() req: any, @Query() query: any) {
+    const { tenantId, sub: userId, isSuperAdmin } = req.user;
+    const accessScope = await this.userHierarchyService.getAccessScope(req.user, tenantId);
+    const filters: InboxFilters = {
+      page: query.page ? parseInt(query.page, 10) : 1,
+      limit: query.limit ? parseInt(query.limit, 10) : 20,
+      workflowType: query.workflow_type,
+      branchId: query.branch_id,
+      status: query.status,
+      priority: query.priority,
+    };
+    return this.engine.getHistory(tenantId, userId, !!isSuperAdmin, filters, accessScope);
   }
 
   @Get('pending-count')

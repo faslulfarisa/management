@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { DatabaseService } from '../../../shared/database.service';
+import { SchedulerControlService } from '../../../shared/scheduler-control.service';
 import { NotificationEmitterService } from '../../notifications/services/notification-emitter.service';
 
 const THRESHOLDS = [90, 60, 30, 15, 7, 1, 0];
@@ -18,12 +19,15 @@ export class ComplianceExpiryService {
   constructor(
     private db: DatabaseService,
     private notifier: NotificationEmitterService,
+    private schedulerControl: SchedulerControlService = new SchedulerControlService(),
   ) {}
 
-  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  @Cron('11 1 1 * * *', { name: 'compliance-expiry-sweep' })
   async runDailySweep(): Promise<void> {
-    await this.notifyThresholdCrossings();
-    await this.transitionExpiredAndRenewalPending();
+    await this.schedulerControl.run('compliance-expiry-sweep', async () => {
+      await this.notifyThresholdCrossings();
+      await this.transitionExpiredAndRenewalPending();
+    });
   }
 
   private async notifyThresholdCrossings(): Promise<void> {

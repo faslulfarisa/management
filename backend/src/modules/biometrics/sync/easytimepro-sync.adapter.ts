@@ -155,11 +155,12 @@ export class EasyTimeProSyncAdapter implements OnModuleInit {
         punchTypeField,
         verifyMethodField,
         deviceSerialField,
+        workCodeField,
         attendanceLogTable = 'AttLogs',
         syncBatchSize = 500,
       } = config;
 
-      const extraCols = [punchTypeField, verifyMethodField, deviceSerialField]
+      const extraCols = [punchTypeField, verifyMethodField, deviceSerialField, workCodeField]
         .filter(Boolean)
         .map((c) => `[${c}]`)
         .join(', ');
@@ -310,6 +311,15 @@ export class EasyTimeProSyncAdapter implements OnModuleInit {
       providerName: EASYTIMEPRO_PROVIDER_NAME,
       deviceId,
       attendanceSource: AttendanceSource.BIOMETRIC_DEVICE,
+      punchState: config.punchTypeField
+        ? String(row[config.punchTypeField] ?? '')
+        : undefined,
+      rawVerifyType: config.verifyMethodField
+        ? String(row[config.verifyMethodField] ?? '')
+        : undefined,
+      workCode: config.workCodeField
+        ? String(row[config.workCodeField] ?? '')
+        : undefined,
       rawPayload: row as Record<string, unknown>,
     };
   }
@@ -468,11 +478,12 @@ export class EasyTimeProSyncAdapter implements OnModuleInit {
         punchTypeField,
         verifyMethodField,
         deviceSerialField,
+        workCodeField,
         attendanceLogTable = 'iclock_transaction',
         syncBatchSize = 500,
       } = config;
 
-      const extraCols = [punchTypeField, verifyMethodField, deviceSerialField]
+      const extraCols = [punchTypeField, verifyMethodField, deviceSerialField, workCodeField]
         .filter(Boolean)
         .map((c) => `"${c}"`)
         .join(', ');

@@ -120,9 +120,9 @@ export class SignupOfferService {
 
   async getPublicActiveOffers() {
     const { rows } = await this.db.query(
-      `SELECT id, name, description, offer_type, trial_days, discount_percent, discount_amount, applicable_plan_id, valid_until
+      `SELECT id, name, description, offer_type, trial_days, discount_percent, discount_amount, code, applicable_plan_id, valid_until
        FROM signup_offers
-       WHERE is_active = true AND code IS NULL
+       WHERE is_active = true
          AND valid_from <= now() AND (valid_until IS NULL OR valid_until >= now())
          AND (max_redemptions IS NULL OR redemptions_count < max_redemptions)
        ORDER BY created_at DESC`,
@@ -132,7 +132,7 @@ export class SignupOfferService {
 
   async validateCode(code: string) {
     const { rows } = await this.db.query(
-      `SELECT id, name, description, offer_type, trial_days, discount_percent, discount_amount, applicable_plan_id, valid_until
+      `SELECT id, name, description, offer_type, trial_days, discount_percent, discount_amount, code, applicable_plan_id, valid_until
        FROM signup_offers
        WHERE UPPER(code) = UPPER($1) AND is_active = true
          AND valid_from <= now() AND (valid_until IS NULL OR valid_until >= now())

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { Loader2, CheckCircle2, Circle, MinusCircle, Upload } from 'lucide-react';
 import { careerPortalApi } from '@/lib/career-portal-api';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 
 const STATUS_ICON: Record<string, any> = { completed: CheckCircle2, pending: Circle, not_applicable: MinusCircle };
 const STATUS_COLOR: Record<string, string> = { completed: 'text-emerald-600', pending: 'text-muted-foreground', not_applicable: 'text-gray-400' };
@@ -120,7 +121,7 @@ export default function CareerPreboardingPage() {
             <p className="text-sm font-semibold">Emergency Contact</p>
             <input placeholder="Full Name" value={contact.name} onChange={(e) => setContact({ ...contact, name: e.target.value })} className={inputCls} />
             <input placeholder="Relationship" value={contact.relationship} onChange={(e) => setContact({ ...contact, relationship: e.target.value })} className={inputCls} />
-            <input placeholder="Phone" value={contact.phone} onChange={(e) => setContact({ ...contact, phone: e.target.value })} className={inputCls} />
+            <PhoneNumberInput value={contact.phone} onChange={(value) => setContact({ ...contact, phone: value })} placeholder="Phone" />
             <input placeholder="Address (optional)" value={contact.address} onChange={(e) => setContact({ ...contact, address: e.target.value })} className={inputCls} />
             <button onClick={saveContact} disabled={saving || !contact.name.trim() || !contact.phone.trim()} className="bg-primary text-white rounded-xl px-4 py-2 text-sm font-semibold hover:bg-primary/90 disabled:opacity-50">Save Emergency Contact</button>
           </div>

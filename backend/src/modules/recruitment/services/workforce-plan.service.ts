@@ -12,6 +12,18 @@ const SELECT_WITH_JOINS = `
   LEFT JOIN users cb ON wp.created_by = cb.id
 `;
 
+function parseBreakdown(rawBreakdown: unknown): any[] {
+  if (Array.isArray(rawBreakdown)) return rawBreakdown;
+  if (typeof rawBreakdown !== 'string') return [];
+
+  try {
+    const parsed = JSON.parse(rawBreakdown);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 export interface WorkforcePlanFilters {
   status?: string;
   branch_id?: string;
@@ -26,11 +38,11 @@ export class WorkforcePlanService {
 
   /** Sums breakdown[].budget_amount / planned_hires for list-row summaries without a denormalized column. */
   private summarize(plan: any) {
-    const breakdown = Array.isArray(plan.breakdown) ? plan.breakdown : [];
+    const breakdown = parseBreakdown(plan.breakdown);
     const totalBudget = breakdown.reduce((sum: number, item: any) => sum + (Number(item.budget_amount) || 0), 0);
     const totalPlannedHires = breakdown.reduce((sum: number, item: any) => sum + (Number(item.planned_hires) || 0), 0);
     const totalBudgetedHeadcount = breakdown.reduce((sum: number, item: any) => sum + (Number(item.budgeted_headcount) || 0), 0);
-    return { ...plan, total_budget_amount: totalBudget, total_planned_hires: totalPlannedHires, total_budgeted_headcount: totalBudgetedHeadcount };
+    return { ...plan, breakdown, total_budget_amount: totalBudget, total_planned_hires: totalPlannedHires, total_budgeted_headcount: totalBudgetedHeadcount };
   }
 
   async list(tenantId: string, accessScope: AccessScope | undefined, filters: WorkforcePlanFilters) {

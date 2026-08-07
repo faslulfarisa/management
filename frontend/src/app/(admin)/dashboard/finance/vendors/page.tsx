@@ -6,18 +6,12 @@ import {
   Plus, RefreshCw, Building2, Loader2, Search, X, Trash2, Pencil,
   Phone, Mail, MapPin, CreditCard, FileText, Upload,
 } from 'lucide-react';
+import AddressFields from '@/components/forms/AddressFields';
+import PhoneNumberInput from '@/components/forms/PhoneNumberInput';
 import BulkImportDrawer from '@/components/ui/bulk-import-drawer';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 
 const CATEGORIES = ['Supplier', 'Contractor', 'Consultant', 'Utility', 'Logistics', 'Technology', 'Other'];
-const STATES_IN = [
-  'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat',
-  'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh',
-  'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab',
-  'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh',
-  'Uttarakhand', 'West Bengal', 'Delhi', 'Jammu & Kashmir', 'Ladakh', 'Puducherry',
-];
-
 const STATUS_STYLES: Record<string, string> = {
   active:   'bg-emerald-50 text-emerald-700 border border-emerald-200',
   inactive: 'bg-gray-50 text-gray-500 border border-gray-200',
@@ -27,7 +21,7 @@ const fmt = (n: any) => `₹${(parseFloat(String(n)) || 0).toLocaleString('en-IN
 
 const EMPTY_FORM = () => ({
   name: '', email: '', phone: '', gstin: '', pan: '',
-  address: '', city: '', state: '', pincode: '',
+  address: '', city: '', state: '', pincode: '', country: '', countryCode: '', stateCode: '',
   bank_name: '', bank_account: '', bank_ifsc: '',
   payment_terms: 30, category: '', notes: '', status: 'active',
 });
@@ -59,10 +53,11 @@ function VendorDrawer({
     if (!validate()) return;
     setSaving(true);
     try {
+      const { country, countryCode, stateCode, ...payload } = form;
       if (vendor) {
-        await api.put(`/vendors/${vendor.id}`, form);
+        await api.put(`/vendors/${vendor.id}`, payload);
       } else {
-        await api.post('/vendors', form);
+        await api.post('/vendors', payload);
       }
       onSaved();
       onClose();
@@ -106,7 +101,10 @@ function VendorDrawer({
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">{field('Vendor Name *', 'name', { placeholder: 'e.g. ABC Supplies Pvt Ltd' })}</div>
               {field('Email', 'email', { type: 'email', placeholder: 'vendor@example.com' })}
-              {field('Phone', 'phone', { placeholder: '+91 98765 43210' })}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Phone</label>
+                <PhoneNumberInput value={form.phone || ''} onChange={(value) => setField('phone', value)} />
+              </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1">Category</label>
                 <select value={form.category || ''} onChange={(e) => setField('category', e.target.value)} className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
@@ -140,18 +138,29 @@ function VendorDrawer({
           {/* Address */}
           <div>
             <h3 className="text-sm font-semibold mb-3">Address</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2">{field('Street Address', 'address', { placeholder: '123, MG Road' })}</div>
-              {field('City', 'city', { placeholder: 'Bengaluru' })}
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">State</label>
-                <select value={form.state || ''} onChange={(e) => setField('state', e.target.value)} className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
-                  <option value="">Select state</option>
-                  {STATES_IN.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              {field('Pincode', 'pincode', { placeholder: '560001' })}
-            </div>
+            <AddressFields
+              value={{
+                line1: form.address || '',
+                city: form.city || '',
+                state: form.state || '',
+                stateCode: form.stateCode || '',
+                country: form.country || '',
+                countryCode: form.countryCode || '',
+                pincode: form.pincode || '',
+              }}
+              onChange={(address) => setForm((current: any) => ({
+                ...current,
+                address: address.line1 || '',
+                city: address.city || '',
+                state: address.state || '',
+                stateCode: address.stateCode || '',
+                country: address.country || '',
+                countryCode: address.countryCode || '',
+                pincode: address.pincode || '',
+              }))}
+              showLine2={false}
+              postalCodeKey="pincode"
+            />
           </div>
 
           {/* Bank */}

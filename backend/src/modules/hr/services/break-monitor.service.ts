@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { DatabaseService } from '../../../shared/database.service';
+import { SchedulerControlService } from '../../../shared/scheduler-control.service';
 
 /**
  * Polls active break_sessions for overdue breaks and raises in-app
@@ -14,28 +15,33 @@ import { DatabaseService } from '../../../shared/database.service';
 export class BreakMonitorService {
   private readonly logger = new Logger(BreakMonitorService.name);
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly schedulerControl: SchedulerControlService = new SchedulerControlService(),
+  ) {}
 
-  @Cron('*/1 * * * *')
+  @Cron('5 * * * * *', { name: 'break-overdue-sweep' })
   async checkOverdueBreaks() {
-    const { rows: overdue } = await this.db.query(
-      `SELECT bs.*, e.first_name, e.last_name, e.reporting_manager_id,
-              EXTRACT(EPOCH FROM (now() - bs.started_at)) / 60 AS elapsed_minutes
-       FROM break_sessions bs
-       JOIN employees e ON bs.employee_id = e.id
-       WHERE bs.status = 'active'
-         AND bs.alert_sent_at IS NULL
-         AND bs.allowed_minutes IS NOT NULL
-         AND EXTRACT(EPOCH FROM (now() - bs.started_at)) / 60 > bs.allowed_minutes`,
-    );
+    await this.schedulerControl.run('break-overdue-sweep', async () => {
+      const { rows: overdue } = await this.db.query(
+        `SELECT bs.*, e.first_name, e.last_name, e.reporting_manager_id,
+                EXTRACT(EPOCH FROM (now() - bs.started_at)) / 60 AS elapsed_minutes
+         FROM break_sessions bs
+         JOIN employees e ON bs.employee_id = e.id
+         WHERE bs.status = 'active'
+           AND bs.alert_sent_at IS NULL
+           AND bs.allowed_minutes IS NOT NULL
+           AND EXTRACT(EPOCH FROM (now() - bs.started_at)) / 60 > bs.allowed_minutes`,
+      );
 
-    for (const session of overdue) {
-      try {
-        await this._raiseOverdueAlert(session);
-      } catch (err: any) {
-        this.logger.error(`Failed to raise overdue break alert for session ${session.id}: ${err?.message}`);
+      for (const session of overdue) {
+        try {
+          await this._raiseOverdueAlert(session);
+        } catch (err: any) {
+          this.logger.error(`Failed to raise overdue break alert for session ${session.id}: ${err?.message}`);
+        }
       }
-    }
+    });
   }
 
   private async _raiseOverdueAlert(session: any) {

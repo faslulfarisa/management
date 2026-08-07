@@ -18,8 +18,26 @@ import {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type ScopeType = 'organization' | 'branch' | 'department' | 'employees' | 'employee';
+type ScopeType = 'branch' | 'department' | 'employees' | 'employee';
 interface Scope { type: ScopeType; branchId?: string; departmentId?: string; employeeIds?: string[] }
+
+type ManualAdjustmentValues = {
+  business_working_days: number;
+  present_days: number;
+  paid_leave_days: number;
+  unpaid_leave_days: number;
+  holiday_days: number;
+  weekly_off_days: number;
+  absent_days: number;
+  half_day_count: number;
+  late_count: number;
+  approved_ot_hours: number;
+  payable_days: number;
+};
+
+type ManualAdjustmentDraftValues = {
+  [K in keyof ManualAdjustmentValues]: string;
+};
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'bg-gray-100 text-gray-700',
@@ -39,6 +57,49 @@ function SummaryStatusBadge({ status }: { status: string }) {
       {status.replace(/_/g, ' ')}
     </span>
   );
+}
+
+function getApiErrorMessage(err: any, fallback = 'Action failed') {
+  return err.response?.data?.message || err.response?.data?.error || err.message || fallback;
+}
+
+function numericSummaryValue(summary: any, field: keyof ManualAdjustmentValues) {
+  const value = Number(summary?.[field] ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function calculatePayableDays(values: ManualAdjustmentValues) {
+  return values.present_days
+    + 0.5 * values.half_day_count
+    + values.paid_leave_days
+    + values.holiday_days
+    + values.weekly_off_days;
+}
+
+function numericSummaryInput(summary: any, field: keyof ManualAdjustmentValues) {
+  const value = numericSummaryValue(summary, field);
+  return value === 0 ? '' : String(value);
+}
+
+function draftNumber(values: ManualAdjustmentDraftValues, field: keyof ManualAdjustmentValues) {
+  const raw = values[field];
+  if (raw === '') return 0;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : NaN;
+}
+
+function normalizeManualAdjustment(values: ManualAdjustmentDraftValues): ManualAdjustmentValues {
+  const normalized = ADJUSTMENT_FIELDS.reduce((acc, { key }) => {
+    acc[key] = draftNumber(values, key);
+    return acc;
+  }, {} as ManualAdjustmentValues);
+  normalized.payable_days = calculatePayableDays(normalized);
+  return normalized;
+}
+
+function calculateDraftPayableDays(values: ManualAdjustmentDraftValues) {
+  const payableDays = calculatePayableDays(normalizeManualAdjustment(values));
+  return Number.isFinite(payableDays) ? payableDays : 0;
 }
 
 // ── KPI Cards ────────────────────────────────────────────────────────────────
@@ -78,13 +139,13 @@ function ScopePicker({ value, onChange, branches, departments, employees }: {
   branches: any[]; departments: any[]; employees: any[];
 }) {
   const LABELS: Record<ScopeType, string> = {
-    organization: 'Entire Organization', branch: 'Branch', department: 'Department',
+    branch: 'Branch', department: 'Department',
     employees: 'Selected Employees', employee: 'Single Employee',
   };
   return (
     <div className="space-y-2">
       <div className="flex gap-1.5 flex-wrap">
-        {(['organization', 'branch', 'department', 'employees'] as ScopeType[]).map((t) => (
+        {(['branch', 'department', 'employees'] as ScopeType[]).map((t) => (
           <button key={t} type="button" onClick={() => onChange({ type: t })}
             className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
               value.type === t ? 'bg-primary text-white border-primary' : 'border-border text-muted-foreground hover:bg-muted'
@@ -192,7 +253,7 @@ function ReasonModal({ title, description, placeholder = 'Enter a reason…', co
       await onConfirm(reason.trim());
       onClose();
     } catch (err: any) {
-      setError(err.response?.data?.error || err.response?.data?.message || 'Action failed');
+      setError(getApiErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -282,6 +343,104 @@ function VersionHistoryModal({ summaryId, onClose }: { summaryId: string; onClos
 
 // ── Main tab ─────────────────────────────────────────────────────────────────
 
+const ADJUSTMENT_FIELDS: { key: keyof ManualAdjustmentValues; label: string; step?: string }[] = [
+  { key: 'business_working_days', label: 'Business Working Days' },
+  { key: 'present_days', label: 'Present Days' },
+  { key: 'paid_leave_days', label: 'Paid Leave Days' },
+  { key: 'unpaid_leave_days', label: 'Unpaid Leave Days' },
+  { key: 'holiday_days', label: 'Holiday Days' },
+  { key: 'weekly_off_days', label: 'Weekly Off Days' },
+  { key: 'absent_days', label: 'Absent Days' },
+  { key: 'half_day_count', label: 'Half Days' },
+  { key: 'late_count', label: 'Late Count' },
+  { key: 'approved_ot_hours', label: 'Approved OT Hours', step: '0.25' },
+];
+
+function ManualAdjustmentModal({
+  summary,
+  loading,
+  onSave,
+  onClose,
+}: {
+  summary: any;
+  loading: boolean;
+  onSave: (values: ManualAdjustmentValues) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [values, setValues] = useState<ManualAdjustmentDraftValues>(() => ({
+    business_working_days: numericSummaryInput(summary, 'business_working_days'),
+    present_days: numericSummaryInput(summary, 'present_days'),
+    paid_leave_days: numericSummaryInput(summary, 'paid_leave_days'),
+    unpaid_leave_days: numericSummaryInput(summary, 'unpaid_leave_days'),
+    holiday_days: numericSummaryInput(summary, 'holiday_days'),
+    weekly_off_days: numericSummaryInput(summary, 'weekly_off_days'),
+    absent_days: numericSummaryInput(summary, 'absent_days'),
+    half_day_count: numericSummaryInput(summary, 'half_day_count'),
+    late_count: numericSummaryInput(summary, 'late_count'),
+    approved_ot_hours: numericSummaryInput(summary, 'approved_ot_hours'),
+    payable_days: numericSummaryInput(summary, 'payable_days'),
+  }));
+  const [error, setError] = useState('');
+
+  const update = (key: keyof ManualAdjustmentValues, raw: string) => {
+    setValues((current) => ({ ...current, [key]: raw }));
+  };
+
+  const submit = async () => {
+    const adjustedValues = normalizeManualAdjustment(values);
+    const invalid = ADJUSTMENT_FIELDS.find(({ key }) => !Number.isFinite(adjustedValues[key]) || adjustedValues[key] < 0);
+    if (invalid) {
+      setError(`${invalid.label} must be a non-negative number`);
+      return;
+    }
+    setError('');
+    await onSave(adjustedValues);
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Edit Attendance Days</DialogTitle>
+          <DialogDescription>
+            Manual edits update this employee&apos;s payroll attendance summary and send it back to Pending Review.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+          <div className="text-xs text-muted-foreground">
+            {summary.first_name} {summary.last_name} · {summary.employee_code}
+          </div>
+          <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            Payable Days will be calculated automatically: {calculateDraftPayableDays(values).toFixed(1)}
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {ADJUSTMENT_FIELDS.map(({ key, label, step }) => (
+              <label key={key} className="space-y-1 text-xs">
+                <span className="font-medium text-foreground">{label}</span>
+                <input
+                  type="number"
+                  min="0"
+                  step={step ?? '1'}
+                  value={values[key]}
+                  onChange={(event) => update(key, event.target.value)}
+                  className="w-full border border-border rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button onClick={submit} disabled={loading} className="gap-2">
+            {loading && <Loader2 className="w-4 h-4 animate-spin" />} Save Changes
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const SORTABLE: Record<string, string> = {
   employee: 'first_name', business_working_days: 'business_working_days', present_days: 'present_days',
   payable_days: 'payable_days', status: 'status',
@@ -303,6 +462,7 @@ export function AttendanceSummaryTab({ month, year }: { month: number; year: num
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [actionResult, setActionResult] = useState<{ title: string; details: string[]; tone: 'success' | 'warning' } | null>(null);
 
   const [filters, setFilters] = useState({
     branch_id: '', department_id: '', employee_id: '', status: '', leave_type: '', attendance_state: '', search: '',
@@ -312,12 +472,12 @@ export function AttendanceSummaryTab({ month, year }: { month: number; year: num
   const [page, setPage] = useState(1);
 
   const [computeOpen, setComputeOpen] = useState(false);
-  const [computeScope, setComputeScope] = useState<Scope>({ type: 'organization' });
+  const [computeScope, setComputeScope] = useState<Scope>({ type: 'branch' });
   const [lockOpen, setLockOpen] = useState(false);
-  const [lockScope, setLockScope] = useState<Scope>({ type: 'organization' });
+  const [lockScope, setLockScope] = useState<Scope>({ type: 'branch' });
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [rejectTarget, setRejectTarget] = useState<any | null>(null);
-  const [correctionTarget, setCorrectionTarget] = useState<any | null>(null);
+  const [adjustmentTarget, setAdjustmentTarget] = useState<any | null>(null);
   const [versionTarget, setVersionTarget] = useState<string | null>(null);
 
   useEffect(() => {
@@ -357,12 +517,17 @@ export function AttendanceSummaryTab({ month, year }: { month: number; year: num
   useEffect(() => { setPage(1); setSelected(new Set()); }, [filters, month, year]);
 
   const withAction = async (key: string, fn: () => Promise<void>) => {
-    setActionLoading(key); setError('');
+    setActionLoading(key); setError(''); setActionResult(null);
     try {
       await fn();
       await Promise.all([fetchSummaries(), fetchKpis()]);
     } catch (err: any) {
-      setError(err.response?.data?.error || err.message || 'Action failed');
+      const message = getApiErrorMessage(err);
+      if (message.startsWith('Cannot lock:')) {
+        setError(`${message} Approve all pending attendance summaries or filter to a scope where every summary is already approved.`);
+      } else {
+        setError(message);
+      }
     } finally {
       setActionLoading(null);
     }
@@ -371,9 +536,28 @@ export function AttendanceSummaryTab({ month, year }: { month: number; year: num
   const runCompute = async (scope: Scope) => {
     const body: any = { month, year, scope };
     if (scope.type === 'branch') body.branch_id = scope.branchId;
-    await api.post('/payroll/attendance-summary/compute', body);
+    const res = await api.post('/payroll/attendance-summary/compute', body);
+    const result = res.data.data ?? res.data;
+    const failures = result.failures ?? [];
+    setActionResult({
+      title: failures.length > 0 ? 'Attendance summaries generated with skipped employees' : 'Attendance summaries generated',
+      tone: failures.length > 0 ? 'warning' : 'success',
+      details: [
+        `${result.computed ?? 0} updated`,
+        `${result.skippedLocked ?? 0} locked/skipped`,
+        `${result.skippedNoStructureChange ?? 0} unchanged`,
+        ...(result.skippedFailed ? [`${result.skippedFailed} failed`] : []),
+        ...failures.slice(0, 3).map((f: any) => `Employee ${f.employeeId}: ${f.reason}`),
+      ],
+    });
   };
   const recompute = (id: string) => withAction(`recompute-${id}`, async () => { await api.post(`/payroll/attendance-summary/${id}/recompute`); });
+  const saveManualAdjustment = async (summary: any, adjustments: ManualAdjustmentValues) => {
+    await withAction(`adjust-${summary.id}`, async () => {
+      await api.put(`/payroll/attendance-summary/${summary.id}/manual-adjustment`, { adjustments });
+      setAdjustmentTarget(null);
+    });
+  };
   const approve = (id: string) => withAction(`approve-${id}`, async () => { await api.put(`/payroll/attendance-summary/${id}/approve`); });
   const bulkApprove = () => withAction('bulk-approve', async () => {
     await Promise.all(Array.from(selected).map((id) => api.put(`/payroll/attendance-summary/${id}/approve`)));
@@ -497,15 +681,12 @@ export function AttendanceSummaryTab({ month, year }: { month: number; year: num
         />
       )}
 
-      {correctionTarget && (
-        <ReasonModal
-          title="Request Correction"
-          description="Sends this summary back to Draft so attendance/leave can be corrected before recomputing."
-          placeholder="What needs to be corrected?"
-          confirmLabel="Request Correction"
-          confirmClassName="bg-amber-600 hover:bg-amber-700"
-          onConfirm={async (notes) => { await withAction(`correction-${correctionTarget.id}`, async () => { await api.put(`/payroll/attendance-summary/${correctionTarget.id}/request-correction`, { notes }); }); }}
-          onClose={() => setCorrectionTarget(null)}
+      {adjustmentTarget && (
+        <ManualAdjustmentModal
+          summary={adjustmentTarget}
+          loading={actionLoading === `adjust-${adjustmentTarget.id}`}
+          onSave={(values) => saveManualAdjustment(adjustmentTarget, values)}
+          onClose={() => setAdjustmentTarget(null)}
         />
       )}
 
@@ -545,6 +726,16 @@ export function AttendanceSummaryTab({ month, year }: { month: number; year: num
       </div>
 
       {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>}
+      {actionResult && (
+        <div className={`rounded-xl border px-3 py-2 text-xs ${
+          actionResult.tone === 'warning'
+            ? 'border-amber-200 bg-amber-50 text-amber-800'
+            : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+        }`}>
+          <p className="font-medium">{actionResult.title}</p>
+          <p className="mt-1">{actionResult.details.join(' • ')}</p>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
@@ -581,7 +772,10 @@ export function AttendanceSummaryTab({ month, year }: { month: number; year: num
               <Loader2 className="w-4 h-4 animate-spin" /> Loading summaries…
             </div>
           ) : summaries.length === 0 ? (
-            <div className="py-12 text-center text-muted-foreground text-sm">No summaries yet. Click &quot;Compute / Refresh&quot; to generate.</div>
+            <div className="py-12 text-center text-sm">
+              <p className="font-medium">No attendance summaries for this payroll month.</p>
+              <p className="text-muted-foreground mt-1">Run Compute / Refresh first. Payroll lock and payslip generation stay blocked until summaries are reviewed and approved.</p>
+            </div>
           ) : (
             <>
               <Table className="w-full text-xs">
@@ -612,6 +806,7 @@ export function AttendanceSummaryTab({ month, year }: { month: number; year: num
                 <TableBody>
                   {pageRows.map((s) => {
                     const locked = ['payroll_locked', 'payroll_processed'].includes(s.status);
+                    const canEditDays = !locked && s.status !== 'approved';
                     return (
                       <TableRow key={s.id}>
                         <TableCell>
@@ -647,13 +842,10 @@ export function AttendanceSummaryTab({ month, year }: { month: number; year: num
                                 <button onClick={() => setRejectTarget(s)} title="Reject" className="p-1.5 rounded hover:bg-red-50 text-red-500">
                                   <XCircle className="w-3.5 h-3.5" />
                                 </button>
-                                <button onClick={() => setCorrectionTarget(s)} title="Request Correction" className="p-1.5 rounded hover:bg-amber-50 text-amber-600">
-                                  <ClipboardEdit className="w-3.5 h-3.5" />
-                                </button>
                               </>
                             )}
-                            {s.status === 'rejected' && canApprove && (
-                              <button onClick={() => setCorrectionTarget(s)} title="Request Correction" className="p-1.5 rounded hover:bg-amber-50 text-amber-600">
+                            {canEditDays && canCompute && (
+                              <button onClick={() => setAdjustmentTarget(s)} title="Edit Days" className="p-1.5 rounded hover:bg-amber-50 text-amber-600">
                                 <ClipboardEdit className="w-3.5 h-3.5" />
                               </button>
                             )}
@@ -687,7 +879,7 @@ export function AttendanceSummaryTab({ month, year }: { month: number; year: num
         </CardContent>
       </Card>
       <p className="text-xs text-muted-foreground">
-        Workflow: Compute → Pending Review → Approve/Reject/Request Correction → Lock for Payroll → Generate Payslips → Payroll Processed
+        Workflow: Compute or Edit Days → Pending Review → Approve/Reject → Lock for Payroll → Generate Payslips → Payroll Processed
       </p>
     </div>
   );

@@ -17,3 +17,9 @@ export const HIERARCHY_RANK: Record<UserType, number> = {
   admin: 3,
   employee: 4,
 };
+
+export function normalizeStoredUserType(userType?: string | null): StoredUserType {
+  if (userType === 'super_admin') return 'org_admin';
+  if (USER_TYPES.includes(userType as StoredUserType)) return userType as StoredUserType;
+  return 'employee';
+}

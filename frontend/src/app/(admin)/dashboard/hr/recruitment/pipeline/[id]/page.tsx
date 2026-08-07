@@ -35,12 +35,16 @@ const INTERVIEW_STATUS_STYLES: Record<string, string> = {
   no_show: 'bg-slate-100 text-slate-600',
 };
 
+function communicationChannelLabel(channel: CandidateCommunication['channel']) {
+  return channel === 'phone_note' ? 'Phone note' : channel.replace(/_/g, ' ');
+}
+
 function SectionCard({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <Card>
       <CardContent className="p-5">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          <h3 className="text-base font-bold text-foreground">{title}</h3>
           {action}
         </div>
         {children}
@@ -481,10 +485,10 @@ function CommunicationSection({ applicationId, communications, templates, onSave
                 <ClipboardList className="w-3.5 h-3.5 mt-0.5 text-muted-foreground shrink-0" />
                 <div>
                   <p className="text-sm font-medium">{c.subject}</p>
-                  <p className="text-xs text-muted-foreground">{c.sent_by_email || 'System'} • {formatDistanceToNow(parseISO(c.sent_at), { addSuffix: true })}</p>
+                  <p className="text-xs capitalize text-muted-foreground">{communicationChannelLabel(c.channel)} - {c.sent_by_email || 'System'} - {formatDistanceToNow(parseISO(c.sent_at), { addSuffix: true })}</p>
                 </div>
               </div>
-              <span className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${c.status === 'sent' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>{c.status}</span>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${c.status === 'failed' ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>{c.status}</span>
             </div>
           ))}
         </div>

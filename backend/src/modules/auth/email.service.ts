@@ -530,50 +530,6 @@ export class EmailService {
 
   // ── Organization registration & approval ─────────────────────────
 
-  async sendRegistrationEmailVerification(to: string, verifyUrl: string, displayName?: string): Promise<void> {
-    const from = this.config.get<string>('SMTP_FROM', 'noreply@ai-hrms.com');
-    const name = displayName || to.split('@')[0];
-
-    const html = this.wrapNotice({
-      title: 'Verify Your Email',
-      heading: 'Organization Registration',
-      accent: '#2563eb',
-      bodyHtml: `
-        <p style="font-size:16px;color:#1e293b;margin:0 0 8px;font-weight:600;">Hi ${name},</p>
-        <p style="font-size:15px;color:#475569;line-height:1.6;margin:0 0 24px;">
-          Thanks for starting your Ai-HRMS organization registration. Please verify your email address to continue setting up your organization.
-        </p>
-        <table width="100%" cellpadding="0" cellspacing="0">
-          <tr>
-            <td align="center" style="padding:0 0 24px;">
-              <a href="${verifyUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;font-size:15px;font-weight:600;padding:14px 32px;border-radius:10px;text-decoration:none;">Verify Email Address</a>
-            </td>
-          </tr>
-        </table>
-        <p style="font-size:13px;color:#94a3b8;line-height:1.5;margin:0;">This link expires in 24 hours. If you didn't start this registration, you can safely ignore this email.</p>
-      `,
-    });
-
-    if (!this.transporter) {
-      this.logger.warn(`[DEV — no SMTP] Email verification link for <${to}>: ${verifyUrl}`);
-      return;
-    }
-
-    try {
-      await this.transporter.sendMail({
-        from: `"Ai-HRMS – Workforce Management" <${from}>`,
-        to,
-        subject: 'Verify your email to continue your Ai-HRMS registration',
-        html,
-        text: `Hi ${name},\n\nVerify your email to continue your Ai-HRMS organization registration: ${verifyUrl}\n\nThis link expires in 24 hours.\n\n© ${new Date().getFullYear()} Spinach Informatics`,
-      });
-      this.logger.log(`Registration verification email sent to ${to}`);
-    } catch (err) {
-      this.logger.error(`Failed to send registration verification email to ${to}`, err);
-      throw err;
-    }
-  }
-
   async sendOrganizationSubmittedEmail(to: string, tenant: any): Promise<void> {
     const from = this.config.get<string>('SMTP_FROM', 'noreply@ai-hrms.com');
 
@@ -766,23 +722,24 @@ export class EmailService {
     }
   }
 
-  async sendChangeRequestDecisionEmail(to: string, status: string, notes?: string): Promise<void> {
+  async sendChangeRequestDecisionEmail(to: string, status: string, notes?: string, requestLabel = 'change request'): Promise<void> {
     const from = this.config.get<string>('SMTP_FROM', 'noreply@ai-hrms.com');
     const approved = status === 'approved';
-    const heading = approved ? 'Change Request Approved' : status === 'rejected' ? 'Change Request Rejected' : 'Documents Requested';
+    const label = requestLabel.replace(/\b\w/g, (char) => char.toUpperCase());
+    const heading = approved ? `${label} Approved` : status === 'rejected' ? `${label} Rejected` : `${label}: Documents or Information Requested`;
 
     const html = this.wrapNotice({
       title: heading,
-      heading: 'Organization Change Request',
+      heading,
       accent: approved ? '#16a34a' : '#d97706',
       bodyHtml: `
         <p style="font-size:16px;color:#1e293b;margin:0 0 8px;font-weight:600;">Hi,</p>
         <p style="font-size:15px;color:#475569;line-height:1.6;margin:0 0 16px;">
           ${approved
-            ? 'Your requested change to your organization\'s protected company information has been approved and applied.'
+            ? `Your ${requestLabel} has been approved.`
             : status === 'rejected'
-              ? 'Your requested change to your organization\'s protected company information was not approved.'
-              : 'A Super Admin has requested supporting documents for your change request.'}
+              ? `Your ${requestLabel} was not approved.`
+              : `Internal staff requested supporting documents or more information for your ${requestLabel}.`}
         </p>
         ${notes ? `<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border-radius:10px;margin-bottom:24px;"><tr><td style="padding:16px 20px;"><p style="font-size:13px;color:#334155;margin:0;line-height:1.5;">${notes}</p></td></tr></table>` : ''}
       `,

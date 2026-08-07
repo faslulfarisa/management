@@ -1,9 +1,11 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import { Suspense } from 'react';
 import '@/styles/globals.css';
 import { StoreHydration } from '@/components/store-hydration';
 import { QueryProvider } from '@/components/query-provider';
 import { WebVitalsReporter } from '@/components/web-vitals-reporter';
+import { NotificationFocusHighlighter } from '@/components/layout/notification-focus-highlighter';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -19,10 +21,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <QueryProvider>
           <StoreHydration />
           <WebVitalsReporter />
+          <Suspense fallback={null}>
+            <NotificationFocusHighlighter />
+          </Suspense>
           {children}
         </QueryProvider>
       </body>
     </html>
   );
 }
-

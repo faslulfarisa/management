@@ -1,12 +1,14 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { DatabaseService } from '../../../shared/database.service';
 import { CompanyBankAccountService } from './company-bank-account.service';
+import { CurrencyService } from '../../../shared/currency.service';
 
 @Injectable()
 export class TenantService {
   constructor(
     private db: DatabaseService,
     private bankAccountService: CompanyBankAccountService,
+    private currencyService: CurrencyService,
   ) {}
 
   async findAll() {
@@ -54,12 +56,34 @@ export class TenantService {
   }
 
   async create(data: any, createdByUserId?: string) {
+    const companyCode = typeof (data.company_code ?? data.companyCode) === 'string'
+      ? (data.company_code ?? data.companyCode).trim()
+      : '';
+    if (!companyCode) {
+      throw new BadRequestException('Company code is required');
+    }
+
     // Check slug uniqueness
     const { rows: existing } = await this.db.query(
       'SELECT 1 FROM tenants WHERE slug = $1 AND deleted_at IS NULL',
       [data.slug],
     );
     if (existing.length) throw new BadRequestException('Organization slug already exists');
+
+    const { rows: codeConflict } = await this.db.query(
+      'SELECT 1 FROM tenants WHERE LOWER(company_code) = LOWER($1) AND deleted_at IS NULL',
+      [companyCode],
+    );
+    if (codeConflict.length) throw new BadRequestException('Company code already exists');
+
+    const primaryEmail = typeof data.primary_email === 'string' ? data.primary_email.trim().toLowerCase() : '';
+    const gstin = typeof data.gstin === 'string' ? data.gstin.trim() : '';
+    const registrationNumber = typeof data.registration_number === 'string' ? data.registration_number.trim() : '';
+    await this.assertUniqueTenantIdentity({
+      primaryEmail: primaryEmail || null,
+      gstin: gstin || null,
+      registrationNumber: registrationNumber || null,
+    });
 
     // Validate and normalise emp_code_prefix
     const empPrefix = data.emp_code_prefix ? data.emp_code_prefix.toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
@@ -72,29 +96,33 @@ export class TenantService {
     }
 
     const toJsonb = (val: any) => (val && typeof val === 'object' ? JSON.stringify(val) : null);
+    const currency = this.currencyService.snapshot(data.currency);
 
     const { rows } = await this.db.query(
       `INSERT INTO tenants (
          name, slug, logo_url, gstin, registered_address, fiscal_year_start, timezone, status,
          emp_code_prefix, emp_code_digits, legal_name, trade_name, company_code, registration_number,
          pan_number, cin_number, company_type, industry, primary_email, support_email, phone_number,
-         alternate_phone, website_url, operational_address, currency, date_format, work_week_config,
+         alternate_phone, website_url, operational_address, currency, currency_symbol, currency_metadata, date_format, work_week_config,
          leave_year_config, max_failed_login_attempts, contact_person_name, contact_designation,
-         contact_person_mobile, contact_person_email
+         contact_person_mobile, contact_person_email, estimated_branch_count, estimated_employee_count,
+         business_category, current_hr_system
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33
+         $1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::jsonb,$25,$26,$27::jsonb,$28,$29::jsonb,$30::jsonb,$31,$32,$33,$34,$35,$36,$37,$38,$39
        ) RETURNING *`,
       [
-        data.name, data.slug, data.logo_url || null, data.gstin || null, toJsonb(data.registered_address),
+        data.name, data.slug, data.logo_url || null, gstin || null, toJsonb(data.registered_address),
         data.fiscal_year_start || 4, data.timezone || 'Asia/Kolkata', data.status || 'active', empPrefix,
-        data.emp_code_digits || 4, data.legal_name || null, data.trade_name || null, data.company_code || null,
-        data.registration_number || null, data.pan_number || null, data.cin_number || null,
-        data.company_type || null, data.industry || null, data.primary_email || null, data.support_email || null,
+        data.emp_code_digits || 4, data.legal_name || null, data.trade_name || null, companyCode,
+        registrationNumber || null, data.pan_number || null, data.cin_number || null,
+        data.company_type || null, data.industry || null, primaryEmail || null, data.support_email || null,
         data.phone_number || null, data.alternate_phone || null, data.website_url || null,
-        toJsonb(data.operational_address), data.currency || 'INR', data.date_format || 'DD/MM/YYYY',
+        toJsonb(data.operational_address), currency.currencyCode, currency.currencySymbol,
+        JSON.stringify(currency.currencyMetadata), data.date_format || 'DD/MM/YYYY',
         toJsonb(data.work_week_config), toJsonb(data.leave_year_config), data.max_failed_login_attempts || 5,
         data.contact_person_name || null, data.contact_designation || null, data.contact_person_mobile || null,
-        data.contact_person_email || null,
+        data.contact_person_email || null, data.estimated_branch_count || null, data.estimated_employee_count || null,
+        data.business_category || null, data.current_hr_system || null,
       ],
     );
 
@@ -118,6 +146,24 @@ export class TenantService {
     return tenant;
   }
 
+  private async assertUniqueTenantIdentity(values: { primaryEmail?: string | null; gstin?: string | null; registrationNumber?: string | null }) {
+    const checks = [
+      { value: values.primaryEmail, column: 'primary_email', label: 'corporate email' },
+      { value: values.gstin, column: 'gstin', label: 'GST number' },
+      { value: values.registrationNumber, column: 'registration_number', label: 'registration number' },
+    ].filter((check) => !!check.value);
+
+    for (const check of checks) {
+      const { rows } = await this.db.query(
+        `SELECT 1 FROM tenants WHERE ${check.column} = $1 AND deleted_at IS NULL LIMIT 1`,
+        [check.value],
+      );
+      if (rows.length) {
+        throw new ConflictException(`Another organization already uses this ${check.label}.`);
+      }
+    }
+  }
+
   async update(id: string, data: any, isSuperAdmin: boolean = false) {
     await this.findOne(id);
 
@@ -128,6 +174,23 @@ export class TenantService {
       delete data.status;
       delete data.organization_admin_user_id;
       delete data.assigned_by_super_admin;
+    }
+
+    if (data.company_code !== undefined || data.companyCode !== undefined) {
+      const rawCompanyCode = data.company_code ?? data.companyCode;
+      const companyCode = typeof rawCompanyCode === 'string' ? rawCompanyCode.trim() : '';
+      if (!companyCode) {
+        throw new BadRequestException('Company code is required');
+      }
+
+      const { rows: codeConflict } = await this.db.query(
+        'SELECT 1 FROM tenants WHERE LOWER(company_code) = LOWER($1) AND id != $2 AND deleted_at IS NULL',
+        [companyCode, id],
+      );
+      if (codeConflict.length) throw new BadRequestException('Company code already exists');
+
+      delete data.companyCode;
+      data.company_code = companyCode;
     }
 
     if (data.emp_code_prefix !== undefined) {
@@ -141,6 +204,13 @@ export class TenantService {
         );
         if (prefixConflict.length) throw new BadRequestException('Employee code prefix already in use by another organization');
       }
+    }
+
+    if (data.currency !== undefined) {
+      const currency = this.currencyService.snapshot(data.currency);
+      data.currency = currency.currencyCode;
+      data.currency_symbol = currency.currencySymbol;
+      data.currency_metadata = currency.currencyMetadata;
     }
 
     const fields = Object.keys(data).filter(k => k !== 'bank_accounts' && data[k] !== undefined);

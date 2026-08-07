@@ -44,6 +44,7 @@ export interface ConversionPreview {
   already_converted: boolean;
   employee_id: string | null;
   application_status: string;
+  preboarding_status: 'in_progress' | 'completed' | null;
   prefill: {
     first_name: string;
     last_name: string;
@@ -153,7 +154,7 @@ export const preboardingApi = {
 export const conversionApi = {
   preview: (applicationId: string): Promise<ConversionPreview> =>
     api.get(`/recruitment/applications/${applicationId}/conversion-preview`).then((r) => r.data.data),
-  convert: (applicationId: string, data: ConvertToEmployeePayload) =>
+  convert: (applicationId: string, data: ConvertToEmployeePayload = {}) =>
     api.post(`/recruitment/applications/${applicationId}/convert`, data).then((r) => r.data.data),
 };
 

@@ -4,8 +4,9 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { DatabaseService } from '../../../shared/database.service';
+import { SchedulerControlService } from '../../../shared/scheduler-control.service';
 import { BranchApprovalChainService } from '../../platform/services/branch-approval-chain.service';
 import { PayrollLockService } from '../../platform/services/payroll-lock.service';
 import { ApprovalNotificationService } from './approval-notification.service';
@@ -34,11 +35,20 @@ const ENTITY_SYNC_CONFIG: Record<string, {
   rejectionReasonCol?: string;
   stepCol?: string;
   logCol?: string;
+  lifecycleStatusCol?: string;
+  lifecycleApprovedStatus?: string;
+  lifecycleRejectedStatus?: string;
 }> = {
   leave_requests: {
     statusCol: 'status', approvedStatus: 'approved', rejectedStatus: 'rejected',
     approverCol: 'approved_by', approvedAtCol: 'approved_at',
     reasonCol: 'approval_reason', rejectionReasonCol: 'rejection_reason',
+    stepCol: 'approval_step', logCol: 'approval_log',
+  },
+  shift_override_requests: {
+    statusCol: 'status', approvedStatus: 'approved', rejectedStatus: 'rejected',
+    approverCol: 'approved_by', approvedAtCol: 'approved_at',
+    rejectionReasonCol: 'rejection_reason',
     stepCol: 'approval_step', logCol: 'approval_log',
   },
   leave_encashment_requests: {
@@ -86,6 +96,12 @@ const ENTITY_SYNC_CONFIG: Record<string, {
     reasonCol: 'approval_reason', rejectionReasonCol: 'rejection_reason',
     stepCol: 'approval_step', logCol: 'approval_log',
   },
+  employee_fine_appeals: {
+    statusCol: 'status', approvedStatus: 'approved', rejectedStatus: 'rejected',
+    approverCol: 'approved_by', approvedAtCol: 'approved_at',
+    reasonCol: 'approval_reason', rejectionReasonCol: 'rejection_reason',
+    stepCol: 'approval_step', logCol: 'approval_log',
+  },
   overtime_requests: {
     statusCol: 'status', approvedStatus: 'approved', rejectedStatus: 'rejected',
     approverCol: 'approved_by', approvedAtCol: 'approved_at',
@@ -122,6 +138,7 @@ const ENTITY_SYNC_CONFIG: Record<string, {
     approverCol: 'approved_by', approvedAtCol: 'approved_at',
     reasonCol: 'approval_reason', rejectionReasonCol: 'rejection_reason',
     stepCol: 'approval_step', logCol: 'approval_log',
+    lifecycleStatusCol: 'status', lifecycleApprovedStatus: 'open', lifecycleRejectedStatus: 'rejected',
   },
   // Job Description Management: same dual-status split as vacancies above.
   job_descriptions: {
@@ -129,6 +146,7 @@ const ENTITY_SYNC_CONFIG: Record<string, {
     approverCol: 'approved_by', approvedAtCol: 'approved_at',
     reasonCol: 'approval_reason', rejectionReasonCol: 'rejection_reason',
     stepCol: 'approval_step', logCol: 'approval_log',
+    lifecycleStatusCol: 'status', lifecycleApprovedStatus: 'approved', lifecycleRejectedStatus: 'rejected',
   },
   // Offer Management (Phase 5): same dual-status split — OfferApprovalService
   // syncs the broader `status` lifecycle (draft/pending_approval/approved/...)
@@ -138,6 +156,7 @@ const ENTITY_SYNC_CONFIG: Record<string, {
     approverCol: 'approved_by', approvedAtCol: 'approved_at',
     reasonCol: 'approval_reason', rejectionReasonCol: 'rejection_reason',
     stepCol: 'approval_step', logCol: 'approval_log',
+    lifecycleStatusCol: 'status', lifecycleApprovedStatus: 'approved', lifecycleRejectedStatus: 'rejected',
   },
   // Probation & Confirmation (Phase 6): same dual-status split — ProbationApprovalService
   // syncs the broader `status` lifecycle (draft/pending_approval/approved/rejected)
@@ -148,6 +167,7 @@ const ENTITY_SYNC_CONFIG: Record<string, {
     approverCol: 'approved_by', approvedAtCol: 'approved_at',
     reasonCol: 'approval_reason', rejectionReasonCol: 'rejection_reason',
     stepCol: 'approval_step', logCol: 'approval_log',
+    lifecycleStatusCol: 'status', lifecycleApprovedStatus: 'approved', lifecycleRejectedStatus: 'rejected',
   },
   // Workforce Planning (Phase 7): same dual-status split — WorkforcePlanApprovalService
   // syncs the broader `status` lifecycle (draft/pending_approval/approved/rejected/active)
@@ -157,6 +177,7 @@ const ENTITY_SYNC_CONFIG: Record<string, {
     approverCol: 'approved_by', approvedAtCol: 'approved_at',
     reasonCol: 'approval_reason', rejectionReasonCol: 'rejection_reason',
     stepCol: 'approval_step', logCol: 'approval_log',
+    lifecycleStatusCol: 'status', lifecycleApprovedStatus: 'active', lifecycleRejectedStatus: 'rejected',
   },
 };
 
@@ -174,6 +195,7 @@ export class ApprovalEngineService {
     private approvalChainService: BranchApprovalChainService,
     private notificationService: ApprovalNotificationService,
     private payrollLock: PayrollLockService,
+    private schedulerControl: SchedulerControlService = new SchedulerControlService(),
   ) { }
 
   private async assertPayrollUnlockedForEntity(tenantId: string, request: ApprovalRequest): Promise<void> {
@@ -349,6 +371,19 @@ export class ApprovalEngineService {
       // Sync final status to entity table
       await this.syncEntityStatus(request, 'approved', approverId, reason, enrichedLog, undefined);
 
+      if (request.entity_table === 'shift_override_requests') {
+        await this.generateOverridesForRequest(tenantId, request.entity_id);
+      }
+      if (request.entity_table === 'attendance_corrections') {
+        await this.applyAttendanceCorrection(tenantId, request.entity_id, approverId);
+      }
+      if (request.entity_table === 'employee_branch_transfers') {
+        await this.finalizeBranchTransfer(tenantId, request.entity_id, approverId);
+      }
+      if (request.entity_table === 'payroll_runs') {
+        await this.finalizePayrollRun(tenantId, request.entity_id, approverId);
+      }
+
       // Notify submitter of full approval
       const submitterUserId = await this.getUserIdForSubmitter(tenantId, request.submitted_by);
       await this.notificationService.notifyResolved(updatedRequest, submitterUserId ?? undefined, reason);
@@ -502,6 +537,12 @@ export class ApprovalEngineService {
         [requestId, JSON.stringify(enrichedLog), tenantId],
       );
       await this.syncEntityStatus(request, 'approved', escalatedBy, 'Escalated', enrichedLog, undefined);
+      if (request.entity_table === 'employee_branch_transfers') {
+        await this.finalizeBranchTransfer(tenantId, request.entity_id, escalatedBy);
+      }
+      if (request.entity_table === 'payroll_runs') {
+        await this.finalizePayrollRun(tenantId, request.entity_id, escalatedBy);
+      }
       return rows[0];
     }
 
@@ -541,7 +582,7 @@ export class ApprovalEngineService {
 
     let baseQuery: string;
 
-    if (isSuperAdmin || isOrgAdmin) {
+    if (isSuperAdmin || isOrgAdmin || (accessScope && !accessScope.isGlobalAccess)) {
       baseQuery = `
         FROM approval_requests ar
         WHERE ar.tenant_id = $1
@@ -601,21 +642,113 @@ export class ApprovalEngineService {
     return { data: dataResult.rows, total };
   }
 
-  /** Requests submitted by the caller */
+  /**
+   * History: resolved items where the caller was involved, or all for admins
+   */
+  async getHistory(
+    tenantId: string,
+    userId: string,
+    isSuperAdmin: boolean,
+    filters: InboxFilters,
+    accessScope?: AccessScope,
+  ): Promise<{ data: any[]; total: number }> {
+    const { page = 1, limit = 20, workflowType, branchId, status, priority } = filters;
+    const offset = (Number(page) - 1) * Number(limit);
+
+    if (branchId && accessScope && !isBranchInScope(accessScope, branchId)) {
+      throw new ForbiddenException('Branch is outside your assigned scope');
+    }
+
+    const isOrgAdmin = await this.isOrgAdmin(tenantId, userId);
+    const params: any[] = [tenantId];
+    let idx = 2;
+
+    let baseQuery: string;
+
+    if (isSuperAdmin || isOrgAdmin) {
+      baseQuery = `
+        FROM approval_requests ar
+        WHERE ar.tenant_id = $1
+          AND ar.status NOT IN ('pending','under_review','escalated')`;
+      if (accessScope && !accessScope.isGlobalAccess) {
+        const scope = branchScopeClause(accessScope, 'ar.branch_id', idx);
+        baseQuery += ` AND ${scope.clause}`;
+        params.push(...scope.params);
+        idx += scope.params.length;
+      }
+    } else {
+      // For regular users, history is requests where they took an action in the approval_log.
+      baseQuery = `
+        FROM approval_requests ar
+        WHERE ar.tenant_id = $1
+          AND EXISTS (
+            SELECT 1 FROM jsonb_array_elements(COALESCE(ar.approval_log, '[]'::jsonb)) AS log
+            WHERE log->>'actor_id' = $2
+          )
+          AND ar.status NOT IN ('pending','under_review','escalated')`;
+      params.push(userId);
+      idx++;
+    }
+
+    if (workflowType) { baseQuery += ` AND ar.workflow_type = $${idx++}`; params.push(workflowType); }
+    if (branchId) { baseQuery += ` AND ar.branch_id = $${idx++}`; params.push(branchId); }
+    if (status) { baseQuery += ` AND ar.status = $${idx++}`; params.push(status); }
+    if (priority) { baseQuery += ` AND ar.priority = $${idx++}`; params.push(priority); }
+
+    const [countResult, dataResult] = await Promise.all([
+      this.db.query(`SELECT COUNT(*) ${baseQuery}`, params),
+      this.db.query(
+        `SELECT ar.* ${baseQuery}
+         ORDER BY ar.resolved_at DESC NULLS LAST, ar.updated_at DESC
+         LIMIT $${idx} OFFSET $${idx + 1}`,
+        [...params, Number(limit), offset],
+      ),
+    ]);
+    const total = parseInt(countResult.rows[0].count, 10);
+
+    return { data: dataResult.rows, total };
+  }
+
+  /** Requests submitted by the caller, or approved requests scoped to an admin/branch_admin */
   async getSubmitted(
     tenantId: string,
     submittedBy: string,
+    isSuperAdmin: boolean,
     filters: InboxFilters,
+    accessScope?: AccessScope,
   ): Promise<{ data: any[]; total: number }> {
     const { page = 1, limit = 20, workflowType, status } = filters;
     const offset = (Number(page) - 1) * Number(limit);
 
-    let query = `FROM approval_requests WHERE tenant_id = $1 AND submitted_by = $2`;
-    const params: any[] = [tenantId, submittedBy];
-    let idx = 3;
+    const isOrgAdmin = await this.isOrgAdmin(tenantId, submittedBy);
+    let query: string;
+    const params: any[] = [tenantId];
+    let idx = 2;
+
+    if (isSuperAdmin || isOrgAdmin || (accessScope && !accessScope.isGlobalAccess)) {
+      query = `FROM approval_requests WHERE tenant_id = $1`;
+      if (accessScope && !accessScope.isGlobalAccess) {
+        const scope = branchScopeClause(accessScope, 'branch_id', idx);
+        query += ` AND ${scope.clause}`;
+        params.push(...scope.params);
+        idx += scope.params.length;
+      }
+      if (status) {
+        query += ` AND status = $${idx++}`;
+        params.push(status);
+      } else {
+        query += ` AND status = 'approved'`;
+      }
+    } else {
+      query = `FROM approval_requests WHERE tenant_id = $1 AND submitted_by = $${idx++}`;
+      params.push(submittedBy);
+      if (status) {
+        query += ` AND status = $${idx++}`;
+        params.push(status);
+      }
+    }
 
     if (workflowType) { query += ` AND workflow_type = $${idx++}`; params.push(workflowType); }
-    if (status) { query += ` AND status = $${idx++}`; params.push(status); }
 
     const [countResult, dataResult] = await Promise.all([
       this.db.query(`SELECT COUNT(*) ${query}`, params),
@@ -720,16 +853,18 @@ export class ApprovalEngineService {
   }
 
   /** Cron: mark overdue requests as expired; auto-approve if chain has auto_approve_hours */
-  @Cron(CronExpression.EVERY_10_MINUTES)
+  @Cron('23 */10 * * * *', { name: 'approval-expiry-sweep' })
   async processExpiredRequests(): Promise<void> {
-    await this.db.query(
-      `UPDATE approval_requests
-       SET status = 'expired', updated_at = now(), resolved_at = now()
-       WHERE due_at < now()
-         AND status IN ('pending', 'under_review')
-         AND sla_hours IS NOT NULL`,
-      [],
-    );
+    await this.schedulerControl.run('approval-expiry-sweep', async () => {
+      await this.db.query(
+        `UPDATE approval_requests
+         SET status = 'expired', updated_at = now(), resolved_at = now()
+         WHERE due_at < now()
+           AND status IN ('pending', 'under_review')
+           AND sla_hours IS NOT NULL`,
+        [],
+      );
+    });
   }
 
   // ─── Private helpers ───────────────────────────────────────────────────────
@@ -799,12 +934,15 @@ export class ApprovalEngineService {
     const chain = await this.approvalChainService.resolveChain(
       tenantId, request.branch_id, request.workflow_type,
     );
-    // No approval chain configured for this branch+workflow: only org admins
-    // (handled above) act as the fallback approver. Without this, any
-    // authenticated user could approve/reject an unconfigured request.
+    // No approval chain configured for this branch+workflow: only the explicit
+    // workflow fallback approvers can act. Without this, any authenticated user
+    // could approve/reject an unconfigured request.
     if (!chain || !chain.steps?.length) {
+      if (request.workflow_type === 'fine_appeal' && actorRole === 'branch_admin') {
+        return;
+      }
       throw new ForbiddenException(
-        'No approval chain is configured for this branch. Only an organization admin can act on this request.',
+        'No approval chain is configured for this branch. Only a fallback approver can act on this request.',
       );
     }
 
@@ -862,6 +1000,19 @@ export class ApprovalEngineService {
     const setClauses: string[] = [`${cfg.statusCol} = $2`, 'updated_at = now()'];
     const vals: any[] = [request.entity_id, mappedStatus];
     let idx = 3;
+    let lifecycleStatus: string | undefined;
+
+    if (cfg.lifecycleStatusCol) {
+      lifecycleStatus = newStatus === 'approved'
+        ? cfg.lifecycleApprovedStatus
+        : newStatus === 'rejected'
+          ? cfg.lifecycleRejectedStatus
+          : undefined;
+      if (lifecycleStatus) {
+        setClauses.push(`${cfg.lifecycleStatusCol} = $${idx++}`);
+        vals.push(lifecycleStatus);
+      }
+    }
 
     if (newStatus === 'approved' && cfg.approverCol) {
       setClauses.push(`${cfg.approverCol} = $${idx++}`); vals.push(actorId ?? null);
@@ -883,6 +1034,149 @@ export class ApprovalEngineService {
     await dbMethod(
       `UPDATE ${request.entity_table} SET ${setClauses.join(', ')} WHERE id = $1 AND tenant_id = $${idx}`,
       vals,
+    );
+
+    if (request.entity_table === 'vacancies' && lifecycleStatus) {
+      await dbMethod(
+        `INSERT INTO vacancy_status_history (tenant_id, vacancy_id, from_status, to_status, actor_id, reason)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [request.tenant_id, request.entity_id, 'pending_approval', lifecycleStatus, actorId ?? null, reason ?? null],
+      );
+    }
+  }
+
+  private async applyAttendanceCorrection(tenantId: string, correctionId: string, actorId: string): Promise<void> {
+    const { rows } = await this.db.query(
+      `SELECT ac.*, to_jsonb(ar) AS current_state
+       FROM attendance_corrections ac
+       JOIN attendance_records ar ON ar.id = ac.attendance_record_id AND ar.tenant_id = ac.tenant_id
+       WHERE ac.id = $1 AND ac.tenant_id = $2
+       FOR UPDATE`,
+      [correctionId, tenantId],
+    );
+    const correction = rows[0];
+    if (!correction || correction.applied_at) return;
+
+    const requested = correction.requested_state as Record<string, any>;
+    const allowedFields = ['clock_in', 'clock_out', 'status', 'overtime_minutes', 'late_minutes'];
+    const fieldsToApply = allowedFields.filter((field) => requested?.[field] !== undefined);
+
+    if (fieldsToApply.length) {
+      const setClauses = fieldsToApply.map((field, index) => `${field} = $${index + 3}`);
+      const setValues = fieldsToApply.map((field) => requested[field]);
+
+      await this.db.query(
+        `UPDATE attendance_records
+         SET ${setClauses.join(', ')}, updated_at = now()
+         WHERE id = $1 AND tenant_id = $2`,
+        [correction.attendance_record_id, tenantId, ...setValues],
+      );
+    }
+
+    await this.db.query(
+      `UPDATE attendance_corrections
+       SET applied_at = now(), updated_at = now()
+       WHERE id = $1 AND tenant_id = $2`,
+      [correctionId, tenantId],
+    );
+
+    await this.db.query(
+      `INSERT INTO attendance_audit_logs
+         (tenant_id, employee_id, attendance_record_id, event_type, actor_type, actor_id,
+          before_state, after_state, metadata)
+       VALUES ($1, $2, $3, 'approval_granted', 'user', $4, $5::jsonb, $6::jsonb, $7::jsonb)`,
+      [
+        tenantId,
+        correction.employee_id,
+        correction.attendance_record_id,
+        actorId,
+        JSON.stringify(correction.current_state ?? correction.original_state ?? {}),
+        JSON.stringify(requested ?? {}),
+        JSON.stringify({ correctionId }),
+      ],
+    );
+  }
+
+  private async finalizeBranchTransfer(tenantId: string, transferId: string, actorId: string): Promise<void> {
+    const { rows } = await this.db.query(
+      `SELECT * FROM employee_branch_transfers
+       WHERE id = $1 AND tenant_id = $2`,
+      [transferId, tenantId],
+    );
+    const transfer = rows[0];
+    if (!transfer) return;
+
+    await this.db.query(
+      `UPDATE employees
+       SET branch_id = $3,
+           department_id = COALESCE($4, department_id),
+           updated_at = now()
+       WHERE id = $2 AND tenant_id = $1`,
+      [tenantId, transfer.employee_id, transfer.to_branch_id, transfer.to_department_id],
+    );
+
+    await this.db.query(
+      `INSERT INTO employee_lifecycle_events
+         (tenant_id, employee_id, event_type, effective_date, old_values, new_values, remarks, created_by)
+       SELECT $1,$2,'branch_transfer',$3,$4::jsonb,$5::jsonb,$6,$7
+       WHERE NOT EXISTS (
+         SELECT 1 FROM employee_lifecycle_events
+         WHERE tenant_id = $1
+           AND employee_id = $2
+           AND event_type = 'branch_transfer'
+           AND effective_date = $3
+           AND created_by = $7
+       )`,
+      [
+        tenantId,
+        transfer.employee_id,
+        transfer.effective_date,
+        JSON.stringify({ branch_id: transfer.from_branch_id, department_id: transfer.from_department_id }),
+        JSON.stringify({ branch_id: transfer.to_branch_id, department_id: transfer.to_department_id }),
+        transfer.remarks,
+        actorId,
+      ],
+    );
+  }
+
+  private async finalizePayrollRun(tenantId: string, payrollRunId: string, actorId: string): Promise<void> {
+    const { rows } = await this.db.query(
+      `SELECT * FROM payroll_runs WHERE id = $1 AND tenant_id = $2`,
+      [payrollRunId, tenantId],
+    );
+    const run = rows[0];
+    if (!run) return;
+
+    await this.db.query(
+      `UPDATE payslips
+       SET status = 'processed', updated_at = now()
+       WHERE payroll_run_id = $1 AND tenant_id = $2 AND status = 'draft'`,
+      [payrollRunId, tenantId],
+    );
+
+    const periodStart = `${run.year}-${String(run.month).padStart(2, '0')}-01`;
+    const periodEnd = new Date(Date.UTC(run.year, run.month, 0)).toISOString().split('T')[0];
+    const { rows: payslips } = await this.db.query(
+      `SELECT employee_id FROM payslips WHERE payroll_run_id = $1 AND tenant_id = $2`,
+      [payrollRunId, tenantId],
+    );
+    const employeeIds = payslips.map((p: any) => p.employee_id);
+    if (!employeeIds.length) return;
+
+    await this.db.query(
+      `UPDATE payroll_attendance_summary
+       SET status = 'payroll_processed',
+           payroll_run_id = $1,
+           payslip_count = $2,
+           processed_by = $3,
+           processed_at = COALESCE(processed_at, now()),
+           updated_at = now()
+       WHERE tenant_id = $4
+         AND period_start = $5
+         AND period_end = $6
+         AND employee_id = ANY($7::uuid[])
+         AND status IN ('approved', 'payroll_locked')`,
+      [payrollRunId, employeeIds.length, actorId, tenantId, periodStart, periodEnd, employeeIds],
     );
   }
 
@@ -909,7 +1203,12 @@ export class ApprovalEngineService {
     if (!branchId) return this.getOrgAdminUserIds(tenantId);
 
     const chain = await this.approvalChainService.resolveChain(tenantId, branchId, workflowType);
-    if (!chain?.steps?.length) return this.getOrgAdminUserIds(tenantId);
+    if (!chain?.steps?.length) {
+      if (workflowType === 'fine_appeal') {
+        return this.getFineAppealFallbackApproverUserIds(tenantId, branchId);
+      }
+      return this.getOrgAdminUserIds(tenantId);
+    }
 
     const sorted = [...chain.steps].sort((a: any, b: any) => a.step - b.step);
     const stepDef = sorted.find((s: any) => s.step === step);
@@ -927,6 +1226,24 @@ export class ApprovalEngineService {
       [tenantId, branchId, stepDef.role],
     );
     return rows.map((r: any) => r.id);
+  }
+
+  private async getFineAppealFallbackApproverUserIds(tenantId: string, branchId: string): Promise<string[]> {
+    const [orgAdmins, branchAdmins] = await Promise.all([
+      this.getOrgAdminUserIds(tenantId),
+      this.db.query(
+        `SELECT DISTINCT u.id
+         FROM branch_user_access bua
+         JOIN users u ON u.id = bua.user_id
+         WHERE bua.tenant_id = $1
+           AND bua.branch_id = $2
+           AND bua.role = 'branch_admin'
+           AND bua.is_active = true
+           AND u.is_active = true`,
+        [tenantId, branchId],
+      ),
+    ]);
+    return [...new Set([...orgAdmins, ...branchAdmins.rows.map((r: any) => r.id)])];
   }
 
   /** All users with org-admin standing in the tenant — the fallback approver pool. */
@@ -951,5 +1268,115 @@ export class ApprovalEngineService {
       [tenantId, submittedBy],
     );
     return rows[0]?.id ?? null;
+  }
+
+  private async generateOverridesForRequest(tenantId: string, requestId: string): Promise<void> {
+    const { rows } = await this.db.query(
+      'SELECT * FROM shift_override_requests WHERE id = $1 AND tenant_id = $2',
+      [requestId, tenantId],
+    );
+    const req = rows[0];
+    if (!req) return;
+
+    const startDate = new Date(req.start_date);
+    const endDate = new Date(req.end_date);
+
+    // Generate individual dates in range [start_date, end_date]
+    const dates: string[] = [];
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      dates.push(d.toISOString().slice(0, 10));
+    }
+
+    for (const date of dates) {
+      if (req.action_type === 'cancel_shift') {
+        await this.db.query(
+          `INSERT INTO shift_overrides (tenant_id, employee_id, date, override_type, request_id)
+           VALUES ($1, $2, $3, 'cancelled', $4)
+           ON CONFLICT (tenant_id, employee_id, date) DO UPDATE 
+           SET override_type = 'cancelled', request_id = $4, updated_at = now()`,
+          [tenantId, req.employee_id, date, requestId],
+        );
+      } else if (req.action_type === 'convert_to_leave') {
+        await this.db.query(
+          `INSERT INTO shift_overrides (tenant_id, employee_id, date, override_type, request_id)
+           VALUES ($1, $2, $3, 'leave', $4)
+           ON CONFLICT (tenant_id, employee_id, date) DO UPDATE 
+           SET override_type = 'leave', request_id = $4, updated_at = now()`,
+          [tenantId, req.employee_id, date, requestId],
+        );
+        const metadata = typeof req.metadata === 'string' ? JSON.parse(req.metadata || '{}') : (req.metadata ?? {});
+        const leaveTypeId = metadata.leave_type_id || null;
+        if (leaveTypeId) {
+          await this.db.query(
+            `INSERT INTO leave_requests (tenant_id, employee_id, leave_type_id, start_date, end_date, days, status, reason, approved_by, approved_at)
+             VALUES ($1, $2, $3, $4, $5, $6, 'approved', $7, $8, now())
+             ON CONFLICT DO NOTHING`,
+            [tenantId, req.employee_id, leaveTypeId, req.start_date, req.end_date, dates.length, 'Shift override conversion: ' + req.detailed_reason, req.approved_by || null],
+          );
+        }
+      } else if (req.action_type === 'move_shift' || req.action_type === 'temporary_shift') {
+        const shiftId = req.target_shift_id;
+        if (shiftId) {
+          const { rows: shRows } = await this.db.query(
+            'SELECT * FROM shift_definitions WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+            [shiftId, tenantId],
+          );
+          const shift = shRows[0];
+          if (shift) {
+            await this.db.query(
+              `INSERT INTO shift_overrides (tenant_id, employee_id, date, shift_id, start_time, end_time, break_minutes, grace_period_minutes, is_overnight, override_type, request_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+               ON CONFLICT (tenant_id, employee_id, date) DO UPDATE 
+               SET shift_id = $4, start_time = $5, end_time = $6, break_minutes = $7, grace_period_minutes = $8, is_overnight = $9, override_type = $10, request_id = $11, updated_at = now()`,
+              [tenantId, req.employee_id, date, shiftId, shift.start_time, shift.end_time, shift.break_minutes, shift.grace_period_minutes, !!shift.is_overnight, 'shift_change', requestId],
+            );
+          }
+        }
+      } else if (req.action_type === 'override_hours') {
+        const isOvernight = req.custom_start_time && req.custom_end_time && req.custom_end_time < req.custom_start_time;
+        await this.db.query(
+          `INSERT INTO shift_overrides (tenant_id, employee_id, date, start_time, end_time, break_minutes, grace_period_minutes, is_overnight, override_type, request_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'custom_hours', $9)
+           ON CONFLICT (tenant_id, employee_id, date) DO UPDATE 
+           SET start_time = $4, end_time = $5, break_minutes = $6, grace_period_minutes = $7, is_overnight = $8, override_type = 'custom_hours', request_id = $9, updated_at = now()`,
+          [tenantId, req.employee_id, date, req.custom_start_time, req.custom_end_time, req.custom_break_minutes || 0, req.custom_grace_period_minutes || 15, !!isOvernight, requestId],
+        );
+      } else if (req.action_type === 'assign_replacement') {
+        const replacementId = req.replacement_employee_id;
+        if (replacementId) {
+          const origShiftId = req.current_shift_id;
+          let shiftDetails: any = null;
+          if (origShiftId) {
+            const { rows: shRows } = await this.db.query(
+              'SELECT * FROM shift_definitions WHERE id = $1 AND tenant_id = $2 AND is_active = true',
+              [origShiftId, tenantId],
+            );
+            shiftDetails = shRows[0];
+          }
+
+          const startTime = shiftDetails?.start_time ?? '09:00:00';
+          const endTime = shiftDetails?.end_time ?? '18:00:00';
+          const breakMins = shiftDetails?.break_minutes ?? 60;
+          const graceMins = shiftDetails?.grace_period_minutes ?? 15;
+          const isOvernight = shiftDetails?.is_overnight ?? false;
+
+          await this.db.query(
+            `INSERT INTO shift_overrides (tenant_id, employee_id, date, override_type, request_id)
+             VALUES ($1, $2, $3, 'replaced', $4)
+             ON CONFLICT (tenant_id, employee_id, date) DO UPDATE 
+             SET override_type = 'replaced', request_id = $4, updated_at = now()`,
+            [tenantId, req.employee_id, date, requestId],
+          );
+
+          await this.db.query(
+            `INSERT INTO shift_overrides (tenant_id, employee_id, date, shift_id, start_time, end_time, break_minutes, grace_period_minutes, is_overnight, override_type, request_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'shift_change', $10)
+             ON CONFLICT (tenant_id, employee_id, date) DO UPDATE 
+             SET shift_id = $4, start_time = $5, end_time = $6, break_minutes = $7, grace_period_minutes = $8, is_overnight = $9, override_type = 'shift_change', request_id = $10, updated_at = now()`,
+            [tenantId, replacementId, date, origShiftId || null, startTime, endTime, breakMins, graceMins, !!isOvernight, requestId],
+          );
+        }
+      }
+    }
   }
 }

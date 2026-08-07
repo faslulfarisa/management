@@ -78,6 +78,7 @@ export class UpdateCommunicationTemplateDto {
 }
 
 export class SendCommunicationDto {
+  @IsOptional() @IsIn(['email', 'sms', 'whatsapp', 'phone_note', 'internal_note']) channel?: string;
   @IsOptional() @IsString() template_id?: string;
   @IsOptional() @IsString() subject?: string;
   @IsOptional() @IsString() body?: string;

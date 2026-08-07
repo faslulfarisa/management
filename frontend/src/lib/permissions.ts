@@ -55,6 +55,7 @@ export const PERMISSIONS = {
   RECRUITMENT_CREATE: 'hr.recruitment:create',
   RECRUITMENT_EDIT: 'hr.recruitment:edit',
   RECRUITMENT_APPROVE: 'hr.recruitment:approve',
+  RECRUITMENT_EXPORT: 'hr.recruitment:export',
   RECRUITMENT_CLOSE: 'hr.recruitment:close',
   RECRUITMENT_REOPEN: 'hr.recruitment:reopen',
   RECRUITMENT_ARCHIVE: 'hr.recruitment:archive',
@@ -104,6 +105,13 @@ export const PERMISSIONS = {
   PLATFORM_ORGANIZATIONS_EDIT: 'platform.organizations:edit',
   PLATFORM_ORGANIZATIONS_DELETE: 'platform.organizations:delete',
 
+  PLATFORM_AUDIT_VIEW: 'platform.audit:view',
+  PLATFORM_APPROVALS_VIEW: 'platform.approvals:view',
+  PLATFORM_AREAS_VIEW: 'platform.areas:view',
+  PLATFORM_BRANCHES_VIEW: 'platform.branches:view',
+  PLATFORM_DEPARTMENTS_VIEW: 'platform.departments:view',
+  PLATFORM_POSITIONS_VIEW: 'platform.positions:view',
+
   ORGANIZATION_PROFILE_VIEW: 'organization_profile:view',
   ORGANIZATION_PROFILE_EDIT: 'organization_profile:edit',
 
@@ -115,6 +123,10 @@ export const PERMISSIONS = {
   SCHEDULES_EDIT: 'schedules:edit',
   SCHEDULES_DELETE: 'schedules:delete',
   SCHEDULES_ASSIGN: 'schedules:assign',
+
+  SHIFT_OVERRIDE_VIEW: 'hr.shifts:override_view',
+  SHIFT_OVERRIDE_CREATE: 'hr.shifts:override_create',
+  SHIFT_OVERRIDE_APPROVE: 'hr.shifts:override_approve',
 
   APPROVALS_VIEW: 'approvals:view',
   APPROVALS_APPROVE: 'approvals:approve',
@@ -153,6 +165,12 @@ export const PERMISSIONS = {
   ASSETS_VIEW: 'assets:view',
   ASSETS_MANAGE: 'assets:manage',
   ASSETS_RECOVER: 'assets:recover',
+
+  TASKS_VIEW: 'hr.tasks:view',
+  TASKS_CREATE: 'hr.tasks:create',
+  TASKS_EDIT: 'hr.tasks:edit',
+  TASKS_DELETE: 'hr.tasks:delete',
+  TASKS_ASSIGN: 'hr.tasks:assign',
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { RoleService } from './role.service';
 import { PositionService } from './position.service';
 import { UserHierarchyService } from './user-hierarchy.service';
 import { UserType } from '../../../shared/user-hierarchy.constants';
@@ -21,23 +20,19 @@ export interface AuthorizationResource {
  * Centralized authorization engine.
  *
  * `can(user, permission, resource?)` resolves the final access decision from:
- *  1. User Type baseline (DEFAULT_PERMISSIONS_BY_USER_TYPE) — '*' for admin-tier
- *     hierarchy ranks preserves current (pre-permission-system) behaviour.
- *  2. Role permissions (role_permissions via RoleService.getUserPermissions).
- *  3. Position permissions (position_permissions via PositionService.getUserPermissions).
- *  4. Branch scope (AccessScope via UserHierarchyService.getAccessScope) — if a
- *     `resource.branchId` is supplied, the actor must have that branch in scope
- *     regardless of (1)-(3).
+ *  1. User type baseline - only platform super admins and organization admins
+ *     receive wildcard module access.
+ *  2. Position permissions for branch admins, admins, and employees.
+ *  3. Branch scope - if `resource.branchId` is supplied, the actor must have
+ *     that branch in scope.
  *
- * This does not change what admin-tier users can already do; it adds real
- * enforcement for permission strings assigned to roles/positions (previously
- * computed but never checked) and gives a single place to extend with
- * resource-aware checks.
+ * Roles define administrative identity and organizational/branch scope. They
+ * are not used as the operational permission source for branch admins, admins,
+ * or employees.
  */
 @Injectable()
 export class AuthorizationService {
   constructor(
-    private roleService: RoleService,
     private positionService: PositionService,
     private hierarchyService: UserHierarchyService,
   ) {}
@@ -56,12 +51,8 @@ export class AuthorizationService {
 
     if (!user.tenantId) return false;
 
-    const [rolePerms, positionPerms] = await Promise.all([
-      this.roleService.getUserPermissions(user.sub, user.tenantId),
-      this.positionService.getUserPermissions(user.sub, user.tenantId),
-    ]);
-
-    return rolePerms.includes(permission) || positionPerms.includes(permission);
+    const positionPerms = await this.positionService.getUserPermissions(user.sub, user.tenantId);
+    return positionPerms.includes(permission);
   }
 
   private async checkScope(user: AuthUser, resource?: AuthorizationResource): Promise<boolean> {
@@ -77,8 +68,9 @@ export class AuthorizationService {
    * for `user` in their active tenant — the same inputs `can()` checks
    * against, but returned in bulk for the frontend (`GET /auth/me/permissions`).
    *
-   * `'*'` (admin-tier baseline) expands to every registered permission string
-   * so the frontend never needs to special-case wildcard access.
+   * `'*'` (platform super admin / organization admin baseline) expands to
+   * every registered permission string so the frontend never needs to
+   * special-case wildcard access.
    */
   async getEffectivePermissions(user: AuthUser): Promise<{ permissions: Permission[]; accessScope: AccessScope }> {
     const base = DEFAULT_PERMISSIONS_BY_USER_TYPE[user.userType] ?? [];
@@ -89,11 +81,8 @@ export class AuthorizationService {
     } else if (!user.tenantId) {
       permissions = base;
     } else {
-      const [rolePerms, positionPerms] = await Promise.all([
-        this.roleService.getUserPermissions(user.sub, user.tenantId),
-        this.positionService.getUserPermissions(user.sub, user.tenantId),
-      ]);
-      permissions = Array.from(new Set([...base, ...rolePerms, ...positionPerms])) as Permission[];
+      const positionPerms = await this.positionService.getUserPermissions(user.sub, user.tenantId);
+      permissions = Array.from(new Set([...base, ...positionPerms])) as Permission[];
     }
 
     const accessScope = user.tenantId

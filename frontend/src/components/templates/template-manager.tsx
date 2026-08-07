@@ -6,7 +6,7 @@ import { SalaryStructureForm, SalaryStructureDetailView } from '@/app/(admin)/da
 import {
   ClipboardList, Users, IndianRupee, Clock, ChevronDown, ChevronUp,
   Star, Search, Plus, X, Eye, CheckCircle2, AlertCircle,
-  Building2, Briefcase, User, Hash, Layers, Info,
+  Building2, Briefcase, User, Hash, Layers, Info, GitBranch,
   Pencil, Trash2, Settings2, SlidersHorizontal, LayoutDashboard,
   Copy, MoreHorizontal, CalendarDays, ChevronRight, Heart,
 } from 'lucide-react';
@@ -57,6 +57,18 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
+const HOLIDAY_TYPES = [
+  'National Holiday',
+  'State Holiday',
+  'Festival',
+  'Company Holiday',
+  'Optional Holiday',
+  'Restricted Holiday',
+  'Special Holiday',
+  'Emergency Closure',
+  'Custom',
+];
+
 const FINANCIAL_YEAR_OPTIONS = [
   { value: 'calendar', label: 'Calendar Year (Jan – Dec)' },
   { value: 'april', label: 'Financial Year (Apr – Mar)' },
@@ -76,6 +88,50 @@ type PenaltyActionValue = typeof PENALTY_ACTION_OPTIONS[number]['value'];
 const APPLY_TYPE_DOMAINS = new Set([
   'attendance_policy', 'leave_policy', 'overtime_policy', 'shift_management',
 ]);
+
+const BREAK_CATEGORIES = [
+  { value: 'paid_break', label: 'Paid Break' },
+  { value: 'unpaid_break', label: 'Unpaid Break' },
+  { value: 'official_duty', label: 'Official Duty' },
+  { value: 'emergency', label: 'Emergency' },
+  { value: 'medical', label: 'Medical' },
+  { value: 'training', label: 'Training' },
+  { value: 'meeting', label: 'Meeting' },
+  { value: 'personal', label: 'Personal' },
+  { value: 'other', label: 'Other' },
+];
+
+const DEFAULT_BREAK_TYPES = [
+  { name: 'Tea Break', code: 'tea_break', category: 'paid_break', allowed_minutes: 15, paid: true, max_uses_per_day: null, max_total_minutes_per_day: null, allow_extension: false, max_extension_minutes: null, requires_employee_reason: false, requires_manager_approval: false, requires_hr_approval: false, allow_early_return: true, allow_multiple_sessions: true, visible_to_employees: true, active: true, color: '#14b8a6', icon: 'coffee', sort_order: 1, grace_minutes: 0, warning_threshold_minutes: 15, critical_threshold_minutes: null, auto_overdue: true, unlimited_duration: false, daily_maximum_minutes: null, weekly_maximum_minutes: null },
+  { name: 'Lunch Break', code: 'lunch_break', category: 'paid_break', allowed_minutes: 45, paid: true, max_uses_per_day: 1, max_total_minutes_per_day: 45, allow_extension: true, max_extension_minutes: 15, requires_employee_reason: false, requires_manager_approval: false, requires_hr_approval: false, allow_early_return: true, allow_multiple_sessions: false, visible_to_employees: true, active: true, color: '#f59e0b', icon: 'utensils', sort_order: 2, grace_minutes: 0, warning_threshold_minutes: 40, critical_threshold_minutes: 60, auto_overdue: true, unlimited_duration: false, daily_maximum_minutes: 45, weekly_maximum_minutes: null },
+  { name: 'Prayer Break', code: 'prayer_break', category: 'paid_break', allowed_minutes: 10, paid: true, max_uses_per_day: null, max_total_minutes_per_day: null, allow_extension: false, max_extension_minutes: null, requires_employee_reason: false, requires_manager_approval: false, requires_hr_approval: false, allow_early_return: true, allow_multiple_sessions: true, visible_to_employees: true, active: true, color: '#8b5cf6', icon: 'sparkles', sort_order: 3, grace_minutes: 0, warning_threshold_minutes: 10, critical_threshold_minutes: null, auto_overdue: true, unlimited_duration: false, daily_maximum_minutes: null, weekly_maximum_minutes: null },
+  { name: 'Personal Break', code: 'personal_break', category: 'personal', allowed_minutes: 10, paid: false, max_uses_per_day: null, max_total_minutes_per_day: null, allow_extension: false, max_extension_minutes: null, requires_employee_reason: false, requires_manager_approval: false, requires_hr_approval: false, allow_early_return: true, allow_multiple_sessions: true, visible_to_employees: true, active: true, color: '#64748b', icon: 'user', sort_order: 4, grace_minutes: 0, warning_threshold_minutes: 10, critical_threshold_minutes: null, auto_overdue: true, unlimited_duration: false, daily_maximum_minutes: null, weekly_maximum_minutes: null },
+  { name: 'Official Outside', code: 'official_outside', category: 'official_duty', allowed_minutes: null, paid: true, max_uses_per_day: null, max_total_minutes_per_day: null, allow_extension: true, max_extension_minutes: null, requires_employee_reason: true, requires_manager_approval: false, requires_hr_approval: false, allow_early_return: true, allow_multiple_sessions: true, visible_to_employees: true, active: true, color: '#3b82f6', icon: 'briefcase', sort_order: 5, grace_minutes: 0, warning_threshold_minutes: null, critical_threshold_minutes: null, auto_overdue: false, unlimited_duration: true, daily_maximum_minutes: null, weekly_maximum_minutes: null },
+  { name: 'Emergency Break', code: 'emergency_leave', category: 'emergency', allowed_minutes: null, paid: false, max_uses_per_day: null, max_total_minutes_per_day: null, allow_extension: true, max_extension_minutes: null, requires_employee_reason: true, requires_manager_approval: false, requires_hr_approval: false, allow_early_return: true, allow_multiple_sessions: true, visible_to_employees: true, active: true, color: '#ef4444', icon: 'alert', sort_order: 6, grace_minutes: 0, warning_threshold_minutes: null, critical_threshold_minutes: null, auto_overdue: false, unlimited_duration: true, daily_maximum_minutes: null, weekly_maximum_minutes: null },
+  { name: 'Other', code: 'other', category: 'other', allowed_minutes: null, paid: false, max_uses_per_day: null, max_total_minutes_per_day: null, allow_extension: true, max_extension_minutes: null, requires_employee_reason: true, requires_manager_approval: false, requires_hr_approval: false, allow_early_return: true, allow_multiple_sessions: true, visible_to_employees: true, active: true, color: '#1e293b', icon: 'more', sort_order: 7, grace_minutes: 0, warning_threshold_minutes: null, critical_threshold_minutes: null, auto_overdue: false, unlimited_duration: true, daily_maximum_minutes: null, weekly_maximum_minutes: null },
+];
+
+const DEFAULT_BREAK_POLICY_CONFIG = {
+  break_types: DEFAULT_BREAK_TYPES,
+  overdue_actions: {
+    notify_employee: true,
+    notify_manager: true,
+    notify_branch_admin: false,
+    notify_org_admin: false,
+    notify_hr: false,
+    escalation_after_minutes: null,
+    escalation_levels: [],
+    automatic_attendance_flag: true,
+    automatic_payroll_deduction: false,
+    automatic_attendance_request: false,
+  },
+  notifications: {
+    warning_timing_minutes: null,
+    escalation_timing_minutes: null,
+    recipients: ['employee', 'manager'],
+    template_codes: [],
+  },
+};
 
 // ─── POLICY DOMAINS ───────────────────────────────────────────────────────────
 
@@ -141,6 +197,22 @@ const POLICY_DOMAINS = [
       // ── Yearly-specific ──
       { key: 'annual_lop_cap_days', label: 'Annual LOP Cap', section: 'Yearly Configuration', type: 'number' as FieldType, description: 'Maximum Loss of Pay days allowed per year (0 = unlimited)', format: (v: number) => v === 0 ? 'Unlimited' : `${v} days/year`, condition: (c: any) => c.apply_type === 'yearly' },
       { key: 'yearly_attendance_audit', label: 'Annual Attendance Audit', section: 'Yearly Configuration', type: 'boolean' as FieldType, description: 'Enable automated annual attendance audit and summary report', format: (v: boolean) => v ? 'Enabled' : 'Disabled', condition: (c: any) => c.apply_type === 'yearly' },
+    ] as FieldDef[],
+  },
+  {
+    key: 'break_policy',
+    label: 'Break Policy',
+    icon: Clock,
+    color: 'cyan',
+    gradient: 'from-cyan-500 to-teal-600',
+    lightBg: 'bg-cyan-50',
+    textColor: 'text-cyan-700',
+    borderColor: 'border-cyan-200',
+    description: 'Employee break types, paid/unpaid rules, usage limits, approvals, and overdue actions',
+    fields: [
+      { key: 'break_types', label: 'Break Types', section: 'Break Types', type: 'text' as FieldType, format: (v: any[]) => `${Array.isArray(v) ? v.length : 0} configured` },
+      { key: 'overdue_actions', label: 'Overdue Actions', section: 'Overdue Actions', type: 'text' as FieldType, format: () => 'Configured' },
+      { key: 'notifications', label: 'Notifications', section: 'Notifications', type: 'text' as FieldType, format: () => 'Configured' },
     ] as FieldDef[],
   },
   {
@@ -308,9 +380,6 @@ const POLICY_DOMAINS = [
       { key: 'break_duration_minutes', label: 'Break Duration', section: 'Break Configuration', type: 'number' as FieldType, description: 'Total break duration in minutes (auto-calculated from start/end times)', format: (v: number) => `${v} min`, condition: (c: any) => c.break_enabled },
       { key: 'paid_break', label: 'Paid Break', section: 'Break Configuration', type: 'boolean' as FieldType, description: 'Count break time as paid work hours', format: (v: boolean) => v ? 'Paid' : 'Unpaid', condition: (c: any) => c.break_enabled },
       // ── Attendance Rules ──
-      { key: 'grace_period_minutes', label: 'Grace Period', section: 'Attendance Rules', type: 'number' as FieldType, description: 'Minutes after shift start before a late-mark is applied', format: (v: number) => `${v} min` },
-      { key: 'late_mark_after_minutes', label: 'Late Mark After', section: 'Attendance Rules', type: 'number' as FieldType, description: 'Minutes beyond grace period before a late mark is recorded', format: (v: number) => `${v} min` },
-      { key: 'early_leave_before_minutes', label: 'Early Leave Before', section: 'Attendance Rules', type: 'number' as FieldType, description: 'Minutes before shift end to flag as early departure', format: (v: number) => `${v} min` },
       {
         key: 'attendance_calculation_mode', label: 'Attendance Mode', section: 'Attendance Rules', type: 'select' as FieldType, options: [
           { value: 'actual', label: 'Actual Hours Worked' }, { value: 'scheduled', label: 'Scheduled Shift Hours' }, { value: 'flexible', label: 'Flexible (Minimum Hours)' },
@@ -319,10 +388,6 @@ const POLICY_DOMAINS = [
       { key: 'auto_clock_out_enabled', label: 'Auto Clock-Out', section: 'Attendance Rules', type: 'boolean' as FieldType, description: 'Automatically clock out employee after maximum hours', format: (v: boolean) => v ? 'Enabled' : 'Disabled' },
       { key: 'auto_clock_out_after_hours', label: 'Auto Clock-Out After', section: 'Attendance Rules', type: 'number' as FieldType, description: 'Hours from shift start before auto clock-out triggers', format: (v: number) => `After ${v} hrs`, condition: (c: any) => c.auto_clock_out_enabled },
       { key: 'biometric_location_restricted', label: 'Location-Locked Attendance', section: 'Attendance Rules', type: 'boolean' as FieldType, description: "Restrict biometric check-ins to devices registered at the shift's assigned property or area. Punches from other locations will be flagged.", format: (v: boolean) => v ? 'Location-Locked' : 'Any Location' },
-      // ── Overtime ──
-      { key: 'ot_eligible', label: 'OT Eligible', section: 'Overtime', type: 'boolean' as FieldType, description: 'Employees on this shift type qualify for overtime', format: (v: boolean) => v ? 'Eligible' : 'Not Eligible' },
-      { key: 'ot_threshold_minutes', label: 'OT Threshold', section: 'Overtime', type: 'number' as FieldType, description: 'Minutes beyond shift end to qualify as overtime', format: (v: number) => `After ${v} min`, condition: (c: any) => c.ot_eligible },
-      { key: 'overtime_on_double_shift', label: 'OT on Double Shift', section: 'Overtime', type: 'boolean' as FieldType, description: 'Mark as OT when employee works consecutive back-to-back shifts', format: (v: boolean) => v ? 'Yes' : 'No' },
       // ── Rest & Recovery ──
       { key: 'min_rest_hours_between_shifts', label: 'Min Rest Between Shifts', section: 'Rest & Recovery', type: 'number' as FieldType, description: 'Minimum rest hours required between consecutive shifts', format: (v: number) => `${v} hrs` },
       { key: 'handover_buffer_minutes', label: 'Handover Buffer', section: 'Rest & Recovery', type: 'number' as FieldType, description: 'Buffer minutes allowed at shift changeover for handover', format: (v: number) => `${v} min` },
@@ -341,8 +406,7 @@ const POLICY_DOMAINS = [
       { key: 'weekly_off_days', label: 'Weekly Off Days', section: 'Rotation & Weekly Off', type: 'text' as FieldType, description: 'Comma-separated day names (e.g. Sunday,Saturday)', format: (v: string) => v },
       // ── Allowances ──
       { key: 'night_shift_allowance', label: 'Night Shift Allowance', section: 'Allowances', type: 'number' as FieldType, description: 'Per-night allowance amount (₹, 0 = none)', format: (v: number) => v === 0 ? 'None' : `₹${v.toLocaleString('en-IN')}/night` },
-      // ── Automation ──
-      { key: 'auto_assign_shifts', label: 'Auto-Assign Shifts', section: 'Automation', type: 'boolean' as FieldType, description: 'Automatically assign this shift to new employees', format: (v: boolean) => v ? 'Yes' : 'No' },
+      { key: 'auto_assign_shifts', label: 'Auto-Assign Shifts', section: 'Scheduling Rules', type: 'boolean' as FieldType, description: 'Automatically assign this shift to new employees', format: (v: boolean) => v ? 'Yes' : 'No' },
       // ── Monthly-specific ──
       { key: 'monthly_roster_finalize_by_day', label: 'Roster Finalized By (Day)', section: 'Monthly Configuration', type: 'number' as FieldType, description: 'Day of the preceding month by which the roster must be finalized (e.g. 25)', format: (v: number) => `By day ${v} of preceding month`, condition: (c: any) => c.apply_type === 'monthly' },
       { key: 'monthly_shift_swap_limit', label: 'Max Shift Swaps / Month', section: 'Monthly Configuration', type: 'number' as FieldType, description: 'Maximum allowed shift swaps per employee per month (0 = unlimited)', format: (v: number) => v === 0 ? 'Unlimited' : `${v} swaps/month`, condition: (c: any) => c.apply_type === 'monthly' },
@@ -355,15 +419,30 @@ const POLICY_DOMAINS = [
       { key: 'annual_night_shift_cap_days', label: 'Annual Night Shift Cap / Employee', section: 'Yearly Configuration', type: 'number' as FieldType, description: 'Maximum night shift days per employee per year (0 = no cap)', format: (v: number) => v === 0 ? 'No cap' : `${v} days/year`, condition: (c: any) => c.apply_type === 'yearly' },
     ] as FieldDef[],
   },
+  {
+    key: 'holiday_policy',
+    label: 'Holiday Policy',
+    icon: CalendarDays,
+    color: 'cyan',
+    gradient: 'from-cyan-500 to-teal-600',
+    lightBg: 'bg-cyan-50',
+    textColor: 'text-cyan-700',
+    borderColor: 'border-cyan-200',
+    description: 'Reusable holiday calendars inherited through the template assignment hierarchy',
+    fields: [
+      { key: 'year', label: 'Year', section: 'Template Details', type: 'number' as FieldType, format: (v: number) => `${v}` },
+      { key: 'holidays', label: 'Holidays', section: 'Holiday Entries', type: 'number' as FieldType, format: (v: any[]) => `${Array.isArray(v) ? v.length : 0} holidays` },
+    ] as FieldDef[],
+  },
 ];
 
 // ─── Scope meta ───────────────────────────────────────────────────────────────
 
 const SCOPE_ICONS: Record<string, any> = {
-  employee: User, designation: Briefcase, department: Building2, property: Hash,
+  employee: User, designation: Briefcase, department: Building2, branch: GitBranch, property: Hash, organization: Layers,
 };
 const SCOPE_LABELS: Record<string, string> = {
-  employee: 'Employee', designation: 'Designation', department: 'Department', property: 'Property',
+  employee: 'Employee', designation: 'Designation', department: 'Department', branch: 'Branch', property: 'Property', organization: 'Organization',
 };
 
 // ─── Helper Components ────────────────────────────────────────────────────────
@@ -1613,6 +1692,232 @@ function BreakTimeConfigSummary({ config }: { config: Record<string, any> }) {
 
 // ─── Period selector (Monthly / Yearly) ──────────────────────────────────────
 
+function BreakPolicyConfigForm({ config, onChange }: {
+  config: Record<string, any>;
+  onChange: (key: string, val: any) => void;
+}) {
+  const breakTypes = Array.isArray(config.break_types) ? config.break_types : [];
+  const overdue = config.overdue_actions || DEFAULT_BREAK_POLICY_CONFIG.overdue_actions;
+  const notifications = config.notifications || DEFAULT_BREAK_POLICY_CONFIG.notifications;
+
+  const updateBreakType = (index: number, updates: Record<string, any>) => {
+    onChange('break_types', breakTypes.map((item: any, i: number) => i === index ? { ...item, ...updates } : item));
+  };
+
+  const addBreakType = () => {
+    const nextOrder = breakTypes.length + 1;
+    onChange('break_types', [
+      ...breakTypes,
+      {
+        name: 'New Break',
+        code: `break_${nextOrder}`,
+        category: 'other',
+        allowed_minutes: 10,
+        paid: false,
+        max_uses_per_day: null,
+        max_total_minutes_per_day: null,
+        allow_extension: false,
+        max_extension_minutes: null,
+        requires_employee_reason: false,
+        requires_manager_approval: false,
+        requires_hr_approval: false,
+        allow_early_return: true,
+        allow_multiple_sessions: true,
+        visible_to_employees: true,
+        active: true,
+        color: '#64748b',
+        icon: 'more',
+        sort_order: nextOrder,
+        grace_minutes: 0,
+        warning_threshold_minutes: null,
+        critical_threshold_minutes: null,
+        auto_overdue: true,
+        unlimited_duration: false,
+        daily_maximum_minutes: null,
+        weekly_maximum_minutes: null,
+      },
+    ]);
+  };
+
+  const moveBreakType = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= breakTypes.length) return;
+    const next = [...breakTypes];
+    [next[index], next[target]] = [next[target], next[index]];
+    onChange('break_types', next.map((item, i) => ({ ...item, sort_order: i + 1 })));
+  };
+
+  const updateOverdue = (key: string, val: any) => onChange('overdue_actions', { ...overdue, [key]: val });
+  const updateNotifications = (key: string, val: any) => onChange('notifications', { ...notifications, [key]: val });
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-cyan-200 overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 bg-cyan-50 border-b border-cyan-100">
+          <div className="flex items-center gap-2">
+            <Clock className="w-3.5 h-3.5 text-cyan-600" />
+            <span className="text-xs font-bold text-cyan-700 uppercase tracking-wider">Break Types</span>
+            <span className="text-[10px] text-cyan-600">{breakTypes.length} configured</span>
+          </div>
+          <button type="button" onClick={addBreakType} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-cyan-600 text-white hover:bg-cyan-700">
+            <Plus className="w-3.5 h-3.5" />
+            Add
+          </button>
+        </div>
+        <div className="divide-y divide-slate-100">
+          {breakTypes.map((breakType: any, index: number) => (
+            <div key={`${breakType.code}-${index}`} className={`p-4 space-y-3 ${breakType.active === false ? 'bg-slate-50 opacity-75' : 'bg-white'}`}>
+              <div className="flex items-start gap-3">
+                <span className="mt-1 w-3 h-3 rounded-full border border-white shadow ring-1 ring-slate-200 shrink-0" style={{ backgroundColor: breakType.color || '#64748b' }} />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 flex-1">
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Break Name</span>
+                    <input value={breakType.name || ''} onChange={e => updateBreakType(index, { name: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400" />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Break Code</span>
+                    <input value={breakType.code || ''} onChange={e => updateBreakType(index, { code: e.target.value.toLowerCase().replace(/[^a-z0-9_]+/g, '_') })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-cyan-400" />
+                  </label>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button type="button" title="Move up" onClick={() => moveBreakType(index, -1)} className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+                    <ChevronUp className="w-4 h-4" />
+                  </button>
+                  <button type="button" title="Move down" onClick={() => moveBreakType(index, 1)} className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+                  <button type="button" title="Archive" onClick={() => updateBreakType(index, { active: false, visible_to_employees: false })} className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <label className="space-y-1">
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Category</span>
+                  <select value={breakType.category || 'other'} onChange={e => updateBreakType(index, { category: e.target.value })} className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs bg-white">
+                    {BREAK_CATEGORIES.map(category => <option key={category.value} value={category.value}>{category.label}</option>)}
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Allowed Min</span>
+                  <input type="number" min="0" disabled={breakType.unlimited_duration} value={breakType.allowed_minutes ?? ''} onChange={e => updateBreakType(index, { allowed_minutes: e.target.value === '' ? null : Number(e.target.value) })} className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs disabled:bg-slate-100" />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Uses / Day</span>
+                  <input type="number" min="0" value={breakType.max_uses_per_day ?? ''} onChange={e => updateBreakType(index, { max_uses_per_day: e.target.value === '' ? null : Number(e.target.value) })} className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs" />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Daily Max</span>
+                  <input type="number" min="0" value={breakType.max_total_minutes_per_day ?? ''} onChange={e => updateBreakType(index, { max_total_minutes_per_day: e.target.value === '' ? null : Number(e.target.value), daily_maximum_minutes: e.target.value === '' ? null : Number(e.target.value) })} className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs" />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {[
+                  ['paid', 'Paid'],
+                  ['unlimited_duration', 'Unlimited'],
+                  ['allow_extension', 'Allow Extension'],
+                  ['requires_employee_reason', 'Reason Required'],
+                  ['requires_manager_approval', 'Manager Approval'],
+                  ['requires_hr_approval', 'HR Approval'],
+                  ['allow_multiple_sessions', 'Multiple Sessions'],
+                  ['visible_to_employees', 'Visible'],
+                  ['active', 'Active'],
+                  ['auto_overdue', 'Auto Overdue'],
+                ].map(([key, label]) => (
+                  <label key={key} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50">
+                    <span className="text-xs font-medium text-slate-600">{label}</span>
+                    <input type="checkbox" checked={Boolean(breakType[key])} onChange={e => updateBreakType(index, { [key]: e.target.checked })} />
+                  </label>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <input type="color" value={breakType.color || '#64748b'} onChange={e => updateBreakType(index, { color: e.target.value })} className="h-9 w-full rounded-lg border border-slate-200" title="Color" />
+                <input placeholder="Icon" value={breakType.icon || ''} onChange={e => updateBreakType(index, { icon: e.target.value })} className="px-2.5 py-2 border border-slate-200 rounded-lg text-xs" />
+                <input type="number" min="0" placeholder="Grace min" value={breakType.grace_minutes ?? ''} onChange={e => updateBreakType(index, { grace_minutes: e.target.value === '' ? 0 : Number(e.target.value) })} className="px-2.5 py-2 border border-slate-200 rounded-lg text-xs" />
+                <input type="number" min="0" placeholder="Warn at min" value={breakType.warning_threshold_minutes ?? ''} onChange={e => updateBreakType(index, { warning_threshold_minutes: e.target.value === '' ? null : Number(e.target.value) })} className="px-2.5 py-2 border border-slate-200 rounded-lg text-xs" />
+                <input type="number" min="0" placeholder="Critical min" value={breakType.critical_threshold_minutes ?? ''} onChange={e => updateBreakType(index, { critical_threshold_minutes: e.target.value === '' ? null : Number(e.target.value) })} className="px-2.5 py-2 border border-slate-200 rounded-lg text-xs" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <SectionedConfigForm
+        fields={[
+          { key: 'notify_employee', label: 'Employee Notification', section: 'Overdue Actions', type: 'boolean' as FieldType, format: (v: boolean) => v ? 'Enabled' : 'Disabled' },
+          { key: 'notify_manager', label: 'Manager Notification', section: 'Overdue Actions', type: 'boolean' as FieldType, format: (v: boolean) => v ? 'Enabled' : 'Disabled' },
+          { key: 'notify_branch_admin', label: 'Branch Admin Notification', section: 'Overdue Actions', type: 'boolean' as FieldType, format: (v: boolean) => v ? 'Enabled' : 'Disabled' },
+          { key: 'notify_org_admin', label: 'Organization Admin Notification', section: 'Overdue Actions', type: 'boolean' as FieldType, format: (v: boolean) => v ? 'Enabled' : 'Disabled' },
+          { key: 'notify_hr', label: 'HR Notification', section: 'Overdue Actions', type: 'boolean' as FieldType, format: (v: boolean) => v ? 'Enabled' : 'Disabled' },
+          { key: 'escalation_after_minutes', label: 'Escalate After', section: 'Overdue Actions', type: 'number' as FieldType, format: (v: number) => `${v} min` },
+          { key: 'automatic_attendance_flag', label: 'Attendance Flag', section: 'Automatic Rules', type: 'boolean' as FieldType, format: (v: boolean) => v ? 'Enabled' : 'Disabled' },
+          { key: 'automatic_payroll_deduction', label: 'Payroll Deduction', section: 'Automatic Rules', type: 'boolean' as FieldType, format: (v: boolean) => v ? 'Enabled' : 'Disabled' },
+          { key: 'automatic_attendance_request', label: 'Attendance Request', section: 'Automatic Rules', type: 'boolean' as FieldType, format: (v: boolean) => v ? 'Enabled' : 'Disabled' },
+        ]}
+        config={overdue}
+        onChange={updateOverdue}
+      />
+
+      <SectionedConfigForm
+        fields={[
+          { key: 'warning_timing_minutes', label: 'Warning Timing', section: 'Notifications', type: 'number' as FieldType, format: (v: number) => `${v} min` },
+          { key: 'escalation_timing_minutes', label: 'Escalation Timing', section: 'Notifications', type: 'number' as FieldType, format: (v: number) => `${v} min` },
+        ]}
+        config={notifications}
+        onChange={updateNotifications}
+      />
+    </div>
+  );
+}
+
+function BreakPolicySummary({ config }: { config: Record<string, any> }) {
+  const breakTypes = Array.isArray(config.break_types) ? config.break_types : [];
+  const activeTypes = breakTypes.filter((item: any) => item.active !== false);
+  const visibleTypes = activeTypes.filter((item: any) => item.visible_to_employees !== false);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-3">
+          <p className="text-[10px] font-semibold text-cyan-700 uppercase tracking-wider">Break Types</p>
+          <p className="text-xl font-black text-cyan-800">{breakTypes.length}</p>
+        </div>
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+          <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wider">Visible</p>
+          <p className="text-xl font-black text-emerald-800">{visibleTypes.length}</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider">Archived</p>
+          <p className="text-xl font-black text-slate-800">{breakTypes.length - activeTypes.length}</p>
+        </div>
+      </div>
+
+      <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
+        {breakTypes.map((breakType: any) => (
+          <div key={breakType.code} className="flex items-center justify-between gap-3 px-4 py-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="w-3 h-3 rounded-full border border-white shadow ring-1 ring-slate-200 shrink-0" style={{ backgroundColor: breakType.color || '#64748b' }} />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-800 truncate">{breakType.name}</p>
+                <p className="text-[11px] text-slate-400 font-mono">{breakType.code}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Badge text={breakType.paid ? 'Paid' : 'Unpaid'} variant={breakType.paid ? 'green' : 'default'} />
+              <Badge text={breakType.allowed_minutes == null ? 'Unlimited' : `${breakType.allowed_minutes}m`} variant="amber" />
+              {breakType.active === false && <Badge text="Archived" variant="red" />}
+              {breakType.visible_to_employees === false && <Badge text="Hidden" variant="purple" />}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PeriodSelector({ config, onChange }: {
   config: Record<string, any>;
   onChange: (key: string, val: any) => void;
@@ -1668,13 +1973,16 @@ function PeriodSelector({ config, onChange }: {
 
 // ─── Quick-actions dropdown ───────────────────────────────────────────────────
 
-function TemplateActionsMenu({ template, domain, onEdit, onDuplicate, onDelete, onSetDefault }: {
+function TemplateActionsMenu({ template, domain, onEdit, onDuplicate, onDelete, onSetDefault, onArchive, onActivate, onDeactivate }: {
   template: any;
   domain: typeof POLICY_DOMAINS[0];
   onEdit: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
   onSetDefault: () => void;
+  onArchive: () => void;
+  onActivate: () => void;
+  onDeactivate: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -1701,11 +2009,26 @@ function TemplateActionsMenu({ template, domain, onEdit, onDuplicate, onDelete, 
             <Pencil className="w-3.5 h-3.5 text-slate-400" /> Edit Template
           </button>
           <button onClick={() => { onDuplicate(); setOpen(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
-            <Copy className="w-3.5 h-3.5 text-slate-400" /> Copy Template
+            <Copy className="w-3.5 h-3.5 text-slate-400" /> Duplicate
           </button>
           {!template.is_default && (
             <button onClick={() => { onSetDefault(); setOpen(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
               <Star className="w-3.5 h-3.5 text-amber-400" /> Set as Default
+            </button>
+          )}
+          {template.status !== 'active' && (
+            <button onClick={() => { onActivate(); setOpen(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-50 transition-colors">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Activate
+            </button>
+          )}
+          {template.status === 'active' && (
+            <button onClick={() => { onDeactivate(); setOpen(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
+              <AlertCircle className="w-3.5 h-3.5 text-slate-400" /> Deactivate
+            </button>
+          )}
+          {template.status !== 'archived' && (
+            <button onClick={() => { onArchive(); setOpen(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
+              <X className="w-3.5 h-3.5 text-slate-400" /> Archive
             </button>
           )}
           <div className="my-1 border-t border-slate-100" />
@@ -1714,6 +2037,255 @@ function TemplateActionsMenu({ template, domain, onEdit, onDuplicate, onDelete, 
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function emptyHoliday(year: number) {
+  return {
+    name: '',
+    date: `${year}-01-01`,
+    type: 'National Holiday',
+    description: '',
+    recurring_yearly: false,
+    half_day: false,
+    optional_holiday: false,
+    restricted_holiday: false,
+    paid_holiday: true,
+    applicable_branch_ids: [],
+    applicable_department_ids: [],
+    color_label: '#06b6d4',
+  };
+}
+
+function HolidayPolicyConfigForm({ config, onChange }: {
+  config: Record<string, any>;
+  onChange: (key: string, val: any) => void;
+}) {
+  const year = Number(config.year) || new Date().getFullYear();
+  const holidays = Array.isArray(config.holidays) ? config.holidays : [];
+  const duplicateDates = new Set<string>();
+  const seenDates = new Set<string>();
+  holidays.forEach((holiday: any) => {
+    if (seenDates.has(holiday.date)) duplicateDates.add(holiday.date);
+    seenDates.add(holiday.date);
+  });
+
+  const updateHoliday = (index: number, key: string, value: any) => {
+    onChange('holidays', holidays.map((holiday: any, i: number) => i === index ? { ...holiday, [key]: value } : holiday));
+  };
+
+  const removeHoliday = (index: number) => {
+    onChange('holidays', holidays.filter((_: any, i: number) => i !== index));
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Year *</label>
+          <input
+            type="number"
+            value={year}
+            onChange={e => {
+              const nextYear = Number(e.target.value) || new Date().getFullYear();
+              onChange('year', nextYear);
+              onChange('effective_from', `${nextYear}-01-01`);
+              onChange('effective_until', `${nextYear}-12-31`);
+            }}
+            min={1900}
+            max={2200}
+            className="mt-1.5 w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Status</label>
+          <select
+            value={config.status || 'active'}
+            onChange={e => onChange('status', e.target.value)}
+            className="mt-1.5 w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+          >
+            <option value="draft">Draft</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="archived">Archived</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Effective From</label>
+          <input
+            type="date"
+            value={config.effective_from || `${year}-01-01`}
+            onChange={e => onChange('effective_from', e.target.value)}
+            className="mt-1.5 w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Effective Until</label>
+          <input
+            type="date"
+            value={config.effective_until || `${year}-12-31`}
+            onChange={e => onChange('effective_until', e.target.value)}
+            className="mt-1.5 w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Notes</label>
+        <textarea
+          value={config.notes || ''}
+          onChange={e => onChange('notes', e.target.value)}
+          rows={2}
+          className="mt-1.5 w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"
+        />
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Holiday Entries</p>
+          <p className="text-[11px] text-slate-400">{holidays.length} configured</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onChange('holidays', [...holidays, emptyHoliday(year)])}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-cyan-600 text-white hover:bg-cyan-700"
+        >
+          <Plus className="w-3.5 h-3.5" /> Add Holiday
+        </button>
+      </div>
+
+      {duplicateDates.size > 0 && (
+        <div className="px-3 py-2 rounded-lg border border-rose-200 bg-rose-50 text-xs font-medium text-rose-700">
+          Duplicate dates: {Array.from(duplicateDates).join(', ')}
+        </div>
+      )}
+
+      <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+        {holidays.length === 0 ? (
+          <div className="border border-dashed border-slate-300 rounded-xl py-8 text-center text-sm text-slate-400">
+            No holidays added yet
+          </div>
+        ) : holidays.map((holiday: any, index: number) => (
+          <div key={index} className={`rounded-xl border p-3 space-y-3 ${duplicateDates.has(holiday.date) ? 'border-rose-300 bg-rose-50/40' : 'border-slate-200'}`}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <input
+                value={holiday.name || ''}
+                onChange={e => updateHoliday(index, 'name', e.target.value)}
+                placeholder="Holiday name"
+                required
+                className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              />
+              <input
+                type="date"
+                value={holiday.date || `${year}-01-01`}
+                onChange={e => updateHoliday(index, 'date', e.target.value)}
+                required
+                className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              />
+              <select
+                value={holiday.type || 'Custom'}
+                onChange={e => updateHoliday(index, 'type', e.target.value)}
+                className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              >
+                {HOLIDAY_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
+              </select>
+            </div>
+            <input
+              value={holiday.description || ''}
+              onChange={e => updateHoliday(index, 'description', e.target.value)}
+              placeholder="Description"
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              {[
+                ['recurring_yearly', 'Recurring'],
+                ['half_day', 'Half day'],
+                ['optional_holiday', 'Optional'],
+                ['restricted_holiday', 'Restricted'],
+                ['paid_holiday', 'Paid'],
+              ].map(([key, label]) => (
+                <label key={key} className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={key === 'paid_holiday' ? holiday[key] !== false : Boolean(holiday[key])}
+                    onChange={e => updateHoliday(index, key, e.target.checked)}
+                  />
+                  {label}
+                </label>
+              ))}
+              <input
+                type="color"
+                value={holiday.color_label || '#06b6d4'}
+                onChange={e => updateHoliday(index, 'color_label', e.target.value)}
+                className="h-7 w-10 rounded border border-slate-200"
+                title="Color label"
+              />
+              <button
+                type="button"
+                onClick={() => removeHoliday(index)}
+                className="ml-auto inline-flex items-center justify-center w-8 h-8 rounded-lg text-rose-500 hover:bg-rose-50"
+                title="Remove holiday"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HolidayPolicySummary({ config }: { config: Record<string, any> }) {
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const holidays = Array.isArray(config.holidays) ? config.holidays : [];
+  const filtered = holidays
+    .filter((holiday: any) => !typeFilter || holiday.type === typeFilter)
+    .filter((holiday: any) => `${holiday.name} ${holiday.date} ${holiday.type}`.toLowerCase().includes(search.toLowerCase()))
+    .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)));
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        <div className="relative flex-1 min-w-56">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search holidays"
+            className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-cyan-400"
+          />
+        </div>
+        <select
+          value={typeFilter}
+          onChange={e => setTypeFilter(e.target.value)}
+          className="px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white"
+        >
+          <option value="">All Types</option>
+          {HOLIDAY_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
+        </select>
+      </div>
+      <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
+        {filtered.length === 0 ? (
+          <div className="p-6 text-sm text-slate-400 text-center">No holidays found</div>
+        ) : filtered.map((holiday: any, index: number) => (
+          <div key={`${holiday.date}-${index}`} className="flex items-center gap-3 px-4 py-3">
+            <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: holiday.color_label || '#06b6d4' }} />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-slate-900 truncate">{holiday.name}</p>
+              <p className="text-xs text-slate-500">{holiday.date} - {holiday.type}</p>
+            </div>
+            <div className="flex flex-wrap justify-end gap-1">
+              {holiday.half_day && <Badge text="HALF" variant="amber" />}
+              {holiday.optional_holiday && <Badge text="OPTIONAL" variant="purple" />}
+              {holiday.restricted_holiday && <Badge text="RESTRICTED" variant="red" />}
+              {holiday.paid_holiday !== false && <Badge text="PAID" variant="green" />}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1799,9 +2371,22 @@ export function TemplateManager({ templateType }: { templateType: string }) {
   const openCreate = () => {
     setIsEditing(false);
     setEditTemplateId(null);
-    const defaultConfig: Record<string, any> = APPLY_TYPE_DOMAINS.has(activeDomain)
-      ? { apply_type: 'monthly' }
-      : {};
+    const currentYear = new Date().getFullYear();
+    const defaultConfig: Record<string, any> = activeDomain === 'holiday_policy'
+      ? {
+          year: currentYear,
+          holidays: [],
+          allowed_holiday_types: HOLIDAY_TYPES,
+          status: 'active',
+          effective_from: `${currentYear}-01-01`,
+          effective_until: `${currentYear}-12-31`,
+          notes: '',
+        }
+      : activeDomain === 'break_policy'
+        ? JSON.parse(JSON.stringify(DEFAULT_BREAK_POLICY_CONFIG))
+      : APPLY_TYPE_DOMAINS.has(activeDomain)
+        ? { apply_type: 'monthly' }
+        : {};
     setCreateForm({ name: '', description: '', config: defaultConfig });
     setShowCreate(true);
   };
@@ -1809,7 +2394,22 @@ export function TemplateManager({ templateType }: { templateType: string }) {
   const openEdit = (template: any) => {
     setIsEditing(true);
     setEditTemplateId(template.id);
-    setCreateForm({ name: template.name, description: template.description || '', config: { ...(template.config || {}) } });
+    const config = activeDomain === 'holiday_policy'
+      ? {
+          ...(template.config || {}),
+          status: template.status || 'active',
+          effective_from: template.effective_from ? String(template.effective_from).split('T')[0] : template.config?.effective_from,
+          effective_until: template.effective_until ? String(template.effective_until).split('T')[0] : template.config?.effective_until,
+          notes: template.notes || '',
+        }
+      : (() => {
+          const cfg = { ...(template.config || {}) };
+          if (activeDomain === 'shift_management' && !cfg.shift_name) {
+            cfg.shift_name = template.name;
+          }
+          return cfg;
+        })();
+    setCreateForm({ name: template.name, description: template.description || '', config });
     setShowCreate(true);
   };
 
@@ -1819,19 +2419,52 @@ export function TemplateManager({ templateType }: { templateType: string }) {
     setTimeout(() => setToast(null), 3500);
   };
 
+  const handleDuplicateTemplate = async (template: any) => {
+    try {
+      const nextYear = activeDomain === 'holiday_policy'
+        ? Number(template.config?.year || new Date().getFullYear()) + 1
+        : undefined;
+      await api.post(`/templates/${template.id}/duplicate`, {
+        ...(nextYear ? { year: nextYear, name: `${template.name} ${nextYear}` } : { name: `${template.name} Copy` }),
+      });
+      setToast(`"${template.name}" duplicated`);
+      setTimeout(() => setToast(null), 3500);
+      fetchTemplates(activeDomain);
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to duplicate template');
+    }
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreateLoading(true);
     try {
+      const config = { ...createForm.config };
+      const lifecycle = activeDomain === 'holiday_policy'
+        ? {
+            status: config.status || 'active',
+            effective_from: config.effective_from || (config.year ? `${config.year}-01-01` : undefined),
+            effective_until: config.effective_until || (config.year ? `${config.year}-12-31` : undefined),
+            notes: config.notes || undefined,
+          }
+        : {};
+      if (activeDomain === 'holiday_policy') {
+        delete config.status;
+        delete config.effective_from;
+        delete config.effective_until;
+        delete config.notes;
+      }
       if (isEditing && editTemplateId) {
         await api.put(`/templates/${editTemplateId}`, {
-          name: createForm.name, description: createForm.description, config: createForm.config,
+          name: createForm.name, description: createForm.description, config,
           is_default: selectedTemplate?.is_default || false,
+          ...lifecycle,
         });
       } else {
         await api.post('/templates', {
           template_type: activeDomain, name: createForm.name,
-          description: createForm.description, config: createForm.config, is_default: false,
+          description: createForm.description, config, is_default: false,
+          ...lifecycle,
         });
       }
       setShowCreate(false);
@@ -1842,7 +2475,7 @@ export function TemplateManager({ templateType }: { templateType: string }) {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this policy template? All assignments will also be removed.')) return;
+    if (!confirm('Delete this policy template? Templates with active assignments must be archived or deactivated first.')) return;
     try {
       await api.delete(`/templates/${id}`);
       fetchTemplates(activeDomain);
@@ -1855,6 +2488,17 @@ export function TemplateManager({ templateType }: { templateType: string }) {
       await api.put(`/templates/${id}`, { is_default: true });
       fetchTemplates(activeDomain);
     } catch { alert('Failed to set default'); }
+  };
+
+  const handleLifecycle = async (id: string, action: 'archive' | 'activate' | 'deactivate') => {
+    try {
+      await api.post(`/templates/${id}/${action}`);
+      fetchTemplates(activeDomain);
+      setToast(`Template ${action}d`);
+      setTimeout(() => setToast(null), 3000);
+    } catch (err: any) {
+      alert(err.response?.data?.error || `Failed to ${action} template`);
+    }
   };
 
   const handlePreview = async (emp: any) => {
@@ -2018,9 +2662,12 @@ export function TemplateManager({ templateType }: { templateType: string }) {
                           template={t}
                           domain={domain}
                           onEdit={() => openEdit(t)}
-                          onDuplicate={() => handleCopyTemplate(t)}
+                          onDuplicate={() => handleDuplicateTemplate(t)}
                           onDelete={() => handleDelete(t.id)}
                           onSetDefault={() => handleSetDefault(t.id)}
+                          onArchive={() => handleLifecycle(t.id, 'archive')}
+                          onActivate={() => handleLifecycle(t.id, 'activate')}
+                          onDeactivate={() => handleLifecycle(t.id, 'deactivate')}
                         />
                       </div>
                     </div>
@@ -2041,7 +2688,21 @@ export function TemplateManager({ templateType }: { templateType: string }) {
                           </span>
                         )}
                         {/* Salary structure specific peek */}
-                        {activeDomain === 'salary_structure' && t.config ? (() => {
+                        {activeDomain === 'break_policy' && t.config ? (() => {
+                          const breakTypes = Array.isArray(t.config.break_types) ? t.config.break_types : [];
+                          const activeCount = breakTypes.filter((item: any) => item.active !== false).length;
+                          const paidCount = breakTypes.filter((item: any) => item.paid !== false && item.active !== false).length;
+                          const chips = [
+                            `${activeCount} active`,
+                            `${paidCount} paid`,
+                            `${Math.max(0, activeCount - paidCount)} unpaid`,
+                          ];
+                          return chips.map((chip, i) => (
+                            <span key={i} className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-md bg-cyan-50 text-cyan-700 border border-cyan-200 font-medium">
+                              {chip}
+                            </span>
+                          ));
+                        })() : activeDomain === 'salary_structure' && t.config ? (() => {
                           const mode = t.config.salary_input_mode || 'annual_ctc';
                           const annual = mode === 'annual_ctc' ? Number(t.config.annual_ctc_lpa) : mode === 'monthly_ctc' ? Number(t.config.monthly_ctc_input) * 12 : 0;
                           const basic = Number(t.config.basic_percent_of_ctc) || 40;
@@ -2057,7 +2718,10 @@ export function TemplateManager({ templateType }: { templateType: string }) {
                             </span>
                           ));
                         })() : domain.fields.slice(0, 3).map(field => {
-                          const val = t.config?.[field.key];
+                          let val = t.config?.[field.key];
+                          if (activeDomain === 'shift_management' && field.key === 'shift_name' && !val) {
+                            val = t.name;
+                          }
                           if (val == null) return null;
                           if (field.condition && !field.condition(t.config)) return null;
                           return (
@@ -2165,7 +2829,11 @@ export function TemplateManager({ templateType }: { templateType: string }) {
                     </div>
                   )}
 
-                  {activeDomain === 'salary_structure' ? (
+                  {activeDomain === 'holiday_policy' ? (
+                    <HolidayPolicySummary config={selectedTemplate.config || {}} />
+                  ) : activeDomain === 'break_policy' ? (
+                    <BreakPolicySummary config={selectedTemplate.config || {}} />
+                  ) : activeDomain === 'salary_structure' ? (
                     <SalaryStructureDetailView config={selectedTemplate.config || {}} />
                   ) : (
                     <>
@@ -2176,7 +2844,10 @@ export function TemplateManager({ templateType }: { templateType: string }) {
                             !(activeDomain === 'shift_management' && f.section === 'Break Configuration')
                           )
                           .map(field => {
-                            const val = selectedTemplate.config?.[field.key];
+                            let val = selectedTemplate.config?.[field.key];
+                            if (activeDomain === 'shift_management' && field.key === 'shift_name' && !val) {
+                              val = selectedTemplate.name;
+                            }
                             if (val == null) return null;
                             if (field.condition && !field.condition(selectedTemplate.config)) return null;
                             const fmt = (field.format as any)(val);
@@ -2398,7 +3069,18 @@ export function TemplateManager({ templateType }: { templateType: string }) {
                     <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Template Name *</label>
                     <input
                       value={createForm.name}
-                      onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))}
+                      onChange={e => {
+                        const name = e.target.value;
+                        setCreateForm(f => {
+                          const nextConfig = { ...f.config };
+                          if (activeDomain === 'shift_management') {
+                            if (!nextConfig.shift_name || nextConfig.shift_name === f.name) {
+                              nextConfig.shift_name = name;
+                            }
+                          }
+                          return { ...f, name, config: nextConfig };
+                        });
+                      }}
                       placeholder={`e.g., Night Shift ${domain.label}`}
                       required
                       className="mt-1.5 w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -2449,7 +3131,11 @@ export function TemplateManager({ templateType }: { templateType: string }) {
                 )}
 
                 {/* Sectioned config fields */}
-                {activeDomain === 'leave_policy' ? (
+                {activeDomain === 'break_policy' ? (
+                  <BreakPolicyConfigForm config={createForm.config} onChange={handleConfigChange} />
+                ) : activeDomain === 'holiday_policy' ? (
+                  <HolidayPolicyConfigForm config={createForm.config} onChange={handleConfigChange} />
+                ) : activeDomain === 'leave_policy' ? (
                   <div className="space-y-4">
                     {/* Leave Quotas */}
                     <SectionedConfigForm

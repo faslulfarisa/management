@@ -1,7 +1,7 @@
 'use client';
 
 import { useAuthStore } from '@/store/auth.store';
-import { LogOut, Search, ChevronDown, Sparkles, Loader2, Menu } from 'lucide-react';
+import { LogOut, Search, ChevronDown, Sparkles, Loader2, Menu, UserCircle, Settings } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -14,9 +14,13 @@ import { resetOrgScopedState } from '@/lib/org-switch';
 import { resolveLabel } from '@/lib/navigation/route-labels';
 import { useNavigationHistoryStore } from '@/store/navigation-history.store';
 import { USER_TYPE_LABELS } from '@/lib/hierarchy';
+import { getPostLogoutRedirectPath, rememberPostLogoutRedirectPath } from '@/lib/auth/logout-redirect';
+import { AdminSectionSwitcher } from './admin-section-switcher';
+import { useAdminSection } from '@/hooks/use-admin-section';
 
 export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
-  const { user, logout, tenants, selectedTenantId, userType } = useAuthStore();
+  const { user, logout, tenants, selectedTenantId, userType, isInternalStaff } = useAuthStore();
+  const { isAdminDualContext } = useAdminSection();
   const pathname = usePathname() ?? '/dashboard';
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -58,15 +62,22 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
     setIsLoggingOut(true);
     try {
       setShowUser(false);
+      const redirectPath = getPostLogoutRedirectPath({ isInternalStaff });
+      rememberPostLogoutRedirectPath(redirectPath);
       // Clear cached queries / tenant-scoped state so the next login on this
       // browser (possibly a different user/org) doesn't see stale data.
       resetOrgScopedState(queryClient);
       logout();
-      await router.push('/login');
+      await router.push(redirectPath);
     } catch (err) {
       console.error('Logout error:', err);
       setIsLoggingOut(false);
     }
+  };
+
+  const goToGlobalProfile = (target: '/profile' | '/account') => {
+    setShowUser(false);
+    router.push(target);
   };
 
   // Detect platform for shortcut label
@@ -75,7 +86,7 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
   return (
     <>
       <header
-        className="h-16 fixed top-0 right-0 left-0 md:left-64 z-10 flex items-center justify-between px-6"
+        className="h-16 fixed top-0 right-0 left-0 md:left-64 z-30 flex items-center justify-between px-6"
         style={{
           background: 'rgba(255,255,255,0.88)',
           backdropFilter: 'blur(16px)',
@@ -102,18 +113,22 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
           )}
         </div>
 
-        {/* Center – search trigger (all pages) */}
-        <button
-          id="search-trigger"
-          onClick={() => setShowSearch(true)}
-          className="hidden md:flex items-center gap-2 bg-muted/60 hover:bg-muted border border-border rounded-xl px-3 py-2 w-64 transition-colors cursor-pointer group"
-        >
-          <Search className="w-4 h-4 text-muted-foreground shrink-0 group-hover:text-primary transition-colors" />
-          <span className="text-sm text-muted-foreground group-hover:text-foreground/70 transition-colors">Search anything…</span>
-          <kbd className="ml-auto text-[10px] font-mono bg-background border border-border rounded px-1.5 py-0.5 text-muted-foreground">
-            {isMac ? '⌘' : 'Ctrl+'}K
-          </kbd>
-        </button>
+        {/* Center – section switcher for admin/branch_admin; search trigger for everyone else */}
+        {isAdminDualContext ? (
+          <AdminSectionSwitcher />
+        ) : (
+          <button
+            id="search-trigger"
+            onClick={() => setShowSearch(true)}
+            className="hidden md:flex items-center gap-2 bg-muted/60 hover:bg-muted border border-border rounded-xl px-3 py-2 w-64 transition-colors cursor-pointer group"
+          >
+            <Search className="w-4 h-4 text-muted-foreground shrink-0 group-hover:text-primary transition-colors" />
+            <span className="text-sm text-muted-foreground group-hover:text-foreground/70 transition-colors">Search anything…</span>
+            <kbd className="ml-auto text-[10px] font-mono bg-background border border-border rounded px-1.5 py-0.5 text-muted-foreground">
+              {isMac ? '⌘' : 'Ctrl+'}K
+            </kbd>
+          </button>
+        )}
 
         {/* Right – always-visible actions */}
         <div className="flex items-center gap-2">
@@ -194,6 +209,20 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
                 </div>
                 {/* Actions */}
                 <div className="p-1.5">
+                  <button
+                    onClick={() => goToGlobalProfile('/profile')}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted transition-colors"
+                  >
+                    <UserCircle className="w-4 h-4 text-muted-foreground" />
+                    My Profile
+                  </button>
+                  <button
+                    onClick={() => goToGlobalProfile('/account')}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted transition-colors"
+                  >
+                    <Settings className="w-4 h-4 text-muted-foreground" />
+                    Account Settings
+                  </button>
                   <button
                     onClick={handleLogout}
                     disabled={isLoggingOut}

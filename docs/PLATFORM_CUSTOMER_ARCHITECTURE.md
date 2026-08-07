@@ -385,7 +385,7 @@ appears in any list — but this is the next thing to fix if hardening this furt
 
 ## 11. Testing Strategy
 
-No browser-automation tool was available in this environment for any phase of this work (a
+No browser-based validation tool was available in this environment for any phase of this work (a
 recurring, pre-existing constraint in this codebase — see e.g. `project_internal_operations_portal`
 prior-session notes). Verification was therefore curl-driven against the live dev backend
 (`localhost:3001`) plus `tsc --noEmit` on both `backend`/`frontend` as a compile-correctness gate,

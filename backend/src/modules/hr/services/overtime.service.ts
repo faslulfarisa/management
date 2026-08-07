@@ -21,6 +21,10 @@ export interface ApprovedOtForPayroll {
   eligible: boolean;
   approvedHours: number;
   policyMultiplier: number;
+  policyRate?: number | null;
+  policyFormula?: string | null;
+  policySnapshot?: Record<string, any>;
+  approvalTimestamp?: string | null;
 }
 
 @Injectable()
@@ -139,7 +143,7 @@ export class OvertimeService {
       departmentId: emp.department_id ?? null,
       title: `OT Request – ${data.ot_date} (${data.requested_hours} hrs)`,
       description: data.reason,
-      priority: 'normal',
+      priority: data.priority || 'normal',
     });
 
     return request;
@@ -288,7 +292,9 @@ export class OvertimeService {
     if (!eligible) return { eligible: false, approvedHours: 0, policyMultiplier: 1.5 };
 
     const { rows } = await this.db.query(
-      `SELECT COALESCE(SUM(COALESCE(approved_hours, requested_hours)), 0) AS total_approved
+      `SELECT
+         COALESCE(SUM(COALESCE(approved_hours, requested_hours)), 0) AS total_approved,
+         MAX(updated_at) AS approval_timestamp
        FROM overtime_requests
        WHERE tenant_id = $1 AND employee_id = $2
          AND payroll_month = $3 AND payroll_year = $4
@@ -300,6 +306,10 @@ export class OvertimeService {
       eligible: true,
       approvedHours: parseFloat(rows[0]?.total_approved ?? 0),
       policyMultiplier: policy?.ot_rate_multiplier ?? 1.5,
+      policyRate: policy?.ot_hourly_rate ?? null,
+      policyFormula: policy?.ot_formula ?? 'hourly_rate * approved_ot_hours * multiplier',
+      policySnapshot: policy ?? {},
+      approvalTimestamp: rows[0]?.approval_timestamp ?? null,
     };
   }
 

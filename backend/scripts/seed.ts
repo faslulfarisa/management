@@ -17,6 +17,8 @@ async function main() {
     
     // Auth and core associations
     await client.query('UPDATE users SET employee_id = NULL');
+    await client.query('UPDATE departments SET branch_id = NULL, property_id = NULL');
+    await client.query('UPDATE employees SET branch_id = NULL, property_id = NULL');
 
     const tablesToClean = [
       'reimbursements',
@@ -40,9 +42,6 @@ async function main() {
       'guest_folios',
       'billing_items',
       'notifications',
-      'scheduled_tasks',
-      'automation_logs',
-      'automation_rules',
       'gst_returns',
       'gst_invoices',
       'gst_settings',
@@ -60,6 +59,8 @@ async function main() {
       'payslips',
       'payroll_runs',
       'salary_structures',
+      'payroll_attendance_summary_versions',
+      'payroll_attendance_summary',
       'leave_requests',
       'leave_balances',
       'leave_types',
@@ -78,7 +79,9 @@ async function main() {
       'cost_centers',
       'holidays',
       'template_assignments',
-      'templates'
+      'templates',
+      'branches',
+      'properties'
     ];
 
     for (const table of tablesToClean) {
@@ -89,37 +92,51 @@ async function main() {
     // 2. Tenant
     console.log('Seeding tenant...');
     const { rows: tenants } = await client.query(
-      "INSERT INTO tenants (name, slug, timezone, fiscal_year_start) VALUES ('Demo Hotel Group', 'demo-hotel', 'Asia/Kolkata', 4) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+      "INSERT INTO tenants (name, slug, company_code, timezone, fiscal_year_start) VALUES ('Demo Hotel Group', 'demo-hotel', 'ORGADD', 'Asia/Kolkata', 4) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, company_code = EXCLUDED.company_code RETURNING id",
     );
     const tenantId = tenants[0].id;
     console.log(`Using tenant: Demo Hotel Group (${tenantId})`);
 
     // 3. Admin user
     console.log('Seeding admin user...');
-    const passwordHash = await bcrypt.hash('Admin@1234', 12);
-    const { rows: existingUsers } = await client.query(
-      'SELECT id FROM users WHERE email = $1',
-      ['admin@demo.com']
-    );
-    let adminId = existingUsers[0]?.id;
-    if (!adminId) {
-      const { rows: users } = await client.query(
-        'INSERT INTO users (tenant_id, email, password_hash, is_active, is_super_admin) VALUES ($1, $2, $3, true, true) RETURNING id',
-        [tenantId, 'admin@demo.com', passwordHash],
-      );
-      adminId = users[0].id;
-    } else {
-      await client.query(
-        'UPDATE users SET is_super_admin = true WHERE id = $1',
-        [adminId]
-      );
-    }
+    
+    const adminsToSeed = [
+      { email: 'admin@demo.com', password: 'Admin@1234' },
+      { email: 'orgadd@test.com', password: 'Org@1234' }
+    ];
 
-    // Link admin user to tenant in user_tenants
-    await client.query(
-      'INSERT INTO user_tenants (user_id, tenant_id, is_org_admin) VALUES ($1, $2, true) ON CONFLICT (user_id, tenant_id) DO UPDATE SET is_org_admin = true',
-      [adminId, tenantId]
-    );
+    const seededAdminIds: string[] = [];
+
+    for (const adminData of adminsToSeed) {
+      const passwordHash = await bcrypt.hash(adminData.password, 12);
+      const { rows: existingUsers } = await client.query(
+        'SELECT id FROM users WHERE email = $1',
+        [adminData.email]
+      );
+      let adminId = existingUsers[0]?.id;
+      if (!adminId) {
+        const { rows: users } = await client.query(
+          'INSERT INTO users (tenant_id, email, password_hash, is_active, is_super_admin) VALUES ($1, $2, $3, true, true) RETURNING id',
+          [tenantId, adminData.email, passwordHash],
+        );
+        adminId = users[0].id;
+      } else {
+        await client.query(
+          'UPDATE users SET is_super_admin = true, password_hash = $2 WHERE id = $1',
+          [adminId, passwordHash]
+        );
+      }
+
+      // Link admin user to tenant in user_tenants
+      await client.query(
+        'INSERT INTO user_tenants (user_id, tenant_id, is_org_admin) VALUES ($1, $2, true) ON CONFLICT (user_id, tenant_id) DO UPDATE SET is_org_admin = true',
+        [adminId, tenantId]
+      );
+      seededAdminIds.push(adminId);
+    }
+    
+    // Restore adminId for the rest of the script
+    const adminId = seededAdminIds[0];
 
     // 4. Permissions & Roles
     console.log('Seeding permissions and roles...');
@@ -191,10 +208,6 @@ async function main() {
       { module: 'gst.returns', action: 'view' },
       { module: 'gst.returns', action: 'create' },
       { module: 'gst.returns', action: 'export' },
-      { module: 'automation.rules', action: 'view' },
-      { module: 'automation.rules', action: 'create' },
-      { module: 'automation.rules', action: 'edit' },
-      { module: 'automation.rules', action: 'delete' },
       { module: 'billing.plans', action: 'view' },
       { module: 'billing.plans', action: 'create' },
       { module: 'billing.plans', action: 'edit' },
@@ -229,11 +242,26 @@ async function main() {
     const roleNames = ['Super Admin', 'HR Manager', 'Finance Manager', 'Employee'];
     const roleMap = new Map<string, string>();
     for (const name of roleNames) {
-      const { rows } = await client.query(
-        'INSERT INTO roles (tenant_id, name, description, is_system) VALUES ($1, $2, $3, true) ON CONFLICT (tenant_id, name) DO UPDATE SET description = EXCLUDED.description RETURNING id',
-        [tenantId, name, `${name} role`],
+      // Use SELECT-then-INSERT because the unique index on roles(tenant_id, name)
+      // is a partial index (WHERE deleted_at IS NULL), which ON CONFLICT column
+      // syntax cannot reference directly.
+      const { rows: existingRole } = await client.query(
+        'SELECT id FROM roles WHERE tenant_id = $1 AND name = $2 AND deleted_at IS NULL',
+        [tenantId, name],
       );
-      roleMap.set(name, rows[0].id);
+      if (existingRole.length > 0) {
+        await client.query(
+          'UPDATE roles SET description = $1 WHERE id = $2',
+          [`${name} role`, existingRole[0].id],
+        );
+        roleMap.set(name, existingRole[0].id);
+      } else {
+        const { rows } = await client.query(
+          'INSERT INTO roles (tenant_id, name, description, is_system) VALUES ($1, $2, $3, true) RETURNING id',
+          [tenantId, name, `${name} role`],
+        );
+        roleMap.set(name, rows[0].id);
+      }
     }
 
     // Assign all permissions to Super Admin
@@ -245,38 +273,46 @@ async function main() {
       );
     }
 
-    // Assign admin user to Super Admin role
-    await client.query(
-      'INSERT INTO user_roles (tenant_id, user_id, role_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-      [tenantId, adminId, superAdminRoleId],
-    );
+    // Assign admin users to Super Admin role
+    for (const aId of seededAdminIds) {
+      await client.query(
+        'INSERT INTO user_roles (tenant_id, user_id, role_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+        [tenantId, aId, superAdminRoleId],
+      );
+    }
 
     // 5. Properties
     console.log('Seeding properties...');
     const props = [
-      { name: 'Grand Palace Hotel', code: 'GPH01', property_type: 'hotel' },
-      { name: 'Royal Banquet Hall', code: 'RBH01', property_type: 'banquet' },
-      { name: 'Spice Garden Restaurant', code: 'SGR01', property_type: 'restaurant' },
-      { name: 'Lakeside Resort', code: 'LSR01', property_type: 'hotel' },
-      { name: 'Metro Business Suites', code: 'MBS01', property_type: 'hotel' },
-      { name: 'Airport Transit Inn', code: 'ATI01', property_type: 'hotel' },
+      { name: 'Mumbai Main', code: 'MUM-01', property_type: 'hotel' }
     ];
     const propertyMap = new Map<string, string>();
     for (const p of props) {
-      const { rows } = await client.query(
-        'INSERT INTO properties (tenant_id, name, code, property_type) VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name RETURNING id',
-        [tenantId, p.name, p.code, p.property_type],
+      // Partial unique index on properties(tenant_id, code) WHERE deleted_at IS NULL
+      // — cannot use ON CONFLICT (cols); use SELECT-then-INSERT instead.
+      const { rows: existingProp } = await client.query(
+        'SELECT id FROM properties WHERE tenant_id = $1 AND code = $2 AND deleted_at IS NULL',
+        [tenantId, p.code],
       );
-      propertyMap.set(p.code, rows[0].id);
+      if (existingProp.length > 0) {
+        await client.query('UPDATE properties SET name = $1 WHERE id = $2', [p.name, existingProp[0].id]);
+        propertyMap.set(p.code, existingProp[0].id);
+      } else {
+        const { rows } = await client.query(
+          'INSERT INTO properties (tenant_id, name, code, property_type) VALUES ($1, $2, $3, $4) RETURNING id',
+          [tenantId, p.name, p.code, p.property_type],
+        );
+        propertyMap.set(p.code, rows[0].id);
+      }
     }
 
     // 6. Departments
     console.log('Seeding departments...');
     const depts = [
-      { name: 'Front Office', code: 'FO' },
-      { name: 'Housekeeping', code: 'HK' },
-      { name: 'Food & Beverage', code: 'FNB' },
-      { name: 'Kitchen', code: 'KIT' },
+      { name: 'Front Office', code: 'FO', linkToProperty: true },
+      { name: 'Housekeeping', code: 'HK', linkToProperty: true },
+      { name: 'Food & Beverage', code: 'FNB', linkToProperty: true },
+      { name: 'Kitchen', code: 'KIT', linkToProperty: true },
       { name: 'Engineering', code: 'ENG' },
       { name: 'Sales & Marketing', code: 'SM' },
       { name: 'Human Resources', code: 'HR' },
@@ -286,11 +322,19 @@ async function main() {
     ];
     const departmentMap = new Map<string, string>();
     for (const d of depts) {
+      const propId = d.linkToProperty ? propertyMap.get('MUM-01') : null;
       const { rows } = await client.query(
-        'INSERT INTO departments (tenant_id, name, code) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING id',
-        [tenantId, d.name, d.code],
+        'INSERT INTO departments (tenant_id, name, code, property_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING id',
+        [tenantId, d.name, d.code, propId],
       );
-      const id = rows.length ? rows[0].id : (await client.query('SELECT id FROM departments WHERE tenant_id = $1 AND code = $2', [tenantId, d.code])).rows[0].id;
+      let id = rows[0]?.id;
+      if (!id) {
+        const { rows: existing } = await client.query(
+          'UPDATE departments SET property_id = $3 WHERE tenant_id = $1 AND code = $2 RETURNING id',
+          [tenantId, d.code, propId]
+        );
+        id = existing[0].id;
+      }
       departmentMap.set(d.code, id);
     }
 
@@ -331,20 +375,30 @@ async function main() {
     // 9. Cost Centers
     console.log('Seeding cost centers...');
     const costCenters = [
-      { name: 'Rooms Cost Center', code: 'CC-ROOMS', propertyCode: 'GPH01' },
-      { name: 'F&B Cost Center', code: 'CC-FNB', propertyCode: 'SGR01' },
-      { name: 'Admin Cost Center', code: 'CC-ADMIN', propertyCode: 'GPH01' },
-      { name: 'Spa Cost Center', code: 'CC-SPA', propertyCode: 'GPH01' },
-      { name: 'Sales Cost Center', code: 'CC-SALES', propertyCode: 'RBH01' },
+      { name: 'Rooms Cost Center', code: 'CC-ROOMS', propertyCode: 'MUM-01' },
+      { name: 'F&B Cost Center', code: 'CC-FNB', propertyCode: 'MUM-01' },
+      { name: 'Admin Cost Center', code: 'CC-ADMIN', propertyCode: 'MUM-01' },
+      { name: 'Spa Cost Center', code: 'CC-SPA', propertyCode: 'MUM-01' },
+      { name: 'Sales Cost Center', code: 'CC-SALES', propertyCode: 'MUM-01' },
     ];
     const costCenterMap = new Map<string, string>();
     for (const cc of costCenters) {
       const propId = propertyMap.get(cc.propertyCode)!;
-      const { rows } = await client.query(
-        'INSERT INTO cost_centers (tenant_id, name, code, property_id) VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name RETURNING id',
-        [tenantId, cc.name, cc.code, propId],
+      // Partial unique index on cost_centers(tenant_id, code) WHERE deleted_at IS NULL
+      const { rows: existingCc } = await client.query(
+        'SELECT id FROM cost_centers WHERE tenant_id = $1 AND code = $2 AND deleted_at IS NULL',
+        [tenantId, cc.code],
       );
-      costCenterMap.set(cc.code, rows[0].id);
+      if (existingCc.length > 0) {
+        await client.query('UPDATE cost_centers SET name = $1 WHERE id = $2', [cc.name, existingCc[0].id]);
+        costCenterMap.set(cc.code, existingCc[0].id);
+      } else {
+        const { rows } = await client.query(
+          'INSERT INTO cost_centers (tenant_id, name, code, property_id) VALUES ($1, $2, $3, $4) RETURNING id',
+          [tenantId, cc.name, cc.code, propId],
+        );
+        costCenterMap.set(cc.code, rows[0].id);
+      }
     }
 
     // 10. Employees
@@ -356,7 +410,7 @@ async function main() {
         last: 'Sharma',
         email: 'aarav.sharma@demo.com',
         phone: '9876543210',
-        prop: 'GPH01',
+        prop: 'MUM-01',
         dept: 'HR',
         desig: 'General Manager',
         empType: 'Full-Time',
@@ -369,7 +423,7 @@ async function main() {
         last: 'Patel',
         email: 'priya.patel@demo.com',
         phone: '9876543211',
-        prop: 'GPH01',
+        prop: 'MUM-01',
         dept: 'FO',
         desig: 'Staff',
         empType: 'Full-Time',
@@ -382,7 +436,7 @@ async function main() {
         last: 'Singh',
         email: 'vikram.singh@demo.com',
         phone: '9876543212',
-        prop: 'SGR01',
+        prop: 'MUM-01',
         dept: 'KIT',
         desig: 'Department Head',
         empType: 'Full-Time',
@@ -395,7 +449,7 @@ async function main() {
         last: 'Reddy',
         email: 'neha.reddy@demo.com',
         phone: '9876543213',
-        prop: 'GPH01',
+        prop: 'MUM-01',
         dept: 'HK',
         desig: 'Trainee',
         empType: 'Contract',
@@ -408,7 +462,7 @@ async function main() {
         last: 'Verma',
         email: 'rahul.verma@demo.com',
         phone: '9876543214',
-        prop: 'GPH01',
+        prop: 'MUM-01',
         dept: 'FA',
         desig: 'Supervisor',
         empType: 'Part-Time',
@@ -441,9 +495,11 @@ async function main() {
       employeeMap.set(emp.code, rows[0].id);
     }
 
-    // Link admin user to Aarav Sharma's employee_id
+    // Link first admin user to Aarav Sharma's employee_id
     const emp001Id = employeeMap.get('EMP001')!;
-    await client.query('UPDATE users SET employee_id = $1 WHERE id = $2', [emp001Id, adminId]);
+    if (seededAdminIds.length > 0) {
+      await client.query('UPDATE users SET employee_id = $1 WHERE id = $2', [emp001Id, seededAdminIds[0]]);
+    }
 
     // 11. Employee Lifecycle Events
     console.log('Seeding employee lifecycle events...');
@@ -457,7 +513,7 @@ async function main() {
     for (const le of lifecycleEvents) {
       await client.query(
         'INSERT INTO employee_lifecycle_events (tenant_id, employee_id, event_type, effective_date, old_values, new_values, remarks, approved_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-        [tenantId, employeeMap.get(le.code)!, le.type, le.date, JSON.stringify(le.old), JSON.stringify(le.new), le.remark, adminId]
+        [tenantId, employeeMap.get(le.code)!, le.type, le.date, JSON.stringify(le.old), JSON.stringify(le.new), le.remark, seededAdminIds[0]]
       );
     }
 
@@ -469,7 +525,7 @@ async function main() {
       const type = docTypes[docIndex % docTypes.length];
       await client.query(
         'INSERT INTO employee_documents (tenant_id, employee_id, document_type, name, file_url, file_size_bytes, mime_type, verified_by, verified_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())',
-        [tenantId, empId, type, `${type}_${code}.pdf`, `https://storage.demo.com/docs/${code}/${type.toLowerCase()}.pdf`, 1048576, 'application/pdf', adminId]
+        [tenantId, empId, type, `${type}_${code}.pdf`, `https://storage.demo.com/docs/${code}/${type.toLowerCase()}.pdf`, 1048576, 'application/pdf', seededAdminIds[0]]
       );
       docIndex++;
     }
@@ -513,7 +569,7 @@ async function main() {
       );
 
       // Create schedules for past 5 days
-      for (let i = 1; i <= 5; i++) {
+      for (let i = 0; i <= 5; i++) {
         const scheduleDate = new Date(today);
         scheduleDate.setDate(today.getDate() - i);
         await client.query(
@@ -526,7 +582,7 @@ async function main() {
     // 15. Attendance Records
     console.log('Seeding attendance records...');
     // Create attendance for the last 5 days
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 0; i <= 5; i++) {
       const attDate = new Date(today);
       attDate.setDate(today.getDate() - i);
       const dateStr = attDate.toISOString().split('T')[0];
@@ -625,11 +681,21 @@ async function main() {
     ];
     const leaveTypeMap = new Map<string, string>();
     for (const lt of leaveTypes) {
-      const { rows } = await client.query(
-        'INSERT INTO leave_types (tenant_id, name, code, paid, max_days_per_year) VALUES ($1, $2, $3, true, $4) ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name RETURNING id',
-        [tenantId, lt.name, lt.code, lt.max]
+      // Partial unique index on leave_types(tenant_id, code) WHERE is_active = true
+      const { rows: existingLt } = await client.query(
+        'SELECT id FROM leave_types WHERE tenant_id = $1 AND code = $2 AND is_active = true',
+        [tenantId, lt.code],
       );
-      leaveTypeMap.set(lt.code, rows[0].id);
+      if (existingLt.length > 0) {
+        await client.query('UPDATE leave_types SET name = $1 WHERE id = $2', [lt.name, existingLt[0].id]);
+        leaveTypeMap.set(lt.code, existingLt[0].id);
+      } else {
+        const { rows } = await client.query(
+          'INSERT INTO leave_types (tenant_id, name, code, paid, max_days_per_year) VALUES ($1, $2, $3, true, $4) RETURNING id',
+          [tenantId, lt.name, lt.code, lt.max]
+        );
+        leaveTypeMap.set(lt.code, rows[0].id);
+      }
     }
 
     // Balances
@@ -829,11 +895,21 @@ async function main() {
     ];
     const coaMap = new Map<string, string>();
     for (const c of coas) {
-      const { rows } = await client.query(
-        'INSERT INTO chart_of_accounts (tenant_id, code, name, type) VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name RETURNING id',
-        [tenantId, c.code, c.name, c.type]
+      // Partial unique index on chart_of_accounts(tenant_id, code) WHERE is_active = true
+      const { rows: existingCoa } = await client.query(
+        'SELECT id FROM chart_of_accounts WHERE tenant_id = $1 AND code = $2 AND is_active = true',
+        [tenantId, c.code],
       );
-      coaMap.set(c.code, rows[0].id);
+      if (existingCoa.length > 0) {
+        await client.query('UPDATE chart_of_accounts SET name = $1 WHERE id = $2', [c.name, existingCoa[0].id]);
+        coaMap.set(c.code, existingCoa[0].id);
+      } else {
+        const { rows } = await client.query(
+          'INSERT INTO chart_of_accounts (tenant_id, code, name, type) VALUES ($1, $2, $3, $4) RETURNING id',
+          [tenantId, c.code, c.name, c.type]
+        );
+        coaMap.set(c.code, rows[0].id);
+      }
     }
 
     // Journal Entry
@@ -968,35 +1044,7 @@ async function main() {
       );
     }
 
-    // 25. Automation
-    console.log('Seeding automation configurations...');
-    const rules = [
-      { name: 'Auto-Approve Sick Leave <= 2 days', trigger: 'leave_requested', config: { days_max: 2, type: 'SL' }, actions: [{ type: 'approve' }] },
-      { name: 'Attendance Violation Warning Email', trigger: 'late_clock_in', config: { grace_minutes: 15 }, actions: [{ type: 'send_email', template: 'late_alert' }] },
-      { name: 'Payroll Run Notification', trigger: 'payroll_processed', config: {}, actions: [{ type: 'send_slack', channel: '#finance' }] },
-      { name: 'Archive Documents on Exit', trigger: 'employee_exit_approved', config: {}, actions: [{ type: 'archive_cloud' }] }
-    ];
-    for (const rule of rules) {
-      await client.query(
-        'INSERT INTO automation_rules (tenant_id, name, trigger_type, trigger_config, actions, is_active) VALUES ($1, $2, $3, $4, $5, true)',
-        [tenantId, rule.name, rule.trigger, JSON.stringify(rule.config), JSON.stringify(rule.actions)]
-      );
-    }
-
-    const cronTasks = [
-      { name: 'Daily Attendance Report compiler', cron: '0 22 * * *', type: 'report' },
-      { name: 'Biometric device sync broker', cron: '*/30 * * * *', type: 'sync' },
-      { name: 'Leave balances ledger credit reset', cron: '0 0 1 1 *', type: 'cleanup' },
-      { name: 'Weekly accounting book closer', cron: '0 0 * * 0', type: 'finance' }
-    ];
-    for (const ct of cronTasks) {
-      await client.query(
-        'INSERT INTO scheduled_tasks (tenant_id, name, cron_expression, task_type, is_active) VALUES ($1, $2, $3, $4, true)',
-        [tenantId, ct.name, ct.cron, ct.type]
-      );
-    }
-
-    // Notifications
+    // 25. Notifications
     const notifications = [
       { title: 'New Leave Request', msg: 'Priya Patel requested Sick Leave for 2 days.' },
       { title: 'Biometric Sync Failed', msg: 'Property GPH01 connection timeout.' },
@@ -1072,9 +1120,11 @@ async function main() {
     ];
     const planMap = new Map<string, string>();
     for (const p of plans) {
+      // tenant_subscriptions.plan_id now references saas_base_plans (migration 123)
+      // Use ON CONFLICT (slug) — slug is a plain UNIQUE (not partial), so this works.
       const { rows } = await client.query(
-        'INSERT INTO subscription_plans (name, slug, price_monthly, price_yearly, max_users, max_properties, features, is_active) VALUES ($1, $2, $3, $4, $5, $6, \'[]\', true) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id',
-        [p.name, p.name.toLowerCase().replace(' ', '-'), p.price, p.price * 10, p.users, p.properties]
+        'INSERT INTO saas_base_plans (name, slug, price_monthly, price_yearly, is_active) VALUES ($1, $2, $3, $4, true) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id',
+        [p.name, p.name.toLowerCase().replace(/ /g, '-'), p.price, p.price * 10]
       );
       planMap.set(p.name, rows[0].id);
     }
@@ -1490,8 +1540,8 @@ async function main() {
       { name: 'F&B Ops Strict Attendance Policy',  type: 'attendance_policy', scopeType: 'department', scopeId: departmentMap.get('KIT')!, priority: 30 },
       // F&B Strict → F&B dept
       { name: 'F&B Ops Strict Attendance Policy',  type: 'attendance_policy', scopeType: 'department', scopeId: departmentMap.get('FNB')!, priority: 30 },
-      // Standard (default) → GPH01 property fallback
-      { name: 'Standard Attendance Policy',        type: 'attendance_policy', scopeType: 'property',   scopeId: propertyMap.get('GPH01')!, priority: 10 },
+      // Standard (default) → MUM-01 property fallback
+      { name: 'Standard Attendance Policy',        type: 'attendance_policy', scopeType: 'property',   scopeId: propertyMap.get('MUM-01')!, priority: 10 },
 
       // ── LEAVE POLICY ──
       // Senior Leave → GM designation
@@ -1500,8 +1550,8 @@ async function main() {
       { name: 'Senior Executive Leave Policy',    type: 'leave_policy', scopeType: 'designation', scopeId: designationMap.get('Department Head')!, priority: 50 },
       // Trainee Leave → Trainee designation
       { name: 'Trainee / Probation Leave Policy', type: 'leave_policy', scopeType: 'designation', scopeId: designationMap.get('Trainee')!, priority: 50 },
-      // Standard Leave → GPH01 property fallback
-      { name: 'Standard Leave Policy',            type: 'leave_policy', scopeType: 'property',   scopeId: propertyMap.get('GPH01')!, priority: 10 },
+      // Standard Leave → MUM-01 property fallback
+      { name: 'Standard Leave Policy',            type: 'leave_policy', scopeType: 'property',   scopeId: propertyMap.get('MUM-01')!, priority: 10 },
 
       // ── SALARY STRUCTURE ──
       // GM Salary → GM designation
@@ -1512,16 +1562,16 @@ async function main() {
       { name: 'Trainee / Contract Salary Structure', type: 'salary_structure', scopeType: 'designation', scopeId: designationMap.get('Trainee')!, priority: 50 },
       // Standard Salary → EMP002 Priya Patel per-employee override (highest priority)
       { name: 'Standard Staff Salary Structure',    type: 'salary_structure', scopeType: 'employee',    scopeId: employeeMap.get('EMP002')!, priority: 100 },
-      // Standard Salary → GPH01 property fallback
-      { name: 'Standard Staff Salary Structure',    type: 'salary_structure', scopeType: 'property',    scopeId: propertyMap.get('GPH01')!, priority: 10 },
+      // Standard Salary → MUM-01 property fallback
+      { name: 'Standard Staff Salary Structure',    type: 'salary_structure', scopeType: 'property',    scopeId: propertyMap.get('MUM-01')!, priority: 10 },
 
       // ── OVERTIME POLICY ──
       // F&B Events OT → Kitchen dept
       { name: 'F&B Events OT Policy',  type: 'overtime_policy', scopeType: 'department', scopeId: departmentMap.get('KIT')!, priority: 30 },
       // F&B Events OT → F&B dept
       { name: 'F&B Events OT Policy',  type: 'overtime_policy', scopeType: 'department', scopeId: departmentMap.get('FNB')!, priority: 30 },
-      // Standard OT → GPH01 property fallback
-      { name: 'Standard OT Policy',    type: 'overtime_policy', scopeType: 'property',   scopeId: propertyMap.get('GPH01')!, priority: 10 },
+      // Standard OT → MUM-01 property fallback
+      { name: 'Standard OT Policy',    type: 'overtime_policy', scopeType: 'property',   scopeId: propertyMap.get('MUM-01')!, priority: 10 },
 
       // ── SHIFT MANAGEMENT ──
       // Flexible Senior Shift → GM designation
@@ -1534,8 +1584,8 @@ async function main() {
       { name: 'Night Rotation Shift Policy',    type: 'shift_management', scopeType: 'department',  scopeId: departmentMap.get('FNB')!, priority: 30 },
       // Night Rotation Shift → Security dept
       { name: 'Night Rotation Shift Policy',    type: 'shift_management', scopeType: 'department',  scopeId: departmentMap.get('SEC')!, priority: 30 },
-      // Standard Shift → GPH01 property fallback
-      { name: 'Standard Shift Policy',          type: 'shift_management', scopeType: 'property',    scopeId: propertyMap.get('GPH01')!, priority: 10 },
+      // Standard Shift → MUM-01 property fallback
+      { name: 'Standard Shift Policy',          type: 'shift_management', scopeType: 'property',    scopeId: propertyMap.get('MUM-01')!, priority: 10 },
     ];
 
     for (const a of policyAssignments) {
@@ -1706,6 +1756,65 @@ async function main() {
       );
     }
     console.log('  → Cashbook Entries seeded');
+
+    // Backfill Branches from Properties
+    console.log('Backfilling branches from properties...');
+    await client.query(`
+      INSERT INTO branches (
+        tenant_id,
+        name,
+        code,
+        branch_type,
+        address,
+        gstin,
+        timezone,
+        geo_lat,
+        geo_lng,
+        geofence_radius_meters,
+        status,
+        is_active,
+        property_id,
+        created_at,
+        updated_at
+      )
+      SELECT
+        p.tenant_id,
+        p.name,
+        p.code,
+        COALESCE(p.property_type, 'main'),
+        p.address,
+        p.gstin,
+        COALESCE(p.timezone, 'Asia/Kolkata'),
+        p.geo_lat,
+        p.geo_lng,
+        COALESCE(p.geofence_radius_meters, 200),
+        CASE WHEN p.is_active THEN 'active' ELSE 'inactive' END,
+        p.is_active,
+        p.id,
+        p.created_at,
+        p.updated_at
+      FROM properties p
+      WHERE p.deleted_at IS NULL
+      ON CONFLICT (tenant_id, code) WHERE deleted_at IS NULL DO NOTHING
+    `);
+    console.log('  → Branches backfilled successfully');
+
+    console.log('Linking departments and employees to branches...');
+    await client.query(`
+      UPDATE departments d
+      SET    branch_id = b.id
+      FROM   branches b
+      WHERE  b.property_id = d.property_id
+        AND  d.deleted_at IS NULL
+    `);
+    await client.query(`
+      UPDATE employees e
+      SET    branch_id = b.id
+      FROM   branches b
+      WHERE  b.property_id = e.property_id
+        AND  e.deleted_at IS NULL
+    `);
+    console.log('  → Linked departments and employees successfully');
 
     await client.query('COMMIT');
     console.log('\n=========================================');

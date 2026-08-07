@@ -12,7 +12,7 @@ export default function QueueHealthPage() {
       <div>
         <h2 className="text-sm font-semibold text-slate-800">Queue Health</h2>
         <p className="text-xs text-slate-500 mt-0.5">
-          BullMQ ingestion pipeline — depth, workers, failed jobs, and sync lag
+          Attendance processing status, waiting punches, retry activity, and sync lag
         </p>
       </div>
       <QueueStatsGrid />

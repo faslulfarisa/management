@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { DatabaseService } from '../../../shared/database.service';
+import { HolidayPolicyTemplateService } from '../../platform/services/holiday-policy-template.service';
 
 export type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 export type WorkWeekConfig = Record<DayKey, boolean>;
@@ -21,7 +22,10 @@ export type DayClassification = 'business' | 'weekly_off' | 'holiday';
  */
 @Injectable()
 export class BusinessDaysService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    @Optional() private readonly holidayPolicy?: HolidayPolicyTemplateService,
+  ) {}
 
   async getWorkWeek(tenantId: string): Promise<WorkWeekConfig> {
     const { rows } = await this.db.query(
@@ -41,7 +45,13 @@ export class BusinessDaysService {
     branchId: string | null,
     periodStart: string,
     periodEnd: string,
+    employeeId?: string | null,
   ): Promise<Set<string>> {
+    if (employeeId && this.holidayPolicy) {
+      const resolved = await this.holidayPolicy.getHolidaySetForEmployee(tenantId, employeeId, periodStart, periodEnd);
+      if (resolved.hasTemplate) return resolved.dates;
+    }
+
     const { rows } = await this.db.query(
       `SELECT holiday_date FROM holidays
        WHERE tenant_id = $1 AND deleted_at IS NULL
@@ -62,9 +72,10 @@ export class BusinessDaysService {
     branchId: string | null,
     periodStart: string,
     periodEnd: string,
+    employeeId?: string | null,
   ): Promise<Map<string, DayClassification>> {
     const workWeek = await this.getWorkWeek(tenantId);
-    const holidays = await this.getHolidaySet(tenantId, branchId, periodStart, periodEnd);
+    const holidays = await this.getHolidaySet(tenantId, branchId, periodStart, periodEnd, employeeId);
 
     const result = new Map<string, DayClassification>();
     const start = new Date(`${periodStart}T00:00:00Z`);
@@ -89,8 +100,9 @@ export class BusinessDaysService {
     branchId: string | null,
     periodStart: string,
     periodEnd: string,
+    employeeId?: string | null,
   ): Promise<{ businessWorkingDays: number; holidayDays: number; weeklyOffDays: number; calendarDays: number }> {
-    const classification = await this.classifyPeriod(tenantId, branchId, periodStart, periodEnd);
+    const classification = await this.classifyPeriod(tenantId, branchId, periodStart, periodEnd, employeeId);
     let businessWorkingDays = 0;
     let holidayDays = 0;
     let weeklyOffDays = 0;

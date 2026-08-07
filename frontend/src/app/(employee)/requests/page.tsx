@@ -9,10 +9,10 @@ import { RequestTypeSelector, RequestType } from '@/components/employee/requests
 import { RequestList } from '@/components/employee/requests/request-list';
 import { LeaveApplySheet } from '@/components/employee/leave/leave-apply-sheet';
 import { CorrectionRequestSheet } from '@/components/employee/attendance/correction-request-sheet';
-import { ShiftChangeSheet } from '@/components/employee/requests/shift-change-sheet';
 import { OvertimeSheet } from '@/components/employee/requests/overtime-sheet';
 import { ExpenseSheet } from '@/components/employee/requests/expense-sheet';
 import { FineAppealSheet } from '@/components/employee/requests/fine-appeal-sheet';
+import { ShiftOverrideSheet } from '@/components/employee/requests/shift-override-sheet';
 
 export default function RequestsPage() {
   return (
@@ -33,19 +33,19 @@ export default function RequestsPage() {
 function MobileRequestsContent() {
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [correctionOpen, setCorrectionOpen] = useState(false);
-  const [shiftChangeOpen, setShiftChangeOpen] = useState(false);
+  const [shiftOverrideOpen, setShiftOverrideOpen] = useState(false);
   const [overtimeOpen, setOvertimeOpen] = useState(false);
   const [expenseOpen, setExpenseOpen] = useState(false);
   const [fineAppealOpen, setFineAppealOpen] = useState(false);
 
   const handleTypeSelect = (type: RequestType) => {
     switch (type) {
-      case 'leave':        setLeaveOpen(true);        break;
-      case 'correction':   setCorrectionOpen(true);   break;
-      case 'shift_change': setShiftChangeOpen(true);  break;
-      case 'overtime':     setOvertimeOpen(true);      break;
-      case 'expense':      setExpenseOpen(true);       break;
-      case 'fine_appeal':  setFineAppealOpen(true);    break;
+      case 'leave':          setLeaveOpen(true);          break;
+      case 'correction':     setCorrectionOpen(true);     break;
+      case 'shift_override': setShiftOverrideOpen(true);  break;
+      case 'overtime':       setOvertimeOpen(true);        break;
+      case 'expense':        setExpenseOpen(true);         break;
+      case 'fine_appeal':    setFineAppealOpen(true);      break;
     }
   };
 
@@ -66,7 +66,7 @@ function MobileRequestsContent() {
 
       <LeaveApplySheet open={leaveOpen} onClose={() => setLeaveOpen(false)} />
       <CorrectionRequestSheet open={correctionOpen} onClose={() => setCorrectionOpen(false)} />
-      <ShiftChangeSheet open={shiftChangeOpen} onClose={() => setShiftChangeOpen(false)} />
+      <ShiftOverrideSheet open={shiftOverrideOpen} onClose={() => setShiftOverrideOpen(false)} />
       <OvertimeSheet open={overtimeOpen} onClose={() => setOvertimeOpen(false)} />
       <ExpenseSheet open={expenseOpen} onClose={() => setExpenseOpen(false)} />
       <FineAppealSheet open={fineAppealOpen} onClose={() => setFineAppealOpen(false)} />

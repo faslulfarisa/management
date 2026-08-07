@@ -3,6 +3,7 @@ import { DatabaseService } from '../../../shared/database.service';
 import { ApprovalEngineService } from '../../approvals/services/approval-engine.service';
 import { AuditLogService } from '../../platform/services/audit-log.service';
 import { VacancyService } from './vacancy.service';
+import { isOrganizationAdmin } from './recruitment-approval-bypass.util';
 
 const WORKFLOW_TYPE = 'vacancy_request';
 
@@ -28,6 +29,29 @@ export class VacancyApprovalService {
     const vacancy = await this.vacancies.getRaw(vacancyId, tenantId);
     if (!['draft', 'rejected'].includes(vacancy.status)) {
       throw new BadRequestException(`Cannot submit a vacancy with status '${vacancy.status}' for approval`);
+    }
+
+    if (await isOrganizationAdmin(this.db, tenantId, submittedById)) {
+      await this.db.query(
+        `UPDATE vacancies
+         SET approval_status = 'approved',
+             approved_by = $3,
+             approved_at = now(),
+             approval_reason = 'Auto-approved by organization admin',
+             updated_at = now()
+         WHERE id = $1 AND tenant_id = $2`,
+        [vacancyId, tenantId, submittedById],
+      );
+      await this.vacancies.open(vacancyId, tenantId, submittedById);
+      await this.auditLog.log({
+        tenantId,
+        userId: submittedById,
+        entityType: 'vacancy',
+        entityId: vacancyId,
+        action: 'auto_approve',
+        newValues: { reason: 'Organization admin action' },
+      });
+      return this.vacancies.findOne(vacancyId, tenantId);
     }
 
     await this.db.query(

@@ -1,38 +1,60 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../../../shared/database.service';
+import { CredentialEncryptionService } from '../../../shared/crypto/credential-encryption.service';
 
 @Injectable()
 export class IntegrationsService {
-  constructor(private db: DatabaseService) {}
+  constructor(
+    private db: DatabaseService,
+    private crypto: CredentialEncryptionService,
+  ) {}
+
+  private toPublicIntegration(row: any) {
+    if (!row) return row;
+    return {
+      ...row,
+      config: this.crypto.decryptConfig(row.config || {}),
+    };
+  }
+
+  private toPublicWebhook(row: any) {
+    if (!row) return row;
+    return {
+      ...row,
+      secret: row.secret ? this.crypto.decrypt(row.secret) : row.secret,
+    };
+  }
 
   async getIntegrations(tenantId: string) {
     const { rows } = await this.db.query(
       'SELECT * FROM integrations WHERE tenant_id = $1 ORDER BY created_at DESC',
       [tenantId],
     );
-    return rows;
+    return rows.map((row) => this.toPublicIntegration(row));
   }
 
   async createIntegration(tenantId: string, data: any) {
+    const encryptedConfig = this.crypto.encryptConfig(data.config || {});
     const { rows } = await this.db.query(
       `INSERT INTO integrations (tenant_id, name, type, config)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (tenant_id, name) DO UPDATE SET type=$3, config=$4, updated_at=now()
         RETURNING *`,
-      [tenantId, data.name, data.type, JSON.stringify(data.config || {})],
+      [tenantId, data.name, data.type, JSON.stringify(encryptedConfig)],
     );
-    return rows[0];
+    return this.toPublicIntegration(rows[0]);
   }
 
   async updateIntegration(id: string, tenantId: string, data: any) {
+    const encryptedConfig = data.config ? this.crypto.encryptConfig(data.config) : null;
     const { rows } = await this.db.query(
       `UPDATE integrations SET name = COALESCE($3, name), type = COALESCE($4, type),
         config = COALESCE($5, config), is_active = COALESCE($6, is_active), updated_at = now()
         WHERE id = $1 AND tenant_id = $2 RETURNING *`,
-      [id, tenantId, data.name, data.type, data.config ? JSON.stringify(data.config) : null, data.is_active],
+      [id, tenantId, data.name, data.type, encryptedConfig ? JSON.stringify(encryptedConfig) : null, data.is_active],
     );
     if (!rows.length) throw new NotFoundException('Integration not found');
-    return rows[0];
+    return this.toPublicIntegration(rows[0]);
   }
 
   async deleteIntegration(id: string, tenantId: string) {
@@ -46,7 +68,7 @@ export class IntegrationsService {
       [id, tenantId, isActive],
     );
     if (!rows.length) throw new NotFoundException('Integration not found');
-    return rows[0];
+    return this.toPublicIntegration(rows[0]);
   }
 
   async getWebhooks(tenantId: string) {
@@ -54,15 +76,15 @@ export class IntegrationsService {
       'SELECT * FROM webhooks WHERE tenant_id = $1 ORDER BY created_at DESC',
       [tenantId],
     );
-    return rows;
+    return rows.map((row) => this.toPublicWebhook(row));
   }
 
   async createWebhook(tenantId: string, data: any) {
     const { rows } = await this.db.query(
       'INSERT INTO webhooks (tenant_id, url, events, secret) VALUES ($1, $2, $3, $4) RETURNING *',
-      [tenantId, data.url, data.events, data.secret || null],
+      [tenantId, data.url, data.events, data.secret ? this.crypto.encrypt(data.secret) : null],
     );
-    return rows[0];
+    return this.toPublicWebhook(rows[0]);
   }
 
   async deleteWebhook(id: string, tenantId: string) {

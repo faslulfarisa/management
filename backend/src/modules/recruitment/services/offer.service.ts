@@ -3,12 +3,18 @@ import { DatabaseService } from '../../../shared/database.service';
 import { NotificationEmitterService } from '../../notifications/services/notification-emitter.service';
 import { EmailService } from '../../auth/email.service';
 import { ApplicationService } from './application.service';
+import { CurrencyService } from '../../../shared/currency.service';
 import {
   AddNegotiationDto, CreateOfferDto, SendOfferDto, UpdateOfferDto, WithdrawOfferDto,
 } from '../dto/offer.dto';
 
 const EDITABLE_STATUSES = ['draft', 'rejected'];
-const SNAPSHOT_FIELDS = ['designation', 'employment_type_id', 'joining_date', 'currency', 'ctc', 'salary_components', 'benefits', 'offer_letter_content'];
+const SNAPSHOT_FIELDS = [
+  'designation', 'employment_type_id', 'joining_date', 'currency', 'currency_symbol',
+  'exchange_rate', 'base_currency', 'exchange_rate_to_base', 'exchange_rate_source',
+  'exchange_rate_as_of', 'currency_snapshot', 'ctc', 'salary_components', 'benefits',
+  'offer_letter_content',
+];
 
 const SELECT_WITH_JOINS = `
   SELECT o.*, c.first_name, c.last_name, c.email AS candidate_email, c.id AS candidate_id,
@@ -30,6 +36,7 @@ export class OfferService {
     private notifications: NotificationEmitterService,
     private email: EmailService,
     private applications: ApplicationService,
+    private currencyService: CurrencyService,
   ) {}
 
   private snapshotOf(row: any) {
@@ -89,14 +96,20 @@ export class OfferService {
     const { rows: appRows } = await this.db.query('SELECT vacancy_id FROM applications WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL', [dto.application_id, tenantId]);
     if (!appRows.length) throw new NotFoundException('Application not found');
 
+    const currency = await this.currencyService.getTenantCurrencySnapshot(tenantId, dto.currency);
+    const currencySnapshot = JSON.stringify(currency.snapshot);
     const { rows } = await this.db.query(
       `INSERT INTO offers (
         tenant_id, application_id, vacancy_id, designation, employment_type_id, joining_date,
-        currency, ctc, salary_components, benefits, offer_letter_content, created_by, last_updated_by
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,$12,$12) RETURNING *`,
+        currency, currency_symbol, exchange_rate, base_currency, exchange_rate_to_base,
+        exchange_rate_source, exchange_rate_as_of, currency_snapshot, ctc, salary_components,
+        benefits, offer_letter_content, created_by, last_updated_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16::jsonb,$17::jsonb,$18,$19,$19) RETURNING *`,
       [
         tenantId, dto.application_id, appRows[0].vacancy_id, dto.designation ?? null, dto.employment_type_id ?? null,
-        dto.joining_date ?? null, dto.currency ?? 'INR', dto.ctc ?? null,
+        dto.joining_date ?? null, currency.currencyCode, currency.currencySymbol, currency.exchangeRate,
+        currency.baseCurrency, currency.exchangeRateToBase, currency.exchangeRateSource,
+        currency.exchangeRateAsOf, currencySnapshot, dto.ctc ?? null,
         JSON.stringify(dto.salary_components ?? []), JSON.stringify(dto.benefits ?? []),
         dto.offer_letter_content ?? null, createdById,
       ],
@@ -112,16 +125,32 @@ export class OfferService {
       throw new BadRequestException(`Cannot edit an offer with status '${existing.status}'`);
     }
 
+    const currency = dto.currency !== undefined
+      ? await this.currencyService.getTenantCurrencySnapshot(tenantId, dto.currency)
+      : null;
+
     const { rows } = await this.db.query(
       `UPDATE offers SET
         designation = COALESCE($3, designation), employment_type_id = COALESCE($4, employment_type_id),
-        joining_date = COALESCE($5, joining_date), currency = COALESCE($6, currency), ctc = COALESCE($7, ctc),
-        salary_components = COALESCE($8::jsonb, salary_components), benefits = COALESCE($9::jsonb, benefits),
-        offer_letter_content = COALESCE($10, offer_letter_content),
-        current_version = current_version + 1, last_updated_by = $11, updated_at = now()
+        joining_date = COALESCE($5, joining_date),
+        currency = COALESCE($6, currency),
+        currency_symbol = COALESCE($7, currency_symbol),
+        exchange_rate = COALESCE($8, exchange_rate),
+        base_currency = COALESCE($9, base_currency),
+        exchange_rate_to_base = COALESCE($10, exchange_rate_to_base),
+        exchange_rate_source = COALESCE($11, exchange_rate_source),
+        exchange_rate_as_of = COALESCE($12::timestamptz, exchange_rate_as_of),
+        currency_snapshot = COALESCE($13::jsonb, currency_snapshot),
+        ctc = COALESCE($14, ctc),
+        salary_components = COALESCE($15::jsonb, salary_components), benefits = COALESCE($16::jsonb, benefits),
+        offer_letter_content = COALESCE($17, offer_letter_content),
+        current_version = current_version + 1, last_updated_by = $18, updated_at = now()
        WHERE id = $1 AND tenant_id = $2 RETURNING *`,
       [
-        id, tenantId, dto.designation, dto.employment_type_id, dto.joining_date, dto.currency, dto.ctc,
+        id, tenantId, dto.designation, dto.employment_type_id, dto.joining_date,
+        currency?.currencyCode, currency?.currencySymbol, currency?.exchangeRate,
+        currency?.baseCurrency, currency?.exchangeRateToBase, currency?.exchangeRateSource,
+        currency?.exchangeRateAsOf, currency ? JSON.stringify(currency.snapshot) : null, dto.ctc,
         dto.salary_components ? JSON.stringify(dto.salary_components) : null,
         dto.benefits ? JSON.stringify(dto.benefits) : null, dto.offer_letter_content, updatedById,
       ],

@@ -46,6 +46,7 @@ export class ApplicationController {
     const result = await this.applications.list(tenantOf(req), {
       q: query.q, candidateId: query.candidate_id, jobPostingId: query.job_posting_id, vacancyId: query.vacancy_id,
       status: query.status, stageId: query.stage_id, campaignId: query.campaign_id,
+      eligibleForOffer: query.eligible_for_offer === 'true',
       page: query.page ? parseInt(query.page, 10) : undefined,
       limit: query.limit ? parseInt(query.limit, 10) : undefined,
     });

@@ -1,9 +1,11 @@
 import api from '@/lib/api';
 import { useAuthStore } from '@/store/auth.store';
 import { isAtLeast } from '@/lib/hierarchy';
+import { getCookieDomainAttribute } from '@/lib/portal-host';
 
 export interface LoginResultData {
   accessToken: string;
+  email?: string;
   tenants?: any[];
   isInternalStaff?: boolean;
   internalRole?: string | null;
@@ -15,17 +17,44 @@ interface MinimalRouter {
   push: (href: string) => void;
 }
 
+const LAST_SELECTED_TENANT_KEY_PREFIX = 'last_selected_tenant_id';
+
 /**
  * Non-sensitive routing hint read by middleware.ts to keep platform and
  * customer sessions out of each other's route tree. Carries no auth secret —
  * the JWT (in the auth store) remains the only thing backend guards trust.
  */
 function setPortalCookie(portal: 'platform' | 'customer') {
-  document.cookie = `portal=${portal}; path=/; max-age=2592000; samesite=lax`;
+  document.cookie = `portal=${portal}; path=/; max-age=2592000; samesite=lax${getCookieDomainAttribute()}`;
 }
 
 function isBranchScopedAdmin(userType: string) {
   return userType === 'branch_admin' || userType === 'admin';
+}
+
+function getRememberedTenantId(email: string, tenants: any[]): string | null {
+  if (typeof window === 'undefined') return null;
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const tenantIds = new Set(tenants.map((tenant: any) => tenant.id));
+  const resolveTenantId = (tenantId: string | null | undefined) =>
+    tenantId && tenantIds.has(tenantId) ? tenantId : null;
+
+  if (normalizedEmail) {
+    const userTenantId = localStorage.getItem(`${LAST_SELECTED_TENANT_KEY_PREFIX}:${normalizedEmail}`);
+    const rememberedUserTenantId = resolveTenantId(userTenantId);
+    if (rememberedUserTenantId) return rememberedUserTenantId;
+  }
+
+  try {
+    const lastActiveOrg = JSON.parse(localStorage.getItem('last_active_org') || 'null');
+    const lastActiveOrgId = resolveTenantId(lastActiveOrg?.id);
+    if (lastActiveOrgId) return lastActiveOrgId;
+  } catch {
+    localStorage.removeItem('last_active_org');
+  }
+
+  return resolveTenantId(localStorage.getItem(LAST_SELECTED_TENANT_KEY_PREFIX));
 }
 
 /**
@@ -38,6 +67,7 @@ export async function completeLogin(data: LoginResultData, email: string, router
     accessToken, tenants, isInternalStaff, internalRole,
     selectedTenantId, pendingOrganization,
   } = data;
+  const accountEmail = data.email || email;
 
   const store = useAuthStore.getState();
 
@@ -46,7 +76,7 @@ export async function completeLogin(data: LoginResultData, email: string, router
   // which would otherwise treat zero tenants as an error.
   if (isInternalStaff) {
     store.setAccessToken(accessToken);
-    store.setUser({ email });
+    store.setUser({ email: accountEmail });
     store.setInternalStaff(true, internalRole ?? null);
     setPortalCookie('platform');
     router.push('/operations');
@@ -63,28 +93,33 @@ export async function completeLogin(data: LoginResultData, email: string, router
   }
 
   store.setAccessToken(accessToken);
-  store.setUser({ email });
-  store.setTenants(tenants || []);
+  store.setUser({ email: accountEmail });
+  const availableTenants = tenants || [];
+  store.setTenants(availableTenants);
 
-  if (!selectedTenantId && !(tenants?.length)) {
+  if (!selectedTenantId && !availableTenants.length) {
     throw new Error('No organizations found. Please contact your administrator.');
   }
 
-  let activeTenantId: string;
-  if (selectedTenantId) {
-    store.selectTenant(selectedTenantId, accessToken);
-    activeTenantId = selectedTenantId;
-  } else if (tenants?.length) {
-    const tenantId = tenants[0].id;
-    const selectRes = await api.post('/auth/select-tenant', { tenantId });
-    store.selectTenant(tenantId, selectRes.data.data.accessToken);
-    activeTenantId = tenantId;
-  } else {
+  const rememberedTenantId = getRememberedTenantId(accountEmail, availableTenants);
+  const serverSelectedTenantId = selectedTenantId && availableTenants.some((tenant: any) => tenant.id === selectedTenantId)
+    ? selectedTenantId
+    : null;
+  const activeTenantId = serverSelectedTenantId || rememberedTenantId || availableTenants[0]?.id;
+
+  if (!activeTenantId) {
     throw new Error('No organizations found. Please contact your administrator.');
+  }
+
+  if (activeTenantId === selectedTenantId) {
+    store.selectTenant(activeTenantId, accessToken);
+  } else {
+    const selectRes = await api.post('/auth/select-tenant', { tenantId: activeTenantId });
+    store.selectTenant(activeTenantId, selectRes.data.data.accessToken);
   }
 
   // Admin-tier users land in their dedicated desktop portal.
-  const selectedOrg = (tenants || []).find((t: any) => t.id === activeTenantId);
+  const selectedOrg = availableTenants.find((t: any) => t.id === activeTenantId);
   const userType = selectedOrg?.userType || 'employee';
   if (isBranchScopedAdmin(userType)) {
     router.push('/branch-admin');

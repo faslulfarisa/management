@@ -1,13 +1,13 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   Bell, CalendarDays, CreditCard, UserPlus, AlertTriangle,
   Clock, CheckCheck, X, ExternalLink, ListChecks,
 } from 'lucide-react';
 import api from '@/lib/api';
+import { useNotificationAction } from '@/lib/notification-action-registry';
 import { approvalsWs } from '@/services/approvals-ws';
 import { useApprovalsSocket } from '@/hooks/use-approvals-socket';
 
@@ -19,6 +19,14 @@ interface Notification {
   time: string;
   read: boolean;
   href?: string;
+  source_module?: string | null;
+  action_url?: string | null;
+  action_type?: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  metadata?: Record<string, any> | null;
 }
 
 const TYPE_CONFIG: Record<string, { icon: React.ElementType; gradient: string }> = {
@@ -43,7 +51,6 @@ function timeAgo(dateStr: string): string {
 }
 
 export function NotificationDropdown() {
-  const router = useRouter();
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -58,7 +65,7 @@ export function NotificationDropdown() {
     fetchAbortRef.current = controller;
     setLoading(true);
     try {
-      const res = await api.get('/dashboard/notifications', { signal: controller.signal });
+      const res = await api.get(`/dashboard/notifications?t=${Date.now()}`, { signal: controller.signal });
       const data = res.data.data;
       setNotifications(data.notifications || []);
       setUnreadCount(data.unread_count || 0);
@@ -70,6 +77,15 @@ export function NotificationDropdown() {
       if (!controller.signal.aborted) setLoading(false);
     }
   }, []);
+
+  const openNotification = useNotificationAction({
+    onNavigated: (notification) => {
+      setReadIds(prev => new Set(prev).add(notification.id));
+      setOpen(false);
+      setUnreadCount(count => Math.max(0, count - 1));
+      fetchNotifications();
+    },
+  });
 
   // Fetch on mount + every 60s
   useEffect(() => {
@@ -101,9 +117,11 @@ export function NotificationDropdown() {
   }, []);
 
   const handleNotificationClick = (n: Notification) => {
-    setReadIds(prev => new Set(prev).add(n.id));
-    setOpen(false);
-    if (n.href) router.push(n.href);
+    openNotification({
+      ...n,
+      action_url: n.action_url ?? n.href ?? null,
+      source_module: n.source_module ?? n.type,
+    });
   };
 
   const markAllRead = () => {
@@ -242,7 +260,7 @@ export function NotificationDropdown() {
               </p>
             )}
             <Link
-              href="/dashboard/automation"
+              href="/dashboard/notifications"
               onClick={() => setOpen(false)}
               className="flex items-center justify-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 py-1 transition-colors"
             >

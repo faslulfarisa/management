@@ -4,12 +4,17 @@ import { VacancyService } from './vacancy.service';
 describe('VacancyService — lifecycle state-machine guards', () => {
   let db: { query: jest.Mock };
   let notifications: { emit: jest.Mock };
+  let currency: { getTenantCurrencySnapshot: jest.Mock; getDefinition: jest.Mock };
   let service: VacancyService;
 
   beforeEach(() => {
     db = { query: jest.fn() };
     notifications = { emit: jest.fn().mockResolvedValue(undefined) };
-    service = new VacancyService(db as any, notifications as any);
+    currency = {
+      getTenantCurrencySnapshot: jest.fn().mockResolvedValue({ currencyCode: 'INR', currencySymbol: '₹', exchangeRate: null }),
+      getDefinition: jest.fn().mockReturnValue({ code: 'INR', symbol: '₹' }),
+    };
+    service = new VacancyService(db as any, notifications as any, currency as any);
   });
 
   it('blocks editing a vacancy once it has left draft/rejected (e.g. already open)', async () => {

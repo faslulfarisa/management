@@ -16,6 +16,7 @@ import {
   PunchEventDto,
   PunchDirection,
   VerifyMethod,
+  AttendanceSource,
 } from '../../biometrics/dto/punch-event.dto';
 
 @Injectable()
@@ -84,6 +85,7 @@ export class ZktecoService {
       // cols[3]: punch direction (0=IN, 1=OUT); cols[4]: verify type
       const dirCode = parseInt(cols[3] ?? '0', 10);
       const verCode = parseInt(cols[4] ?? '1', 10);
+      const workCode = cols[5];
 
       events.push({
         employeeCode,
@@ -92,7 +94,11 @@ export class ZktecoService {
         verifyMethod: this._mapVerifyMethod(verCode),
         providerName: 'zkteco',
         deviceId: deviceSn,
-        rawPayload: { line: trimmed },
+        attendanceSource: AttendanceSource.BIOMETRIC_DEVICE,
+        punchState: cols[3] ?? undefined,
+        rawVerifyType: cols[4] ?? undefined,
+        workCode,
+        rawPayload: { line: trimmed, punch_state: cols[3] ?? null, verify_type: cols[4] ?? null, work_code: workCode ?? null },
       });
     }
 
@@ -120,6 +126,7 @@ export class ZktecoService {
           verifyMethod: VerifyMethod.OTHER,
           providerName: 'zkteco',
           deviceId: deviceSn,
+          attendanceSource: AttendanceSource.BIOMETRIC_DEVICE,
           rawPayload: p as unknown as Record<string, unknown>,
         };
         return event;

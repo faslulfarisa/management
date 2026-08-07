@@ -1,161 +1,88 @@
 /**
- * zkteco.controller.ts
- *
  * ZKTeco ADMS protocol endpoints + backward-compatible REST punch endpoint.
  *
- * ADMS endpoints are ZKTeco proprietary protocol — they must stay at these
- * exact paths and return exact plain-text responses.
- *
- * The JSON /punch endpoint is preserved for backward compatibility;
- * new integrations should use POST /api/biometrics/punch instead.
+ * ADMS endpoints must keep their plain-text protocol responses. The legacy
+ * /integrations/zkteco/iclock/* paths delegate to the hardened root ADMS
+ * lifecycle service so both deployment styles enforce the same device checks.
  */
 
 import {
-  Controller, Get, Post, Body, Query, Req, Res, UseGuards, HttpStatus,
+  Body,
+  Controller,
+  Get,
+  HttpStatus,
+  Post,
+  Query,
+  Req,
+  Res,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { Response, Request } from 'express';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { AdmsService } from '../../biometrics/adms/adms.service';
+import { PunchIngestionService } from '../../biometrics/services/punch-ingestion.service';
 import { ZktecoService } from '../services/zkteco.service';
-import { AttendanceEngineService } from '../../biometrics/engine/attendance-engine.service';
 
 @ApiTags('Integrations')
 @Controller('integrations/zkteco')
 export class ZktecoController {
   constructor(
     private readonly zktecoService: ZktecoService,
-    private readonly attendanceEngine: AttendanceEngineService,
+    private readonly punchIngestion: PunchIngestionService,
+    private readonly admsService: AdmsService,
   ) {}
 
-  // ── ADMS: Handshake / Option Initializer ───────────────────────────────────
-
-  /**
-   * GET /integrations/zkteco/iclock/cdata?SN=xxxxx
-   * ZKTeco ADMS Device Handshake — returns server config options to device.
-   */
   @Get('iclock/cdata')
   @ApiOperation({ summary: 'ZKTeco ADMS Device Handshake' })
   async getAdmsCdata(
-    @Query('SN') sn: string,
-    @Res() res: Response,
-  ) {
-    if (!sn) {
-      return res.status(HttpStatus.BAD_REQUEST).send('BAD REQUEST: SN is required');
-    }
-
-    const integration = await this.zktecoService.getZktecoIntegrationBySn(sn);
-    if (!integration) {
-      return res.status(HttpStatus.UNAUTHORIZED).send('UNAUTHORIZED: SN not registered or inactive');
-    }
-
-    const responseText =
-      `RegistryCode=${integration.id}\n` +
-      `ServerVersion=3.1.1\n` +
-      `ServerName=Ai-HRMS-Cloud-Biometrics\n` +
-      `Stamp=10001\n` +
-      `OpStamp=10001\n` +
-      `ErrorDelay=60\n` +
-      `Delay=30\n` +
-      `TransInterval=10\n` +
-      `TransFlag=1111111111\n` +
-      `Realtime=1\n` +
-      `Encrypt=0\n` +
-      `OK\n`;
-
-    res.setHeader('Content-Type', 'text/plain');
-    return res.status(HttpStatus.OK).send(responseText);
-  }
-
-  // ── ADMS: Attendance Log Upload ─────────────────────────────────────────────
-
-  /**
-   * POST /integrations/zkteco/iclock/cdata?SN=xxxxx&table=ATTLOG
-   * ZKTeco ADMS Attendance Log Push — device uploads punch records.
-   */
-  @Post('iclock/cdata')
-  @ApiOperation({ summary: 'ZKTeco ADMS Attendance Logs Push Receiver' })
-  async postAdmsCdata(
-    @Query('SN') sn: string,
-    @Query('table') table: string,
+    @Query() query: Record<string, any>,
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    if (!sn) {
-      return res.status(HttpStatus.BAD_REQUEST).send('BAD REQUEST: SN is required');
-    }
-
-    const integration = await this.zktecoService.getZktecoIntegrationBySn(sn);
-    if (!integration) {
-      return res.status(HttpStatus.UNAUTHORIZED).send('UNAUTHORIZED: SN not registered');
-    }
-
-    // Read raw body
-    let rawBody = '';
-    if (typeof req.body === 'string') {
-      rawBody = req.body;
-    } else if (Buffer.isBuffer(req.body)) {
-      rawBody = req.body.toString('utf8');
-    } else {
-      const buffers: Buffer[] = [];
-      for await (const chunk of req as any) buffers.push(chunk);
-      rawBody = Buffer.concat(buffers).toString('utf8');
-    }
-
-    if (table === 'ATTLOG' || !table) {
-      // 1. Parse ADMS text → PunchEventDto[]
-      const events = this.zktecoService.parseAdmsPunchText(sn, rawBody);
-
-      // 2. Process through vendor-agnostic engine
-      const result = await this.attendanceEngine.processPunchEvents(
-        integration.tenant_id,
-        integration.id,
-        events,
-      );
-
-      res.setHeader('Content-Type', 'text/plain');
-      return res.status(HttpStatus.OK).send(`OK: ${result.synced}\n`);
-    }
-
-    res.setHeader('Content-Type', 'text/plain');
-    return res.status(HttpStatus.OK).send('OK\n');
+    return this.sendAdms(res, this.admsService.handleRegistration(this.admsContext(query, req)));
   }
 
-  // ── ADMS: Command Queue Poller ─────────────────────────────────────────────
+  @Post('iclock/cdata')
+  @ApiOperation({ summary: 'ZKTeco ADMS Attendance Logs Push Receiver' })
+  async postAdmsCdata(
+    @Query() query: Record<string, any>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    return this.sendAdms(
+      res,
+      this.admsService.handleCdataUpload(this.admsContext(query, req), query.table, this.rawBody(req)),
+    );
+  }
 
-  /**
-   * GET /integrations/zkteco/iclock/getrequest?SN=xxxxx
-   * Device polls for pending commands (e.g. user enrollment updates).
-   * Currently returns empty OK — no outbound command queue implemented.
-   */
   @Get('iclock/getrequest')
   @ApiOperation({ summary: 'ZKTeco ADMS Command Queue' })
-  async getAdmsRequest(@Res() res: Response) {
-    res.setHeader('Content-Type', 'text/plain');
-    return res.status(HttpStatus.OK).send('OK\n');
+  async getAdmsRequest(
+    @Query() query: Record<string, any>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    return this.sendAdms(res, this.admsService.handleGetRequest(this.admsContext(query, req)));
   }
 
-  // ── ADMS: Device Command Feedback ──────────────────────────────────────────
-
-  /**
-   * POST /integrations/zkteco/iclock/devicecmd?SN=xxxxx
-   * Device reports result of an executed command.
-   */
   @Post('iclock/devicecmd')
   @ApiOperation({ summary: 'ZKTeco ADMS Device Command Feedback' })
-  async postAdmsDevicecmd(@Res() res: Response) {
-    res.setHeader('Content-Type', 'text/plain');
-    return res.status(HttpStatus.OK).send('OK\n');
+  async postAdmsDevicecmd(
+    @Query() query: Record<string, any>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    return this.sendAdms(
+      res,
+      this.admsService.handleDeviceCommand(this.admsContext(query, req), this.rawBody(req)),
+    );
   }
 
-  // ── REST JSON Sync ─────────────────────────────────────────────────────────
-
   /**
-   * POST /api/integrations/zkteco/punch
-   *
    * Backward-compatible REST endpoint for pushing ZKTeco punches via JSON.
-   * New integrations should use POST /api/biometrics/punch with provider='zkteco'.
    *
-   * @deprecated Use POST /api/biometrics/punch instead
+   * @deprecated Use POST /api/biometrics/punch instead.
    */
   @Post('punch')
   @ApiBearerAuth()
@@ -181,16 +108,60 @@ export class ZktecoController {
       };
     }
 
-    // 1. Parse JSON → PunchEventDto[]
     const events = this.zktecoService.parseJsonPunches(body.deviceSn, body.punches);
 
-    // 2. Engine processes
-    const result = await this.attendanceEngine.processPunchEvents(
+    const result = await this.punchIngestion.submit({
       tenantId,
-      integration.id,
+      integrationId: integration.id,
+      providerName: 'zkteco',
       events,
-    );
+    });
 
-    return { success: result.failed === 0, data: result, error: null };
+    return { success: true, data: result, error: null };
+  }
+
+  private admsContext(query: Record<string, any>, req: Request) {
+    return {
+      sn: String(query.SN ?? query.sn ?? ''),
+      query,
+      sourceIp: this.remoteIp(req),
+      remoteIp: this.remoteIp(req),
+      forwardedFor: this.forwardedFor(req),
+      userAgent: req.get('user-agent') ?? undefined,
+    };
+  }
+
+  private rawBody(req: Request): string {
+    const body = req.body;
+    if (typeof body === 'string') return body;
+    if (Buffer.isBuffer(body)) return body.toString('utf8');
+    if (body && typeof body === 'object') return new URLSearchParams(body as Record<string, string>).toString();
+    const rawBody = (req as any).rawBody;
+    return Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : '';
+  }
+
+  private remoteIp(req: Request): string | undefined {
+    return (req.ip ?? req.socket?.remoteAddress)?.replace(/^::ffff:/, '');
+  }
+
+  private forwardedFor(req: Request): string[] {
+    const forwarded = req.headers['x-forwarded-for'];
+    const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    return value
+      ? value.split(',').map((ip) => ip.trim()).filter(Boolean)
+      : [];
+  }
+
+  private async sendAdms(res: Response, responsePromise: Promise<string>) {
+    try {
+      const body = await responsePromise;
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.status(HttpStatus.OK).send(body);
+    } catch (error: any) {
+      const status = typeof error?.getStatus === 'function' ? error.getStatus() : error?.status;
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.status(status && Number.isInteger(status) ? status : HttpStatus.INTERNAL_SERVER_ERROR)
+        .send(`${error?.message ?? 'ERROR'}\n`);
+    }
   }
 }

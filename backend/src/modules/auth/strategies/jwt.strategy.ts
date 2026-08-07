@@ -3,6 +3,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DatabaseService } from '../../../shared/database.service';
+import { normalizeStoredUserType } from '../../../shared/user-hierarchy.constants';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -31,6 +32,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('User not found or inactive');
     }
 
+    const isOrgAdmin = rows[0].is_org_admin === true;
+    const storedUserType = isOrgAdmin ? 'org_admin' : normalizeStoredUserType(rows[0].user_type);
+    const hasTenantMembership = rows[0].user_type != null;
+    const isGlobalSuperAdmin = rows[0].is_super_admin && !rows[0].is_internal_staff && !hasTenantMembership;
+
     return {
       sub: rows[0].id,
       // Internal staff never get a tenant context, even though users.tenant_id
@@ -41,9 +47,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       tenantId: rows[0].is_internal_staff ? null : (payload.tenant_id || rows[0].tenant_id || null),
       email: rows[0].email,
       employeeId: rows[0].employee_id,
-      isSuperAdmin: rows[0].is_super_admin,
-      userType: rows[0].is_super_admin ? 'super_admin' : (rows[0].user_type || 'employee'),
-      isOrgAdmin: rows[0].is_org_admin === true,
+      isSuperAdmin: isGlobalSuperAdmin,
+      userType: isGlobalSuperAdmin ? 'super_admin' : storedUserType,
+      isOrgAdmin: isOrgAdmin || storedUserType === 'org_admin',
       isInternalStaff: rows[0].is_internal_staff,
       internalRole: rows[0].internal_role || null,
     };

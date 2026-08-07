@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/auth.store';
 import { employeeApi } from '@/lib/employee-api';
 import { resetOrgScopedState } from '@/lib/org-switch';
+import { getCurrentPortalKind } from '@/lib/portal-host';
 
 function getAdminPortalFromTenants(tenants: any[]) {
   const activeTenantId = localStorage.getItem('selected_tenant_id');
@@ -26,19 +27,34 @@ export function EmployeeGuard({ children }: { children: React.ReactNode }) {
 
   // No token at all — go to login
   useEffect(() => {
+    if (_hydrated && getCurrentPortalKind() === 'platform') {
+      router.push('/login');
+      return;
+    }
+
     if (_hydrated && !accessToken) {
       router.push('/login');
     }
   }, [_hydrated, accessToken, router]);
 
-  // Fast-redirect admins to the desktop console immediately without triggering profile fetch
+  // Fast-redirect admins to the desktop console immediately without triggering profile fetch.
+  // Exception: if the admin has deliberately switched to "My Space" mode (stored in
+  // sessionStorage as 'my-space'), we allow them to remain in the employee portal so they
+  // can access their personal activities (attendance, leave, payroll, etc.).
   useEffect(() => {
     if (_hydrated && accessToken) {
       const tenants = JSON.parse(localStorage.getItem('tenants') || '[]');
       const adminPortal = getAdminPortalFromTenants(tenants);
 
       if (adminPortal) {
-        router.push(adminPortal);
+        const activeSection = typeof window !== 'undefined'
+          ? sessionStorage.getItem('admin_active_section')
+          : null;
+        const isInMySpaceMode = activeSection === 'my-space';
+
+        if (!isInMySpaceMode) {
+          router.push(adminPortal);
+        }
       }
     }
   }, [_hydrated, accessToken, router]);
@@ -55,8 +71,15 @@ export function EmployeeGuard({ children }: { children: React.ReactNode }) {
     },
     enabled: (() => {
       if (!_hydrated || !accessToken || employeeProfile) return false;
+      // For admins in My Space mode, we still want to fetch the profile.
+      // For admins NOT in My Space mode, skip (they'll be redirected above).
       const tenants = JSON.parse(localStorage.getItem('tenants') || '[]');
-      return !getAdminPortalFromTenants(tenants);
+      const adminPortal = getAdminPortalFromTenants(tenants);
+      if (!adminPortal) return true;
+      const activeSection = typeof window !== 'undefined'
+        ? sessionStorage.getItem('admin_active_section')
+        : null;
+      return activeSection === 'my-space';
     })(),
     retry: false,
     staleTime: 5 * 60_000,

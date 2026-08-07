@@ -12,8 +12,8 @@ import { ApprovalsController } from './controllers/approvals.controller';
 @Module({
   imports: [
     SharedModule,
-    AuthModule,
-    PlatformModule,
+    forwardRef(() => AuthModule),
+    forwardRef(() => PlatformModule),
     forwardRef(() => NotificationsModule),
   ],
   controllers: [ApprovalsController],

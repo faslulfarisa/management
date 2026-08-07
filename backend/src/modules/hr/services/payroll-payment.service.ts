@@ -20,6 +20,7 @@ import {
   RAZORPAY_GATEWAY_METHODS,
 } from '../dto/payment.dto';
 import { PAYROLL_PAYOUT_QUEUE, PAYROLL_PAYOUT_JOB, PayoutJobData } from '../queue/payroll-payout.types';
+import { DEFAULT_CURRENCY } from '../../../shared/currency.constants';
 
 @Injectable()
 export class PayrollPaymentService {
@@ -162,12 +163,20 @@ export class PayrollPaymentService {
       const { rows: [p] } = await client.query(
         `INSERT INTO payroll_payments
            (tenant_id, branch_id, payslip_id, payroll_run_id, employee_id, bank_account_id,
-            amount, payment_method, payment_gateway, status, initiated_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10)
+            amount, currency, currency_symbol, exchange_rate, base_currency, exchange_rate_to_base,
+            exchange_rate_source, exchange_rate_as_of, currency_snapshot,
+            payment_method, payment_gateway, status, initiated_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,'pending',$18)
          RETURNING *`,
         [
           payslip.tenant_id, payslip.branch_id ?? null, payslipId, payrollRunId,
           payslip.employee_id, bankAccountId, payslip.net_salary,
+          payslip.currency || DEFAULT_CURRENCY.code, payslip.currency_symbol || DEFAULT_CURRENCY.symbol, payslip.exchange_rate ?? null,
+          payslip.base_currency ?? payslip.currency ?? DEFAULT_CURRENCY.code,
+          payslip.exchange_rate_to_base ?? payslip.exchange_rate ?? null,
+          payslip.exchange_rate_source ?? 'payslip_snapshot',
+          payslip.exchange_rate_as_of ?? new Date().toISOString(),
+          JSON.stringify(payslip.currency_snapshot ?? {}),
           dto.payment_method, gateway, initiatedBy,
         ],
       );
@@ -274,12 +283,22 @@ export class PayrollPaymentService {
           const { rows: [p] } = await client.query(
             `INSERT INTO payroll_payments
                (tenant_id, branch_id, payslip_id, payroll_run_id, employee_id, bank_account_id,
-                amount, payment_method, payment_gateway, status, initiated_by)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10)
+                amount, currency, currency_symbol, exchange_rate, base_currency, exchange_rate_to_base,
+                exchange_rate_source, exchange_rate_as_of, currency_snapshot,
+                payment_method, payment_gateway, status, initiated_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,'pending',$18)
              RETURNING *`,
             [
               run.tenant_id, payslip.branch_id ?? null, payslip.id, payrollRunId,
               payslip.employee_id, bankAccountId, payslip.net_salary,
+              payslip.currency || run.currency || DEFAULT_CURRENCY.code,
+              payslip.currency_symbol || run.currency_symbol || DEFAULT_CURRENCY.symbol,
+              payslip.exchange_rate ?? run.exchange_rate ?? null,
+              payslip.base_currency ?? run.base_currency ?? payslip.currency ?? run.currency ?? DEFAULT_CURRENCY.code,
+              payslip.exchange_rate_to_base ?? run.exchange_rate_to_base ?? payslip.exchange_rate ?? run.exchange_rate ?? null,
+              payslip.exchange_rate_source ?? run.exchange_rate_source ?? 'payslip_snapshot',
+              payslip.exchange_rate_as_of ?? run.exchange_rate_as_of ?? new Date().toISOString(),
+              JSON.stringify(payslip.currency_snapshot ?? run.currency_snapshot ?? {}),
               dto.payment_method, gateway, initiatedBy,
             ],
           );
@@ -337,6 +356,11 @@ export class PayrollPaymentService {
       throw new BadRequestException('Razorpay payments are confirmed via webhook, not manually.');
     }
 
+    const transactionReference = dto.transaction_reference?.trim() || null;
+    if (payment.payment_method !== PaymentMethod.CASH && !transactionReference) {
+      throw new BadRequestException('Transaction reference is required for this payment method.');
+    }
+
     return this.db.transaction(async (client) => {
       const { rows: [updated] } = await client.query(
         `UPDATE payroll_payments
@@ -346,7 +370,7 @@ export class PayrollPaymentService {
              processed_at = now(),
              updated_at = now()
          WHERE id = $3 RETURNING *`,
-        [dto.transaction_reference, dto.payment_date, paymentId],
+        [transactionReference, dto.payment_date, paymentId],
       );
 
       await client.query(
@@ -360,7 +384,7 @@ export class PayrollPaymentService {
         eventType: 'paid', oldStatus: payment.status, newStatus: 'paid',
         actorId: updatedBy, actorType: 'user',
         metadata: {
-          transaction_reference: dto.transaction_reference,
+          transaction_reference: transactionReference,
           payment_date: dto.payment_date,
           notes: dto.notes ?? null,
         },
@@ -373,7 +397,7 @@ export class PayrollPaymentService {
           entityType: 'payroll_payment', entityId: paymentId,
           action: 'payment_confirmed',
           oldValues: { status: payment.status },
-          newValues: { status: 'paid', transaction_reference: dto.transaction_reference },
+          newValues: { status: 'paid', transaction_reference: transactionReference },
           ipAddress,
         });
       } catch {}
@@ -420,12 +444,20 @@ export class PayrollPaymentService {
       const { rows: [p] } = await client.query(
         `INSERT INTO payroll_payments
            (tenant_id, branch_id, payslip_id, payroll_run_id, employee_id, bank_account_id,
-            amount, payment_method, payment_gateway, status, retry_count, parent_payment_id, initiated_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10,$11,$12)
+            amount, currency, currency_symbol, exchange_rate, base_currency, exchange_rate_to_base,
+            exchange_rate_source, exchange_rate_as_of, currency_snapshot,
+            payment_method, payment_gateway, status, retry_count, parent_payment_id, initiated_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,'pending',$18,$19,$20)
          RETURNING *`,
         [
           original.tenant_id, original.branch_id, original.payslip_id, original.payroll_run_id,
           original.employee_id, bankAccountId, original.amount,
+          original.currency || DEFAULT_CURRENCY.code, original.currency_symbol || DEFAULT_CURRENCY.symbol, original.exchange_rate ?? null,
+          original.base_currency ?? original.currency ?? DEFAULT_CURRENCY.code,
+          original.exchange_rate_to_base ?? original.exchange_rate ?? null,
+          original.exchange_rate_source ?? 'payment_retry',
+          original.exchange_rate_as_of ?? new Date().toISOString(),
+          JSON.stringify(original.currency_snapshot ?? {}),
           original.payment_method, original.payment_gateway ?? 'manual',
           original.retry_count + 1, rootParentId, initiatedBy,
         ],
@@ -648,12 +680,21 @@ export class PayrollPaymentService {
       const { rows: [payment] } = await client.query(
         `INSERT INTO payroll_payments
            (tenant_id, branch_id, payslip_id, payroll_run_id, employee_id, amount,
+            currency, currency_symbol, exchange_rate, base_currency, exchange_rate_to_base,
+            exchange_rate_source, exchange_rate_as_of, currency_snapshot,
             payment_method, payment_gateway, status, initiated_by, initiated_at, processed_at)
-         VALUES ($1,$2,$3,$4,$5,$6,'cash','manual','paid',$7,now(),now())
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,'cash','manual','paid',$16,now(),now())
          RETURNING *`,
         [
           payslip.tenant_id, payslip.branch_id ?? null, payslipId, payrollRunId,
-          payslip.employee_id, payslip.net_salary, userId,
+          payslip.employee_id, payslip.net_salary,
+          payslip.currency || DEFAULT_CURRENCY.code, payslip.currency_symbol || DEFAULT_CURRENCY.symbol, payslip.exchange_rate ?? null,
+          payslip.base_currency ?? payslip.currency ?? DEFAULT_CURRENCY.code,
+          payslip.exchange_rate_to_base ?? payslip.exchange_rate ?? null,
+          payslip.exchange_rate_source ?? 'payslip_snapshot',
+          payslip.exchange_rate_as_of ?? new Date().toISOString(),
+          JSON.stringify(payslip.currency_snapshot ?? {}),
+          userId,
         ],
       );
 

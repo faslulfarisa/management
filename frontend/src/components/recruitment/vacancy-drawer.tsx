@@ -7,6 +7,7 @@ import { Loader2, X, Briefcase } from 'lucide-react';
 import api from '@/lib/api';
 import { vacanciesApi, Vacancy } from '@/lib/vacancies-api';
 import { vacancySchema, VacancyFormData } from '@/lib/schemas/vacancy.schema';
+import { AutoSaveNote, ContextualHelp } from '@/components/recruitment/recruitment-ux';
 
 interface RefOption { id: string; name: string }
 interface EmployeeOption { id: string; first_name: string; last_name: string }
@@ -19,6 +20,8 @@ const DEFAULT_EMPLOYMENT_TYPES: RefOption[] = [
   { id: 'freelance', name: 'Freelance' },
   { id: 'temporary', name: 'Temporary' },
 ];
+
+const VACANCY_DRAFT_KEY = 'recruitment:vacancy-draft';
 
 export function VacancyDrawer({
   vacancy, onClose, onSaved,
@@ -35,8 +38,10 @@ export function VacancyDrawer({
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [saving, setSaving] = useState<'draft' | 'submit' | null>(null);
   const [formError, setFormError] = useState('');
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
 
-  const { register, handleSubmit, formState: { errors } } = useForm<VacancyFormData>({
+  const { register, handleSubmit, formState: { errors }, watch, reset } = useForm<VacancyFormData>({
     resolver: zodResolver(vacancySchema),
     defaultValues: vacancy ? {
       title: vacancy.title,
@@ -72,10 +77,42 @@ export function VacancyDrawer({
       setDepartments(d.data.data ?? []);
       setPositions(p.data.data ?? []);
       const apiTypes: RefOption[] = et.data.data ?? [];
-      setEmploymentTypes(apiTypes.length > 0 ? apiTypes : DEFAULT_EMPLOYMENT_TYPES);
+      const deduplicatedTypes = Array.from(new Map(apiTypes.map(t => [t.name.trim().toLowerCase(), t])).values());
+      setEmploymentTypes(deduplicatedTypes.length > 0 ? deduplicatedTypes : DEFAULT_EMPLOYMENT_TYPES);
       setEmployees(e.data.data ?? []);
     }).catch(() => { setEmploymentTypes(DEFAULT_EMPLOYMENT_TYPES); });
   }, []);
+
+  useEffect(() => {
+    if (isEdit) return;
+    const raw = window.localStorage.getItem(VACANCY_DRAFT_KEY);
+    if (!raw) return;
+    try {
+      const draft = JSON.parse(raw);
+      if (draft?.form && window.confirm('Restore your unsaved vacancy draft?')) {
+        reset({ number_of_positions: 1, ...draft.form });
+        setDraftSavedAt(draft.savedAt || null);
+      }
+    } catch {
+      window.localStorage.removeItem(VACANCY_DRAFT_KEY);
+    }
+  }, [isEdit, reset]);
+
+  useEffect(() => {
+    if (isEdit) return;
+    const subscription = watch((value) => {
+      setDirty(true);
+      const savedAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      window.localStorage.setItem(VACANCY_DRAFT_KEY, JSON.stringify({ form: value, savedAt }));
+      setDraftSavedAt(savedAt);
+    });
+    return () => subscription.unsubscribe();
+  }, [isEdit, watch]);
+
+  const close = () => {
+    if (dirty && !isEdit && !window.confirm('Discard this unsaved vacancy draft?')) return;
+    onClose();
+  };
 
   const onSubmit = async (data: VacancyFormData, alsoSubmitForApproval: boolean) => {
     setSaving(alsoSubmitForApproval ? 'submit' : 'draft');
@@ -95,6 +132,7 @@ export function VacancyDrawer({
       };
       const saved = isEdit ? await vacanciesApi.update(vacancy!.id, payload) : await vacanciesApi.create(payload);
       if (alsoSubmitForApproval) await vacanciesApi.submit(saved.id);
+      if (!isEdit) window.localStorage.removeItem(VACANCY_DRAFT_KEY);
       onSaved();
       onClose();
     } catch (err: any) {
@@ -109,17 +147,25 @@ export function VacancyDrawer({
 
   return (
     <div className="fixed inset-0 z-40 flex">
-      <div className="flex-1 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="flex-1 bg-black/40 backdrop-blur-sm" onClick={close} />
       <div className="w-full max-w-lg bg-white shadow-2xl flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
           <div>
             <h2 className="text-base font-bold text-foreground">{isEdit ? 'Edit Vacancy' : 'New Vacancy'}</h2>
             <p className="text-xs text-muted-foreground">Raise a vacancy request for approval</p>
           </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-muted flex items-center justify-center"><X className="w-4 h-4" /></button>
+          <button onClick={close} className="w-8 h-8 rounded-lg hover:bg-muted flex items-center justify-center" title="Close drawer"><X className="w-4 h-4" /></button>
         </div>
 
         <form className="flex-1 overflow-y-auto p-6 space-y-4" onSubmit={(e) => e.preventDefault()}>
+          {!isEdit && (
+            <>
+              <ContextualHelp title="Vacancy workflow">
+                Save Draft keeps the requisition editable. Save & Submit sends it into the existing approval workflow.
+              </ContextualHelp>
+              <AutoSaveNote savedAt={draftSavedAt} />
+            </>
+          )}
           {formError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{formError}</p>}
 
           <div>
@@ -247,7 +293,7 @@ export function VacancyDrawer({
         </form>
 
         <div className="shrink-0 border-t border-border px-6 py-4 flex items-center justify-end gap-3">
-          <button onClick={onClose} className="border border-border rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-muted">Cancel</button>
+          <button onClick={close} className="border border-border rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-muted">Cancel</button>
           <button
             onClick={handleSubmit((d) => onSubmit(d, false))}
             disabled={saving !== null}

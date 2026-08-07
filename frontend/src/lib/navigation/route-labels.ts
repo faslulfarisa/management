@@ -48,10 +48,12 @@ export const ROUTE_LABELS: { pattern: string; label: string }[] = [
 
   // Templates
   { pattern: '/dashboard/templates/attendance-policy', label: 'Attendance Policy' },
+  { pattern: '/dashboard/templates/break-policy', label: 'Break Policy' },
   { pattern: '/dashboard/templates/leave-policy', label: 'Leave Policy' },
   { pattern: '/dashboard/templates/salary-structure', label: 'Salary Structure' },
   { pattern: '/dashboard/templates/overtime-policy', label: 'Overtime Policy' },
   { pattern: '/dashboard/templates/shifts', label: 'Shift Templates' },
+  { pattern: '/dashboard/templates/holiday-policy', label: 'Holiday Policy' },
   { pattern: '/dashboard/templates', label: 'Templates' },
 
   // Schedules
@@ -92,9 +94,9 @@ export const ROUTE_LABELS: { pattern: string; label: string }[] = [
   { pattern: '/dashboard/system/settings', label: 'Settings' },
   { pattern: '/dashboard/settings/company-profile', label: 'Company Profile' },
 
-  // Approvals / Automation
+  // Approvals / Notifications
   { pattern: '/dashboard/approvals', label: 'Approvals' },
-  { pattern: '/dashboard/automation', label: 'Automation' },
+  { pattern: '/dashboard/notifications', label: 'Notification Center' },
 
   // Dashboard (must be last — most generic)
   { pattern: '/dashboard', label: 'Dashboard' },

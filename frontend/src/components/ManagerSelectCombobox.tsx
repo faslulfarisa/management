@@ -60,31 +60,14 @@ export default function ManagerSelectCombobox({
       setSelectedManager(null);
       setSearch('');
       setManagers([]);
-    }
-  }, [activeOrgKey, onChange]);
-
-  // Refetch when branch filter changes (if dropdown is open)
-  useEffect(() => {
-    if (prevBranchRef.current !== branchId) {
-      prevBranchRef.current = branchId;
-      if (open) fetchManagers(search, branchId);
-    }
-  }, [branchId, open, search, fetchManagers]);
-
-  // Debounced search
-  useEffect(() => {
-    if (!open) return;
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => fetchManagers(search, branchId), 300);
-    return () => clearTimeout(debounceRef.current);
-  }, [search, open, branchId, fetchManagers]);
-
-  // Load initial list when dropdown opens
-  useEffect(() => {
-    if (open && managers.length === 0 && !loading) {
       fetchManagers('', branchId);
     }
-  }, [open, managers.length, loading, branchId, fetchManagers]);
+  }, [activeOrgKey, onChange, branchId, fetchManagers]);
+
+  // Refetch when branch filter changes or on mount
+  useEffect(() => {
+    fetchManagers('', branchId);
+  }, [branchId, fetchManagers]);
 
   // Resolve the display name for an already-selected value
   useEffect(() => {
@@ -176,27 +159,7 @@ export default function ManagerSelectCombobox({
       {/* Dropdown */}
       {open && (
         <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
-          {/* Search input */}
-          <div className="p-2 border-b border-border">
-            <div className="flex items-center gap-2 px-2 py-1.5 bg-muted/40 rounded-md">
-              <Search className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-              <input
-                autoFocus
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Search by name or code…"
-                className="flex-1 text-sm bg-transparent outline-none text-foreground placeholder:text-muted-foreground"
-              />
-              {search && (
-                <button type="button" onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground">
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-1 px-1">
-              {search ? 'Searching all active employees' : branchId ? 'Manager-eligible staff in selected branch' : 'Manager-eligible staff'}
-            </p>
-          </div>
+
 
           {/* Options */}
           <div className="max-h-60 overflow-y-auto">
@@ -204,9 +167,7 @@ export default function ManagerSelectCombobox({
               <div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>
             ) : managers.length === 0 ? (
               <div className="py-8 text-center text-sm text-muted-foreground px-4">
-                {search
-                  ? `No employees found for "${search}"`
-                  : 'No manager-eligible staff found. Type a name to search all employees.'}
+                {'No Manager Available'}
               </div>
             ) : (
               <>

@@ -40,6 +40,19 @@ export class RecruitmentController {
     return doc;
   }
 
+  @Get('debug')
+  async debugQuery(@Req() req: Request) {
+    const pool = (this.service as any).db;
+    try {
+      const { rows: apps } = await pool.query(`SELECT id, candidate_id, job_posting_id, status FROM applications`);
+      const { rows: cands } = await pool.query(`SELECT id, first_name, last_name, status FROM candidates WHERE first_name ILIKE '%test%'`);
+      const { rows: offers } = await pool.query(`SELECT id, application_id, status FROM offers`);
+      return { apps, cands, offers };
+    } catch (e: any) {
+      return { error: e.message };
+    }
+  }
+
   @Get('jobs')
   @RequirePermission(PERMISSIONS.RECRUITMENT_VIEW)
   @ApiOperation({ summary: 'List job postings' })
@@ -80,7 +93,7 @@ export class RecruitmentController {
     return { success: true, error: null };
   }
 
-  // ── Publishing (provider-based; only 'career_portal' supported today) ──
+  // ── Publishing: Career Portal + tracked external job board postings ──
   @Post('jobs/publish')
   @RequirePermission(PERMISSIONS.RECRUITMENT_EDIT)
   @ApiOperation({ summary: 'Publish an approved vacancy + job description to the Career Portal' })
@@ -118,6 +131,81 @@ export class RecruitmentController {
     const user = (req as any).user;
     const tenantId = user.tenantId || user.tenant_id;
     return { success: true, data: await this.publishing.getShareInfo(tenantId, id), error: null };
+  }
+
+  @Get('jobs/boards')
+  @RequirePermission(PERMISSIONS.RECRUITMENT_VIEW)
+  @ApiOperation({ summary: 'List external job board postings for a vacancy' })
+  async listExternalPostings(@Req() req: Request, @Query('vacancy_id') vacancyId: string) {
+    if (!vacancyId) throw new BadRequestException('vacancy_id is required');
+    const user = (req as any).user;
+    const tenantId = user.tenantId || user.tenant_id;
+    return { success: true, data: await this.publishing.listExternalPostings(tenantId, vacancyId), error: null };
+  }
+
+  @Post('jobs/boards')
+  @RequirePermission(PERMISSIONS.RECRUITMENT_EDIT)
+  @ApiOperation({ summary: 'Create or update a tracked external job board posting' })
+  async createExternalPosting(
+    @Req() req: Request,
+    @Body() body: {
+      vacancy_id: string;
+      job_description_id: string;
+      provider: string;
+      external_url?: string;
+      external_job_id?: string;
+      payload?: Record<string, any>;
+      closes_at?: string;
+    },
+  ) {
+    if (!body.vacancy_id || !body.job_description_id || !body.provider) {
+      throw new BadRequestException('vacancy_id, job_description_id, and provider are required');
+    }
+    const user = (req as any).user;
+    const tenantId = user.tenantId || user.tenant_id;
+    return {
+      success: true,
+      data: await this.publishing.createExternalPosting(tenantId, body.vacancy_id, body.job_description_id, user.sub, {
+        provider: body.provider,
+        externalUrl: body.external_url,
+        externalJobId: body.external_job_id,
+        payload: body.payload,
+        closesAt: body.closes_at,
+      }),
+      error: null,
+    };
+  }
+
+  @Put('jobs/boards/:id')
+  @RequirePermission(PERMISSIONS.RECRUITMENT_EDIT)
+  @ApiOperation({ summary: 'Update an external job board posting status or external URL' })
+  async updateExternalPosting(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: { status?: string; external_url?: string; external_job_id?: string; error_message?: string; payload?: Record<string, any> },
+  ) {
+    const user = (req as any).user;
+    const tenantId = user.tenantId || user.tenant_id;
+    return {
+      success: true,
+      data: await this.publishing.updateExternalPosting(tenantId, id, user.sub, {
+        status: body.status,
+        externalUrl: body.external_url,
+        externalJobId: body.external_job_id,
+        errorMessage: body.error_message,
+        payload: body.payload,
+      }),
+      error: null,
+    };
+  }
+
+  @Post('jobs/boards/:id/unpublish')
+  @RequirePermission(PERMISSIONS.RECRUITMENT_EDIT)
+  @ApiOperation({ summary: 'Mark an external job board posting as unpublished' })
+  async unpublishExternalPosting(@Req() req: Request, @Param('id') id: string) {
+    const user = (req as any).user;
+    const tenantId = user.tenantId || user.tenant_id;
+    return { success: true, data: await this.publishing.unpublishExternalPosting(tenantId, id, user.sub), error: null };
   }
 
   @Get('candidates')
@@ -160,7 +248,12 @@ export class RecruitmentController {
     const user = (req as any).user;
     const tenantId = user.tenantId || user.tenant_id;
     const { candidate } = await this.candidates.findOrCreateByContact(tenantId, { ...data, source: data.source || 'manual' }, user.sub);
-    if (data.job_posting_id) {
+    if (data.vacancy_id) {
+      await this.applications.createForVacancy(tenantId, {
+        candidateId: candidate.id, vacancyId: data.vacancy_id, source: data.source || 'manual',
+        campaignId: data.campaign_id, actorId: user.sub,
+      });
+    } else if (data.job_posting_id) {
       await this.applications.create(tenantId, {
         candidateId: candidate.id, jobPostingId: data.job_posting_id, source: data.source || 'manual',
         campaignId: data.campaign_id,
@@ -237,6 +330,7 @@ export class RecruitmentController {
   // jobs/candidates.
 
   @Get('stats')
+  @RequirePermission(PERMISSIONS.RECRUITMENT_VIEW)
   @ApiOperation({ summary: 'Recruitment stats' })
   async getStats(@Req() req: Request) {
     const user = (req as any).user || (req as any);

@@ -6,7 +6,7 @@ Manages per-tenant WebSocket connections and broadcasts events.
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Set
 
 from fastapi import WebSocket
 
@@ -134,36 +134,6 @@ class ConnectionManager:
                 "punch_type": punch_type,
                 "device_name": device_name,
                 "verify_method": verify_method,
-            },
-        )
-
-    async def broadcast_attendance_processed(
-        self,
-        tenant_id: str,
-        employee_code: str,
-        employee_name: str,
-        date: str,
-        status: str,
-        first_in: Optional[str],
-        last_out: Optional[str],
-        total_work_minutes: int,
-        late_minutes: int,
-        overtime_minutes: int,
-    ) -> int:
-        """Broadcast a processed attendance session update."""
-        return await self.broadcast_to_tenant(
-            tenant_id,
-            "attendance_processed",
-            {
-                "employee_code": employee_code,
-                "employee_name": employee_name,
-                "date": date,
-                "status": status,
-                "first_in": first_in,
-                "last_out": last_out,
-                "total_work_minutes": total_work_minutes,
-                "late_minutes": late_minutes,
-                "overtime_minutes": overtime_minutes,
             },
         )
 

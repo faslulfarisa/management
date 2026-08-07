@@ -15,6 +15,7 @@ export const RedisProvider: Provider = {
     const client = new Redis({
       ...getRedisConnectionOptions(),
       lazyConnect: true,
+      connectTimeout: parseInt(process.env.REDIS_CONNECT_TIMEOUT_MS ?? '500', 10),
     });
     client.on('error', () => {});
     return client;

@@ -16,6 +16,7 @@ const schema = z.object({
   requested_clock_in: z.string().optional(),
   requested_clock_out: z.string().optional(),
   reason: z.string().min(5, 'Please provide a reason (at least 5 chars)'),
+  priority: z.enum(['low', 'normal', 'high']).optional(),
 });
 
 type FormData = z.infer<typeof schema>;
@@ -32,7 +33,7 @@ export function CorrectionRequestSheet({ open, onClose, prefillDate }: Correctio
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { attendance_date: prefillDate ?? '' },
+    defaultValues: { attendance_date: prefillDate ?? '', priority: 'normal' },
   });
 
   const submit = useMutation({
@@ -93,6 +94,18 @@ export function CorrectionRequestSheet({ open, onClose, prefillDate }: Correctio
                 className="w-full px-3 py-2.5 text-sm rounded-lg border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring"
               />
               {errors.reason && <p className="text-xs text-destructive">{errors.reason.message}</p>}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Priority</label>
+              <select
+                {...register('priority')}
+                className="w-full h-11 px-3 text-sm rounded-lg border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="low">Low</option>
+                <option value="normal">Medium</option>
+                <option value="high">High</option>
+              </select>
             </div>
 
             {submit.isError && (

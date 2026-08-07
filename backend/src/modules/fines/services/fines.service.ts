@@ -816,13 +816,29 @@ export class FinesService {
   }
 
   async getEmployeeFines(employeeId: string, tenantId: string, filters: any = {}, userType?: string) {
+    if (!employeeId) {
+      throw new BadRequestException('Employee context is required');
+    }
+
     const { status, page = 1, limit = 20 } = filters;
     let query = `
       SELECT
         ef.*,
-        dc.name AS category_name, dc.category_type
+        dc.name AS category_name, dc.category_type,
+        active_appeal.id AS active_appeal_id,
+        active_appeal.status AS active_appeal_status
       FROM employee_fines ef
       JOIN deduction_categories dc ON dc.id = ef.category_id
+      LEFT JOIN LATERAL (
+        SELECT id, status
+        FROM employee_fine_appeals efa
+        WHERE efa.tenant_id = ef.tenant_id
+          AND efa.fine_id = ef.id
+          AND efa.employee_id = ef.employee_id
+          AND efa.status IN ('pending', 'under_review')
+        ORDER BY efa.created_at DESC
+        LIMIT 1
+      ) active_appeal ON true
       WHERE ef.tenant_id = $1 AND ef.employee_id = $2`;
     const params: any[] = [tenantId, employeeId];
     let idx = 3;
@@ -849,6 +865,97 @@ export class FinesService {
   }
 
   // ─── Rules Engine ────────────────────────────────────────────────────────────
+
+  async createFineAppeal(
+    tenantId: string,
+    employeeId: string,
+    createdBy: string,
+    dto: { fine_id?: string; reason?: string; requested_change?: string; priority?: 'low' | 'normal' | 'high' | 'urgent' },
+  ) {
+    if (!employeeId) {
+      throw new BadRequestException('Employee context is required to submit a fine appeal');
+    }
+    if (!dto.fine_id) {
+      throw new BadRequestException('Fine selection is required');
+    }
+    if (!dto.reason || dto.reason.trim().length < 10) {
+      throw new BadRequestException('Appeal reason must be at least 10 characters');
+    }
+
+    const { rows: fineRows } = await this.db.query(
+      `SELECT ef.*, dc.name AS category_name, dc.category_type,
+              e.first_name, e.last_name, e.employee_code
+       FROM employee_fines ef
+       JOIN deduction_categories dc ON dc.id = ef.category_id
+       JOIN employees e ON e.id = ef.employee_id
+       WHERE ef.id = $1 AND ef.tenant_id = $2 AND ef.employee_id = $3`,
+      [dto.fine_id, tenantId, employeeId],
+    );
+    if (!fineRows.length) {
+      throw new NotFoundException('Fine not found for this employee');
+    }
+
+    const fine = fineRows[0];
+    if (['rejected', 'cancelled'].includes(fine.status)) {
+      throw new BadRequestException(`Cannot appeal a fine with status '${fine.status}'`);
+    }
+
+    const { rows: existingRows } = await this.db.query(
+      `SELECT id FROM employee_fine_appeals
+       WHERE tenant_id = $1 AND fine_id = $2 AND employee_id = $3
+         AND status IN ('pending', 'under_review')
+       LIMIT 1`,
+      [tenantId, fine.id, employeeId],
+    );
+    if (existingRows.length) {
+      throw new BadRequestException('An appeal is already pending for this fine');
+    }
+
+    const reason = dto.reason.trim();
+    const requestedChange = dto.requested_change?.trim() || null;
+    const { rows } = await this.db.query(
+      `INSERT INTO employee_fine_appeals
+         (tenant_id, branch_id, employee_id, fine_id, reason, requested_change, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING *`,
+      [tenantId, fine.branch_id ?? null, employeeId, fine.id, reason, requestedChange, createdBy],
+    );
+    const appeal = rows[0];
+
+    await this.approvalEngine.submit({
+      tenantId,
+      workflowType: 'fine_appeal',
+      entityId: appeal.id,
+      entityTable: 'employee_fine_appeals',
+      submittedBy: createdBy,
+      branchId: fine.branch_id ?? null,
+      title: `Fine Appeal: ${fine.title}`,
+      description: `Amount: INR ${fine.fine_amount} | Employee: ${fine.first_name} ${fine.last_name} | Appeal: ${reason}`,
+      metadata: {
+        fine_id: fine.id,
+        employee_id: employeeId,
+        employee_code: fine.employee_code,
+        fine_title: fine.title,
+        fine_amount: fine.fine_amount,
+        fine_status: fine.status,
+        category_name: fine.category_name,
+        reason,
+        requested_change: requestedChange,
+      },
+      priority: dto.priority ?? 'normal',
+    });
+
+    await this.auditLog.log({
+      tenantId,
+      userId: createdBy,
+      entityType: 'employee_fine_appeals',
+      entityId: appeal.id,
+      action: 'fine_appeal_submitted',
+      newValues: appeal,
+    });
+
+    return appeal;
+  }
 
   async getRules(tenantId: string, branch_id?: string) {
     let query = `SELECT dr.*, dc.name AS category_name FROM deduction_rules dr

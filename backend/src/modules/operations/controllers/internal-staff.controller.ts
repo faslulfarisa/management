@@ -41,7 +41,7 @@ export class InternalStaffController {
   }
 
   @Put(':id')
-  @ApiOperation({ summary: 'Update an internal staff account\'s team/tier or name' })
+  @ApiOperation({ summary: 'Update an internal staff account\'s username, team/tier, or name' })
   async update(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
     const user = (req as any).user;
     const data = await this.service.update(id, body, { sub: user.sub });

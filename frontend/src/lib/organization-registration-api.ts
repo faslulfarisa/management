@@ -17,7 +17,6 @@ export interface AccountStatus {
   fullName: string;
   email: string;
   mobile: string | null;
-  emailVerified: boolean;
   mobileVerified: boolean;
 }
 
@@ -33,6 +32,7 @@ export interface AddressPayload {
 export interface SubmitOrganizationPayload extends RegistrationSession {
   legalName: string;
   tradeName?: string;
+  companyCode: string;
   companyType: string;
   registrationNumber?: string;
   gstin?: string;
@@ -50,12 +50,6 @@ export interface SubmitOrganizationPayload extends RegistrationSession {
   estimatedEmployeeCount?: number;
   businessCategory?: string;
   currentHrSystem?: string;
-  companySize?: string;
-  payrollRequirement?: boolean;
-  attendanceRequirement?: boolean;
-  biometricRequirement?: boolean;
-  recruitmentRequirement?: boolean;
-  performanceRequirement?: boolean;
   contactPersonName: string;
   contactDesignation: string;
   contactPersonMobile: string;
@@ -76,18 +70,6 @@ export interface OrganizationStatus {
 export const registrationApi = {
   createAccount: (data: CreateAccountPayload): Promise<RegistrationSession> =>
     api.post('/organization-registration/account', data).then((r) => r.data.data),
-
-  verifyEmail: (registrationId: string, token: string): Promise<{ success: boolean; alreadyVerified?: boolean }> =>
-    api.post('/organization-registration/verify-email', { registrationId, token }).then((r) => r.data.data),
-
-  // NOTE: callers often pass the registration *store* object here, which
-  // also carries email/fullName/mobile — explicitly pick just the session
-  // fields so those extra properties never reach the backend (the global
-  // ValidationPipe rejects unknown body properties with a 400).
-  resendVerification: (session: RegistrationSession) =>
-    api.post('/organization-registration/resend-verification', {
-      registrationId: session.registrationId, accessToken: session.accessToken,
-    }).then((r) => r.data.data),
 
   requestMobileOtp: (session: RegistrationSession) =>
     api.post('/organization-registration/mobile-otp/request', {
@@ -160,17 +142,29 @@ export interface OrganizationChangeRequest {
   id: string;
   tenant_id: string;
   requested_by_user_id: string;
+  requested_by_email?: string;
+  requested_by_name?: string | null;
   status: 'pending' | 'approved' | 'rejected' | 'documents_requested';
   changes: Record<string, { old: any; new: any }>;
   reason: string;
   review_notes: string | null;
+  supporting_documents?: {
+    responses?: Array<{
+      notes?: string | null;
+      documents?: Array<{ url: string; fileName: string; sizeBytes?: number; mimeType?: string }>;
+      submittedAt?: string;
+      submittedByUserId?: string;
+    }>;
+  } | null;
   reviewed_at: string | null;
+  fulfilled_tenant_id?: string | null;
   created_at: string;
   tenant_name?: string;
   tenant_legal_name?: string;
 }
 
 export interface CreateChangeRequestPayload {
+  requestType?: 'protected_field_change' | 'additional_organization';
   legalName?: string;
   tradeName?: string;
   registrationNumber?: string;
@@ -178,6 +172,14 @@ export interface CreateChangeRequestPayload {
   panNumber?: string;
   cinNumber?: string;
   companyType?: string;
+  organizationName?: string;
+  contactName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  phoneNumber?: string;
+  estimatedBranchCount?: number;
+  estimatedEmployeeCount?: number;
+  otherDetails?: string;
   reason: string;
 }
 
@@ -196,4 +198,16 @@ export const organizationChangeRequestApi = {
 
   transition: (id: string, action: 'approve' | 'reject' | 'request_documents', notes?: string) =>
     api.post(`/organization-change-requests/admin/${id}/transition`, { action, notes }).then((r) => r.data.data),
+
+  fulfill: (id: string, createdTenantId: string): Promise<OrganizationChangeRequest> =>
+    api.post(`/organization-change-requests/admin/${id}/fulfill`, { createdTenantId }).then((r) => r.data.data),
+
+  uploadSupportingDocument: (id: string, file: File): Promise<{ url: string; fileName: string; sizeBytes: number; mimeType: string }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post(`/organization-change-requests/${id}/supporting-documents/upload`, formData).then((r) => r.data.data);
+  },
+
+  respond: (id: string, data: { notes?: string; documents?: Array<{ url: string; fileName: string; sizeBytes?: number; mimeType?: string }> }): Promise<OrganizationChangeRequest> =>
+    api.post(`/organization-change-requests/${id}/respond`, data).then((r) => r.data.data),
 };

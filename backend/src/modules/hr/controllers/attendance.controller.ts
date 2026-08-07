@@ -64,17 +64,17 @@ export class AttendanceController {
     const user = (req as any).user;
     const tenantId = user.tenantId || user.tenant_id;
     const employeeId = user.employeeId || user.employee_id;
-    const record = await this.service.clockIn(tenantId, employeeId, data);
+    const record = await this.service.clockIn(tenantId, employeeId, data, user.sub, this.requestMeta(req));
     return { success: true, data: record, error: null };
   }
 
   @Post('clock-out')
   @ApiOperation({ summary: 'Clock out' })
-  async clockOut(@Req() req: Request) {
+  async clockOut(@Req() req: Request, @Body() data: any = {}) {
     const user = (req as any).user;
     const tenantId = user.tenantId || user.tenant_id;
     const employeeId = user.employeeId || user.employee_id;
-    const record = await this.service.clockOut(tenantId, employeeId);
+    const record = await this.service.clockOut(tenantId, employeeId, data, user.sub, this.requestMeta(req));
     return { success: true, data: record, error: null };
   }
 
@@ -136,5 +136,17 @@ export class AttendanceController {
     const tenantId = user.tenantId || user.tenant_id;
     const request = await this.service.rejectRequest(id, tenantId, data?.reason);
     return { success: true, data: request, error: null };
+  }
+
+  private requestMeta(req: Request): { ip?: string; userAgent?: string } {
+    const anyReq = req as any;
+    return {
+      ip:
+        (anyReq.headers?.['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim()
+        ?? (anyReq.headers?.['x-real-ip'] as string | undefined)
+        ?? anyReq.ip
+        ?? anyReq.socket?.remoteAddress,
+      userAgent: anyReq.headers?.['user-agent'],
+    };
   }
 }

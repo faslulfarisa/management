@@ -2,9 +2,10 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { DatabaseService } from '../../../shared/database.service';
 import { AuditLogService } from './audit-log.service';
 import { splitProtectedFields } from '../../organization-registration/organization-registration.constants';
+import { CurrencyService } from '../../../shared/currency.service';
 
 const PROFILE_SELECT = `
-  SELECT id, name, slug, logo_url, gstin, timezone, currency, date_format,
+  SELECT id, name, slug, logo_url, gstin, timezone, currency, currency_symbol, currency_metadata, date_format,
          legal_name, trade_name, company_code, registration_number, pan_number,
          cin_number, company_type, primary_email, support_email, phone_number,
          alternate_phone, website_url, registered_address, operational_address,
@@ -25,6 +26,7 @@ export class OrganizationProfileService {
   constructor(
     private readonly db: DatabaseService,
     private readonly auditLog: AuditLogService,
+    private readonly currencyService: CurrencyService,
   ) {}
 
   async getProfile(tenantId: string) {
@@ -136,9 +138,18 @@ export class OrganizationProfileService {
     },
     meta: RequestMeta,
   ) {
+    if (data.currency !== undefined) {
+      const currency = this.currencyService.snapshot(data.currency);
+      (data as any).currencySymbol = currency.currencySymbol;
+      (data as any).currencyMetadata = currency.currencyMetadata;
+      data.currency = currency.currencyCode;
+    }
+
     return this._patch(tenantId, userId, data, {
       timezone: 'timezone',
       currency: 'currency',
+      currencySymbol: 'currency_symbol',
+      currencyMetadata: 'currency_metadata',
       dateFormat: 'date_format',
       workWeekConfig: 'work_week_config',
       leaveYearConfig: 'leave_year_config',

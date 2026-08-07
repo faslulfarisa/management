@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Put, Delete, Body, Param, Query,
-  Req, UseGuards, HttpCode, HttpStatus,
+  Req, UseGuards, HttpCode, HttpStatus, ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
@@ -46,7 +46,28 @@ export class FinesController {
   async getEmployeeFines(@Req() req: any, @Param('employeeId') employeeId: string, @Query() query: any) {
     const tenantId = req.user.tenantId || req.user.tenant_id;
     const userType = req.user.userType;
+    const actorEmployeeId = req.user.employeeId || req.user.employee_id;
+    if (userType === 'employee' && actorEmployeeId !== employeeId) {
+      throw new ForbiddenException('Employees can only view their own fines');
+    }
     return { success: true, data: await this.service.getEmployeeFines(employeeId, tenantId, query, userType), error: null };
+  }
+
+  @Get('me/list')
+  @ApiOperation({ summary: 'Current employee fine history and active fines' })
+  async getMyFines(@Req() req: any, @Query() query: any) {
+    const tenantId = req.user.tenantId || req.user.tenant_id;
+    const employeeId = req.user.employeeId || req.user.employee_id;
+    return { success: true, data: await this.service.getEmployeeFines(employeeId, tenantId, query, 'employee'), error: null };
+  }
+
+  @Post('appeals')
+  @ApiOperation({ summary: 'Submit an employee fine appeal for admin review' })
+  async createFineAppeal(@Req() req: any, @Body() dto: any) {
+    const tenantId = req.user.tenantId || req.user.tenant_id;
+    const employeeId = req.user.employeeId || req.user.employee_id;
+    const userId = req.user.sub || req.user.id;
+    return { success: true, data: await this.service.createFineAppeal(tenantId, employeeId, userId, dto), error: null };
   }
 
   @Get(':id')
@@ -135,7 +156,7 @@ export class FinesController {
   // ─── Deduction Rules ─────────────────────────────────────────────────────────
 
   @Get('rules/list')
-  @ApiOperation({ summary: 'List deduction automation rules' })
+  @ApiOperation({ summary: 'List deduction rules' })
   async getRules(@Req() req: any, @Query('branch_id') branchId?: string) {
     const tenantId = req.user.tenantId || req.user.tenant_id;
     return { success: true, data: await this.service.getRules(tenantId, branchId), error: null };

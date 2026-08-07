@@ -25,7 +25,7 @@ export function OfferDrawer({ offer, onClose, onSaved }: { offer?: Offer | null;
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!isEdit) applicationsApi.list({ status: 'shortlisted', limit: 200 }).then((r) => setApplications(r.data));
+    if (!isEdit) applicationsApi.list({ eligible_for_offer: 'true', limit: 200 } as any).then((r) => setApplications(r.data));
     api.get('/employment-types', { params: { limit: 200 } }).then((r) => setEmploymentTypes(r.data.data));
   }, [isEdit]);
 
@@ -75,7 +75,7 @@ export function OfferDrawer({ offer, onClose, onSaved }: { offer?: Offer | null;
               <label className="text-xs font-medium text-muted-foreground block mb-1">Application <span className="text-red-500">*</span></label>
               <select value={applicationId} onChange={(e) => setApplicationId(e.target.value)} className="w-full border border-border rounded-xl px-3 py-2.5 text-sm">
                 <option value="">Select candidate & job…</option>
-                {applications.map((a) => <option key={a.id} value={a.id}>{a.first_name} {a.last_name} — {a.job_title}</option>)}
+                {applications.map((a) => <option key={a.id} value={a.id}>{a.first_name} {a.last_name} — {a.job_title || a.vacancy_title || 'Direct Application'}</option>)}
               </select>
             </div>
           )}
@@ -100,7 +100,7 @@ export function OfferDrawer({ offer, onClose, onSaved }: { offer?: Offer | null;
               <input type="date" value={form.joining_date} onChange={(e) => setForm((f) => ({ ...f, joining_date: e.target.value }))} className="w-full border border-border rounded-xl px-3 py-2.5 text-sm" />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">CTC ({form.currency})</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">CTC</label>
               <input value={form.ctc} onChange={(e) => setForm((f) => ({ ...f, ctc: e.target.value }))} className="w-full border border-border rounded-xl px-3 py-2.5 text-sm" />
             </div>
           </div>

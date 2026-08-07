@@ -54,7 +54,7 @@ for why, and what to run when you're ready.
 - **New:** `backend/migrations/098_performance_indexes.sql`, `backend/src/shared/permissions-cache.service.ts`, `backend/src/shared/health/web-vitals.dto.ts`
 
 **Monitoring**
-- **New:** `monitoring/grafana/dashboards/hms-performance.json` (auto-provisioned alongside the existing biometrics dashboard)
+- **New:** `monitoring/grafana/dashboards/hms-performance.json` (legacy filename, auto-provisioned alongside the existing biometrics dashboard)
 
 30 files touched (22 modified, 8 new).
 
@@ -193,7 +193,7 @@ were run:
   expected and unrelated to this change; the smoke-test process was not left running.
 
 Actual p50/p95 query latency under real traffic still requires watching the new
-`hms-performance` Grafana dashboard (or running `EXPLAIN ANALYZE` on the hot queries)
+HRMS performance Grafana dashboard (legacy UID `hms-performance`) or running `EXPLAIN ANALYZE` on the hot queries
 once this branch is deployed — the numbers in §8 remain structural estimates until then.
 
 ---
@@ -205,6 +205,6 @@ Scoped out of this pass — listed so they're not silently dropped:
 1. **Column filters on `ReportTable`** — sorting and debouncing are in place; per-column filter UI (dropdown/range filters wired to `getFilteredRowModel`) is a larger, separate feature.
 2. **Server Component conversion of the dashboard shell** — `sidebar.tsx`, `header.tsx`, and `(admin)/dashboard/layout.tsx` are `'use client'` because they read auth/permission state via hooks at render time. Converting them safely means first moving that data-fetch to a server-side session read, which is a bigger refactor than this pass; flagging it rather than half-doing it.
 3. **Full DTO/payload audit** — `globalSearch`/`getNotifications` were fixed for *query count*; a pass over response payloads (field projection, removing unused joins) across all list endpoints wasn't done.
-4. **Apply `098_performance_indexes.sql` and restart the backend** against the real environment, then capture actual p50/p95 latency from the new Grafana dashboard (`monitoring/grafana/dashboards/hms-performance.json`) to replace the estimates in §8.
+4. **Apply `098_performance_indexes.sql` and restart the backend** against the real environment, then capture actual p50/p95 latency from the HRMS performance dashboard (`monitoring/grafana/dashboards/hms-performance.json`, legacy filename) to replace the estimates in §8.
 5. **`country-state-city`** is still a large dependency even lazy-loaded (~2.4 MB transferred once per session, cached after). If address entry is common, consider replacing it with a slimmer country/state list and a city free-text field, or a server-side lookup endpoint.
 6. **Transaction-path queries** (`DatabaseService.transaction()`) aren't covered by the new slow-query/metrics instrumentation — only the plain `query()` path is. Low-traffic today; revisit if transactions become a hot path.

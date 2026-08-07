@@ -59,51 +59,127 @@ interface CalcResult {
 
 function computeSalary(c: Record<string, any>): CalcResult {
   const ov: Record<string, boolean> = c.manual_overrides ?? {};
-  const mode: string = c.salary_input_mode || 'annual_ctc';
+  const payBasis = c.pay_basis || 'monthly_salary';
 
-  // Monthly CTC derivation
-  let monthlyCtc = 0;
-  if (mode === 'annual_ctc') {
-    monthlyCtc = (Number(c.annual_ctc_lpa) || 0) / 12;
-  } else if (mode === 'monthly_ctc') {
-    monthlyCtc = Number(c.monthly_ctc_input) || 0;
+  // 1. Establish estimated Monthly Gross
+  let monthlyGross = 0;
+  if (payBasis === 'monthly_salary') {
+    const mode: string = c.salary_input_mode || 'annual_ctc';
+    if (mode === 'annual_ctc') {
+      monthlyGross = (Number(c.annual_ctc_lpa) || 0) / 12;
+    } else if (mode === 'monthly_ctc') {
+      monthlyGross = Number(c.monthly_ctc_input) || 0;
+    } else {
+      const pct = Number(c.basic_percent_of_ctc) || 40;
+      const b = Number(c.basic_monthly_input) || 0;
+      monthlyGross = pct > 0 ? (b * 100) / pct : 0;
+    }
+  } else if (payBasis === 'weekly_salary') {
+    const rate = Number(c.weekly_salary) || 0;
+    const workingDaysPerWeek = Number(c.standard_working_days_per_week) || 6;
+    const workingDaysPerMonth = Number(c.standard_working_days_per_month) || 26;
+    monthlyGross = rate * (workingDaysPerMonth / (workingDaysPerWeek || 6));
+  } else if (['daily_wage', 'daily_weekly_payroll', 'daily_monthly_payroll'].includes(payBasis)) {
+    const rate = Number(c.daily_rate) || 0;
+    const workingDaysPerMonth = Number(c.standard_working_days_per_month) || 26;
+    monthlyGross = rate * workingDaysPerMonth;
+  } else if (['hourly_wage', 'hourly_weekly_payroll', 'hourly_monthly_payroll'].includes(payBasis)) {
+    const rate = Number(c.hourly_rate) || 0;
+    const hoursPerDay = Number(c.standard_hours_per_day) || 8;
+    const workingDaysPerMonth = Number(c.standard_working_days_per_month) || 26;
+    monthlyGross = rate * hoursPerDay * workingDaysPerMonth;
+  } else if (payBasis === 'half_day_rate') {
+    const rate = Number(c.half_day_rate) || 0;
+    const workingDaysPerMonth = Number(c.standard_working_days_per_month) || 26;
+    monthlyGross = rate * 2 * workingDaysPerMonth;
   } else {
-    const pct = Number(c.basic_percent_of_ctc) || 40;
-    const b = Number(c.basic_monthly_input) || 0;
-    monthlyCtc = pct > 0 ? (b * 100) / pct : 0;
+    // custom
+    const rate = Number(c.custom_rate) || 0;
+    const workingDaysPerMonth = Number(c.standard_working_days_per_month) || 26;
+    monthlyGross = rate * workingDaysPerMonth;
   }
 
-  // ── Earnings ──────────────────────────────────────────────────────────────
-  const basicPct = Number(c.basic_percent_of_ctc) || 40;
-  const basic = ov.basic
-    ? Number(c._basic) || 0
-    : mode === 'basic_salary'
-      ? Number(c.basic_monthly_input) || 0
-      : Math.round((basicPct / 100) * monthlyCtc);
+  // 2. Compute Components
+  let basic = 0;
+  let hra = 0;
+  let da = 0;
+  let conveyance = 0;
+  let medical = 0;
+  let food = 0;
+  let travel = 0;
+  let shift = 0;
+  let bonus = 0;
+  let special = 0;
+  let gross = 0;
 
-  const hraPct = Number(c.hra_percent_of_basic) || 40;
-  const hra = ov.hra ? Number(c._hra) || 0 : Math.round((hraPct / 100) * basic);
+  if (payBasis === 'monthly_salary') {
+    const basicPct = Number(c.basic_percent_of_ctc) || 40;
+    basic = ov.basic
+      ? Number(c._basic) || 0
+      : c.salary_input_mode === 'basic_salary'
+        ? Number(c.basic_monthly_input) || 0
+        : Math.round((basicPct / 100) * monthlyGross);
 
-  const daPct = Number(c.da_percent_of_basic) || 0;
-  const da = ov.da ? Number(c._da) || 0 : Math.round((daPct / 100) * basic);
+    const hraPct = Number(c.hra_percent_of_basic) || 40;
+    hra = ov.hra ? Number(c._hra) || 0 : Math.round((hraPct / 100) * basic);
 
-  const conveyance = ov.conveyance ? Number(c._conveyance) || 0 : (Number(c.conveyance_fixed) || 1600);
-  const medical = ov.medical ? Number(c._medical) || 0 : (Number(c.medical_fixed) || 1250);
-  const food = ov.food ? Number(c._food) || 0 : (Number(c.food_allowance_fixed) || 0);
-  const travel = ov.travel ? Number(c._travel) || 0 : (Number(c.travel_allowance_fixed) || 0);
-  const shift = ov.shift ? Number(c._shift) || 0 : (Number(c.shift_allowance_fixed) || 0);
+    const daPct = Number(c.da_percent_of_basic) || 0;
+    da = ov.da ? Number(c._da) || 0 : Math.round((daPct / 100) * basic);
 
-  const bonusOn = c.bonus_applicable !== false;
-  const bonusPct = Number(c.bonus_percent_of_basic) || 8.33;
-  const bonus = bonusOn
-    ? ov.bonus
-      ? Number(c._bonus) || 0
-      : c.bonus_type === 'fixed'
-        ? Math.round((Number(c.bonus_fixed_annual) || 0) / 12)
-        : Math.round((bonusPct / 100) * basic)
-    : 0;
+    conveyance = ov.conveyance ? Number(c._conveyance) || 0 : (Number(c.conveyance_fixed) || 1600);
+    medical = ov.medical ? Number(c._medical) || 0 : (Number(c.medical_fixed) || 1250);
+    food = ov.food ? Number(c._food) || 0 : (Number(c.food_allowance_fixed) || 0);
+    travel = ov.travel ? Number(c._travel) || 0 : (Number(c.travel_allowance_fixed) || 0);
+    shift = ov.shift ? Number(c._shift) || 0 : (Number(c.shift_allowance_fixed) || 0);
 
-  // ── Employer contributions (needed to derive gross from CTC) ──────────────
+    const bonusOn = c.bonus_applicable !== false;
+    const bonusPct = Number(c.bonus_percent_of_basic) || 8.33;
+    bonus = bonusOn
+      ? ov.bonus
+        ? Number(c._bonus) || 0
+        : c.bonus_type === 'fixed'
+          ? Math.round((Number(c.bonus_fixed_annual) || 0) / 12)
+          : Math.round((bonusPct / 100) * basic)
+      : 0;
+    
+    // First-pass gross estimate without ESI
+    const pfOn = c.pf_applicable !== false;
+    const pfEmplPct = Number(c.pf_employer_percent) || 12;
+    const pfCap = Number(c.pf_wage_cap) || 15000;
+    const pfCapOn = c.pf_cap_enabled !== false;
+    const pfBase = pfCapOn ? Math.min(basic, pfCap) : basic;
+    const pfEmployer = pfOn ? Math.round((pfEmplPct / 100) * pfBase) : 0;
+
+    const gratOn = c.gratuity_applicable !== false;
+    const gratPct = Number(c.gratuity_percent_of_basic) || 4.81;
+    const gratuity = gratOn ? Math.round((gratPct / 100) * basic) : 0;
+
+    const lwfOn = c.lwf_applicable || false;
+    const lwfEmployer = lwfOn ? Number(c.lwf_employer) || 0 : 0;
+    const esiOn = c.esi_applicable !== false;
+    const esiCeiling = Number(c.esi_wage_ceiling) || 21000;
+    const esiEmplPct = Number(c.esi_employer_percent) || 3.25;
+
+    const baseSum = basic + hra + da + conveyance + medical + food + travel + shift + bonus;
+    const fixedEmplCost = pfEmployer + gratuity + lwfEmployer;
+    const estimatedGross = monthlyGross - fixedEmplCost;
+    const esiEligEst = esiOn && estimatedGross <= esiCeiling;
+    const esiEmplEst = esiEligEst ? Math.round((esiEmplPct / 100) * estimatedGross) : 0;
+
+    const targetGross = monthlyGross - fixedEmplCost - esiEmplEst;
+    special = ov.special
+      ? Number(c._special) || 0
+      : c.special_allowance_auto !== false
+        ? Math.max(0, Math.round(targetGross - baseSum))
+        : (Number(c.special_allowance_fixed) ?? 0);
+
+    gross = baseSum + special;
+  } else {
+    gross = monthlyGross;
+    basic = monthlyGross;
+  }
+
+  // 3. Employer contributions
   const pfOn = c.pf_applicable !== false;
   const pfEmplPct = Number(c.pf_employer_percent) || 12;
   const pfCap = Number(c.pf_wage_cap) || 15000;
@@ -113,7 +189,7 @@ function computeSalary(c: Record<string, any>): CalcResult {
 
   const gratOn = c.gratuity_applicable !== false;
   const gratPct = Number(c.gratuity_percent_of_basic) || 4.81;
-  const gratuity = gratOn ? Math.round((gratPct / 100) * basic) : 0;
+  const gratuity = (payBasis === 'monthly_salary' && gratOn) ? Math.round((gratPct / 100) * basic) : 0;
 
   const lwfOn = c.lwf_applicable || false;
   const lwfEmployer = lwfOn ? Number(c.lwf_employer) || 0 : 0;
@@ -124,29 +200,11 @@ function computeSalary(c: Record<string, any>): CalcResult {
   const esiEmplPct = Number(c.esi_employer_percent) || 3.25;
   const esiEmpePct = Number(c.esi_employee_percent) || 0.75;
 
-  // First-pass gross estimate (without ESI, to break the circular dependency)
-  const baseSum = basic + hra + da + conveyance + medical + food + travel + shift + bonus;
-  const fixedEmplCost = pfEmployer + gratuity + lwfEmployer;
-  const estimatedGross = monthlyCtc - fixedEmplCost;
-  const esiEligEst = esiOn && estimatedGross <= esiCeiling;
-  const esiEmplEst = esiEligEst ? Math.round((esiEmplPct / 100) * estimatedGross) : 0;
-
-  // Special allowance (balancing figure to hit CTC target)
-  const targetGross = monthlyCtc - fixedEmplCost - esiEmplEst;
-  const special = ov.special
-    ? Number(c._special) || 0
-    : c.special_allowance_auto !== false
-      ? Math.max(0, Math.round(targetGross - baseSum))
-      : (Number(c.special_allowance_fixed) ?? 0);
-
-  const gross = baseSum + special;
-
-  // Final ESI with actual gross
   const esiEligible = esiOn && gross <= esiCeiling;
   const esiEmployer = esiEligible ? Math.round((esiEmplPct / 100) * gross) : 0;
   const esiEmployee = esiEligible ? Math.round((esiEmpePct / 100) * gross) : 0;
 
-  // ── Employee deductions ───────────────────────────────────────────────────
+  // 4. Employee deductions
   const pfEmplEePct = Number(c.pf_employee_percent) || 12;
   const pfEmployee = pfOn ? Math.round((pfEmplEePct / 100) * pfBase) : 0;
 
@@ -178,6 +236,62 @@ function computeSalary(c: Record<string, any>): CalcResult {
 
 function computeValidation(calc: CalcResult, config: Record<string, any>): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  const payBasis = config.pay_basis || 'monthly_salary';
+
+  if (payBasis !== 'monthly_salary') {
+    if (payBasis === 'weekly_salary') {
+      const weeklyVal = Number(config.weekly_salary) || 0;
+      if (weeklyVal <= 0) {
+        issues.push({
+          severity: 'error',
+          code: 'weekly_salary_required',
+          message: 'Weekly salary is required and must be positive.',
+          detail: 'Weekly rate is missing or 0.',
+        });
+      }
+    } else if (['daily_wage', 'daily_weekly_payroll', 'daily_monthly_payroll'].includes(payBasis)) {
+      const dailyVal = Number(config.daily_rate) || 0;
+      if (dailyVal <= 0) {
+        issues.push({
+          severity: 'error',
+          code: 'daily_rate_required',
+          message: 'Daily rate is required and must be positive.',
+          detail: 'Daily rate is missing or 0.',
+        });
+      }
+    } else if (['hourly_wage', 'hourly_weekly_payroll', 'hourly_monthly_payroll'].includes(payBasis)) {
+      const hourlyVal = Number(config.hourly_rate) || 0;
+      if (hourlyVal <= 0) {
+        issues.push({
+          severity: 'error',
+          code: 'hourly_rate_required',
+          message: 'Hourly rate is required and must be positive.',
+          detail: 'Hourly rate is missing or 0.',
+        });
+      }
+    } else if (payBasis === 'half_day_rate') {
+      const halfDayVal = Number(config.half_day_rate) || 0;
+      if (halfDayVal <= 0) {
+        issues.push({
+          severity: 'error',
+          code: 'half_day_rate_required',
+          message: 'Half-day rate is required and must be positive.',
+          detail: 'Half-day rate is missing or 0.',
+        });
+      }
+    } else if (payBasis === 'custom') {
+      const customVal = Number(config.custom_rate) || 0;
+      if (customVal <= 0) {
+        issues.push({
+          severity: 'error',
+          code: 'custom_rate_required',
+          message: 'Custom rate is required and must be positive.',
+          detail: 'Custom rate is missing or 0.',
+        });
+      }
+    }
+    return issues;
+  }
 
   const mode: string = config.salary_input_mode || 'annual_ctc';
   let targetMonthly = 0;
@@ -861,12 +975,22 @@ export function SalaryStructureForm({ config, onChange }: Props) {
   const annual = viewMode === 'annual';
   const ov: Record<string, boolean> = config.manual_overrides ?? {};
 
+  const payBasis = config.pay_basis || 'monthly_salary';
+
   const hasModeInputEarly = (() => {
+    if (payBasis !== 'monthly_salary') {
+      if (payBasis === 'weekly_salary') return Number(config.weekly_salary) > 0;
+      if (['daily_wage', 'daily_weekly_payroll', 'daily_monthly_payroll'].includes(payBasis)) return Number(config.daily_rate) > 0;
+      if (['hourly_wage', 'hourly_weekly_payroll', 'hourly_monthly_payroll'].includes(payBasis)) return Number(config.hourly_rate) > 0;
+      if (payBasis === 'half_day_rate') return Number(config.half_day_rate) > 0;
+      return Number(config.custom_rate) > 0;
+    }
     const mode: string = config.salary_input_mode || 'annual_ctc';
     if (mode === 'annual_ctc') return Number(config.annual_ctc_lpa) > 0;
     if (mode === 'monthly_ctc') return Number(config.monthly_ctc_input) > 0;
     return Number(config.basic_monthly_input) > 0;
   })();
+
   const issues = useMemo(
     () => hasModeInputEarly ? computeValidation(calc, config) : [],
     [calc, config, hasModeInputEarly],
@@ -910,78 +1034,278 @@ export function SalaryStructureForm({ config, onChange }: Props) {
 
   const primaryPlaceholder = mode === 'annual_ctc' ? 'e.g. 600000' : 'e.g. 50000';
 
-  const hasModeInput = Number(primaryValue) > 0;
+  const hasModeInput = hasModeInputEarly;
 
   return (
     <div className="space-y-5">
 
-      {/* ── Input mode selector ── */}
-      <div className="space-y-3">
+      {/* ── Pay Basis selector ── */}
+      <div className="space-y-3 rounded-xl border border-violet-100 bg-violet-50/30 p-4 shadow-sm">
         <div className="flex items-center gap-2 mb-1">
           <IndianRupee className="w-3.5 h-3.5 text-violet-500" />
-          <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">Salary Input Mode</label>
+          <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">Pay Basis Type</label>
         </div>
-        <div className="grid grid-cols-3 gap-2">
-          {([
-            { key: 'annual_ctc', label: 'Annual CTC / LPA', sub: 'e.g. ₹6,00,000/year' },
-            { key: 'monthly_ctc', label: 'Monthly CTC', sub: 'e.g. ₹50,000/month' },
-            { key: 'basic_salary', label: 'Basic Salary', sub: 'Derive CTC from basic' },
-          ] as const).map(opt => (
-            <button
-              key={opt.key}
-              type="button"
-              onClick={() => patch({ salary_input_mode: opt.key })}
-              className={`flex flex-col items-center px-3 py-2.5 rounded-xl border-2 text-center transition-all ${mode === opt.key
-                ? 'border-violet-500 bg-violet-50 shadow-md shadow-violet-100'
-                : 'border-slate-200 bg-white hover:border-violet-300'
-                }`}
-            >
-              <span className={`text-xs font-bold ${mode === opt.key ? 'text-violet-700' : 'text-slate-700'}`}>{opt.label}</span>
-              <span className="text-[10px] text-slate-400 mt-0.5">{opt.sub}</span>
-            </button>
-          ))}
-        </div>
+        <select
+          value={config.pay_basis || 'monthly_salary'}
+          onChange={e => patch({ pay_basis: e.target.value })}
+          className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white text-sm font-semibold text-slate-700"
+        >
+          <option value="monthly_salary">Monthly Salary</option>
+          <option value="weekly_salary">Weekly Salary</option>
+          <option value="daily_wage">Daily Wage</option>
+          <option value="hourly_wage">Hourly Wage</option>
+          <option value="half_day_rate">Half-Day Rate</option>
+          <option value="hourly_weekly_payroll">Hourly (Weekly Payroll)</option>
+          <option value="hourly_monthly_payroll">Hourly (Monthly Payroll)</option>
+          <option value="daily_weekly_payroll">Daily (Weekly Payroll)</option>
+          <option value="daily_monthly_payroll">Daily (Monthly Payroll)</option>
+          <option value="custom">Custom</option>
+        </select>
 
-        {/* Primary input */}
-        <div className="flex items-center gap-3">
-          <div className="flex-1">
-            <label className="text-[11px] font-semibold text-slate-600">{primaryLabel}</label>
-            <div className="relative mt-1">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-violet-500">₹</span>
+        {/* Dynamic Rate inputs based on selected Pay Basis */}
+        {config.pay_basis && config.pay_basis !== 'monthly_salary' && (
+          <div className="grid grid-cols-2 gap-4 pt-2">
+            {config.pay_basis === 'weekly_salary' && (
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600">Weekly Salary (₹)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={config.weekly_salary || ''}
+                  onChange={e => patch({ weekly_salary: e.target.value === '' ? '' : Number(e.target.value) })}
+                  placeholder="e.g. 10000"
+                  className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+                />
+              </div>
+            )}
+            {['daily_wage', 'daily_weekly_payroll', 'daily_monthly_payroll'].includes(config.pay_basis) && (
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600">Daily Rate (₹)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={config.daily_rate || ''}
+                  onChange={e => patch({ daily_rate: e.target.value === '' ? '' : Number(e.target.value) })}
+                  placeholder="e.g. 1500"
+                  className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+                />
+              </div>
+            )}
+            {['hourly_wage', 'hourly_weekly_payroll', 'hourly_monthly_payroll'].includes(config.pay_basis) && (
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600">Hourly Rate (₹)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={config.hourly_rate || ''}
+                  onChange={e => patch({ hourly_rate: e.target.value === '' ? '' : Number(e.target.value) })}
+                  placeholder="e.g. 350"
+                  className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+                />
+              </div>
+            )}
+            {config.pay_basis === 'half_day_rate' && (
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600">Half-Day Rate (₹)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={config.half_day_rate || ''}
+                  onChange={e => patch({ half_day_rate: e.target.value === '' ? '' : Number(e.target.value) })}
+                  placeholder="e.g. 750"
+                  className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+                />
+              </div>
+            )}
+            {config.pay_basis === 'custom' && (
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600">Custom Rate (₹)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={config.custom_rate || ''}
+                  onChange={e => patch({ custom_rate: e.target.value === '' ? '' : Number(e.target.value) })}
+                  placeholder="e.g. 1200"
+                  className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Advanced Pay Basis configurations */}
+        {config.pay_basis && config.pay_basis !== 'monthly_salary' && (
+          <div className="grid grid-cols-2 gap-4 pt-3 border-t border-slate-200/60 mt-3">
+            <div>
+              <label className="text-[11px] font-semibold text-slate-600">Standard Hours / Day</label>
               <input
                 type="number"
-                min={0}
-                value={primaryValue}
-                onChange={e => patch({ [primaryKey]: e.target.value === '' ? '' : Number(e.target.value) })}
-                placeholder={primaryPlaceholder}
-                className="w-full pl-7 pr-3 py-3 border-2 border-violet-200 rounded-xl text-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-violet-400 bg-violet-50/50 placeholder-slate-300"
+                min={1}
+                max={24}
+                value={config.standard_hours_per_day ?? 8}
+                onChange={e => patch({ standard_hours_per_day: Number(e.target.value) })}
+                className="w-full mt-1 px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
               />
-              {hasModeInput && mode === 'annual_ctc' && (
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-violet-500 font-semibold">
-                  = {inr(calc.monthlyCtc)}/mo
-                </span>
-              )}
+            </div>
+            <div>
+              <label className="text-[11px] font-semibold text-slate-600">Standard Days / Month</label>
+              <input
+                type="number"
+                min={1}
+                max={31}
+                value={config.standard_working_days_per_month ?? 26}
+                onChange={e => patch({ standard_working_days_per_month: Number(e.target.value) })}
+                className="w-full mt-1 px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+              />
+            </div>
+            {config.pay_basis === 'weekly_salary' && (
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600">Standard Days / Week</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={7}
+                  value={config.standard_working_days_per_week ?? 6}
+                  onChange={e => patch({ standard_working_days_per_week: Number(e.target.value) })}
+                  className="w-full mt-1 px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+                />
+              </div>
+            )}
+            {config.pay_basis === 'half_day_rate' && (
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600">Half-Day Hours</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={12}
+                  value={config.half_day_hours ?? 4}
+                  onChange={e => patch({ half_day_hours: Number(e.target.value) })}
+                  className="w-full mt-1 px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+                />
+              </div>
+            )}
+            <div>
+              <label className="text-[11px] font-semibold text-slate-600">Payroll Frequency</label>
+              <input
+                type="text"
+                value={config.payroll_frequency ?? ''}
+                onChange={e => patch({ payroll_frequency: e.target.value })}
+                placeholder="e.g. Monthly, Weekly"
+                className="w-full mt-1 px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-semibold text-slate-600">Calculation Unit</label>
+              <input
+                type="text"
+                value={config.calculation_unit ?? ''}
+                onChange={e => patch({ calculation_unit: e.target.value })}
+                placeholder="e.g. hour, day, week"
+                className="w-full mt-1 px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+              />
+            </div>
+            <div className="col-span-2 flex flex-wrap gap-4 pt-1">
+              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.ot_eligible !== false}
+                  onChange={e => patch({ ot_eligible: e.target.checked })}
+                  className="rounded text-violet-600 focus:ring-violet-400 w-4 h-4"
+                />
+                OT Eligible
+              </label>
+              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.holiday_pay_eligible === true}
+                  onChange={e => patch({ holiday_pay_eligible: e.target.checked })}
+                  className="rounded text-violet-600 focus:ring-violet-400 w-4 h-4"
+                />
+                Holiday Pay Eligible
+              </label>
+              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.weekend_pay_eligible === true}
+                  onChange={e => patch({ weekend_pay_eligible: e.target.checked })}
+                  className="rounded text-violet-600 focus:ring-violet-400 w-4 h-4"
+                />
+                Weekend Pay Eligible
+              </label>
             </div>
           </div>
+        )}
+      </div>
 
-          {/* Monthly / Annual toggle */}
-          <div className="flex flex-col items-end gap-1 shrink-0 pt-4">
-            <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">View</span>
-            <div className="flex rounded-lg border border-slate-200 overflow-hidden">
-              {(['monthly', 'annual'] as const).map(v => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setViewMode(v)}
-                  className={`px-3 py-1.5 text-[11px] font-semibold transition-colors ${viewMode === v ? 'bg-violet-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
-                >
-                  {v === 'monthly' ? 'Monthly' : 'Annual'}
-                </button>
-              ))}
+      {/* ── Input mode selector (only for Monthly Salary) ── */}
+      {(!config.pay_basis || config.pay_basis === 'monthly_salary') && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 mb-1">
+            <IndianRupee className="w-3.5 h-3.5 text-violet-500" />
+            <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">Salary Input Mode</label>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { key: 'annual_ctc', label: 'Annual CTC / LPA', sub: 'e.g. ₹6,00,000/year' },
+              { key: 'monthly_ctc', label: 'Monthly CTC', sub: 'e.g. ₹50,000/month' },
+              { key: 'basic_salary', label: 'Basic Salary', sub: 'Derive CTC from basic' },
+            ] as const).map(opt => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => patch({ salary_input_mode: opt.key })}
+                className={`flex flex-col items-center px-3 py-2.5 rounded-xl border-2 text-center transition-all ${mode === opt.key
+                  ? 'border-violet-500 bg-violet-50 shadow-md shadow-violet-100'
+                  : 'border-slate-200 bg-white hover:border-violet-300'
+                  }`}
+              >
+                <span className={`text-xs font-bold ${mode === opt.key ? 'text-violet-700' : 'text-slate-700'}`}>{opt.label}</span>
+                <span className="text-[10px] text-slate-400 mt-0.5">{opt.sub}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Primary input */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <label className="text-[11px] font-semibold text-slate-600">{primaryLabel}</label>
+              <div className="relative mt-1">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-violet-500">₹</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={primaryValue}
+                  onChange={e => patch({ [primaryKey]: e.target.value === '' ? '' : Number(e.target.value) })}
+                  placeholder={primaryPlaceholder}
+                  className="w-full pl-7 pr-3 py-3 border-2 border-violet-200 rounded-xl text-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-violet-400 bg-violet-50/50 placeholder-slate-300"
+                />
+                {hasModeInput && mode === 'annual_ctc' && (
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-violet-500 font-semibold">
+                    = {inr(calc.monthlyCtc)}/mo
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Monthly / Annual toggle */}
+            <div className="flex flex-col items-end gap-1 shrink-0 pt-4">
+              <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">View</span>
+              <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+                {(['monthly', 'annual'] as const).map(v => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setViewMode(v)}
+                    className={`px-3 py-1.5 text-[11px] font-semibold transition-colors ${viewMode === v ? 'bg-violet-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                  >
+                    {v === 'monthly' ? 'Monthly' : 'Annual'}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* ── Summary card ── */}
       {hasModeInput && <SummaryCard calc={calc} annual={annual} issues={issues} />}
@@ -1013,8 +1337,30 @@ export function SalaryStructureForm({ config, onChange }: Props) {
 
         {expanded.has('earnings') && (
           <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
-            {/* Basic */}
-            {mode !== 'basic_salary' ? (
+            {payBasis !== 'monthly_salary' ? (
+              <div className="px-4">
+                <ComputedRow
+                  label="Estimated Monthly Gross"
+                  value={calc.gross}
+                  formula={
+                    payBasis === 'weekly_salary'
+                      ? `₹${config.weekly_salary || 0} × (${config.standard_working_days_per_month ?? 26} / ${config.standard_working_days_per_week ?? 6}) weeks`
+                      : ['daily_wage', 'daily_weekly_payroll', 'daily_monthly_payroll'].includes(payBasis)
+                        ? `₹${config.daily_rate || 0} × ${config.standard_working_days_per_month ?? 26} days`
+                        : ['hourly_wage', 'hourly_weekly_payroll', 'hourly_monthly_payroll'].includes(payBasis)
+                          ? `₹${config.hourly_rate || 0} × ${config.standard_hours_per_day ?? 8} hrs/day × ${config.standard_working_days_per_month ?? 26} days`
+                          : payBasis === 'half_day_rate'
+                            ? `₹${config.half_day_rate || 0} × 2 half-days/day × ${config.standard_working_days_per_month ?? 26} days`
+                            : `₹${config.custom_rate || 0} × ${config.standard_working_days_per_month ?? 26} days`
+                  }
+                  annual={annual}
+                  accent="violet"
+                />
+              </div>
+            ) : (
+              <>
+                {/* Basic */}
+                {mode !== 'basic_salary' ? (
               <div className="px-4">
                 <PctRow
                   label="Basic Salary"
@@ -1219,6 +1565,8 @@ export function SalaryStructureForm({ config, onChange }: Props) {
                 </div>
               </div>
             </div>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -1499,14 +1847,28 @@ export function SalaryStructureForm({ config, onChange }: Props) {
 export function SalaryStructureDetailView({ config }: { config: Record<string, any> }) {
   const calc = useMemo(() => computeSalary(config), [config]);
   const mode = config.salary_input_mode || 'annual_ctc';
-  const hasInput = (mode === 'annual_ctc' && Number(config.annual_ctc_lpa) > 0)
-    || (mode === 'monthly_ctc' && Number(config.monthly_ctc_input) > 0)
-    || (mode === 'basic_salary' && Number(config.basic_monthly_input) > 0);
+  const payBasis = config.pay_basis || 'monthly_salary';
+
+  const hasInput = payBasis === 'monthly_salary'
+    ? (mode === 'annual_ctc' && Number(config.annual_ctc_lpa) > 0)
+      || (mode === 'monthly_ctc' && Number(config.monthly_ctc_input) > 0)
+      || (mode === 'basic_salary' && Number(config.basic_monthly_input) > 0)
+    : payBasis === 'weekly_salary' ? Number(config.weekly_salary) > 0
+    : ['daily_wage', 'daily_weekly_payroll', 'daily_monthly_payroll'].includes(payBasis) ? Number(config.daily_rate) > 0
+    : ['hourly_wage', 'hourly_weekly_payroll', 'hourly_monthly_payroll'].includes(payBasis) ? Number(config.hourly_rate) > 0
+    : payBasis === 'half_day_rate' ? Number(config.half_day_rate) > 0
+    : Number(config.custom_rate) > 0;
 
   if (!hasInput) {
     return (
       <div className="space-y-3">
         {[
+          ['Pay Basis', payBasis.replace(/_/g, ' ').toUpperCase()],
+          ...(payBasis === 'weekly_salary' ? [['Weekly Salary', config.weekly_salary ? `₹${config.weekly_salary}/week` : '—']] : []),
+          ...(['daily_wage', 'daily_weekly_payroll', 'daily_monthly_payroll'].includes(payBasis) ? [['Daily Rate', config.daily_rate ? `₹${config.daily_rate}/day` : '—']] : []),
+          ...(['hourly_wage', 'hourly_weekly_payroll', 'hourly_monthly_payroll'].includes(payBasis) ? [['Hourly Rate', config.hourly_rate ? `₹${config.hourly_rate}/hour` : '—']] : []),
+          ...(payBasis === 'half_day_rate' ? [['Half-Day Rate', config.half_day_rate ? `₹${config.half_day_rate}/half-day` : '—']] : []),
+          ...(payBasis === 'custom' ? [['Custom Rate', config.custom_rate ? `₹${config.custom_rate}/unit` : '—']] : []),
           ['Basic % of CTC', config.basic_percent_of_ctc ? `${config.basic_percent_of_ctc}%` : '—'],
           ['HRA % of Basic', config.hra_percent_of_basic ? `${config.hra_percent_of_basic}%` : '—'],
           ['PF Applicable', config.pf_applicable !== false ? 'Yes (12%)' : 'No'],
@@ -1523,6 +1885,26 @@ export function SalaryStructureDetailView({ config }: { config: Record<string, a
       </div>
     );
   }
+
+  const earningsItems = payBasis === 'monthly_salary' ? [
+    ['Basic', calc.basic],
+    ['HRA', calc.hra],
+    ...(calc.da > 0 ? [['DA', calc.da]] : []),
+    ['Conveyance', calc.conveyance],
+    ['Medical', calc.medical],
+    ...(calc.food > 0 ? [['Food Allowance', calc.food]] : []),
+    ...(calc.travel > 0 ? [['Travel Allowance', calc.travel]] : []),
+    ...(calc.shift > 0 ? [['Shift Allowance', calc.shift]] : []),
+    ...(calc.bonus > 0 ? [['Bonus (monthly)', calc.bonus]] : []),
+    ...(calc.special > 0 ? [['Special Allowance', calc.special]] : []),
+  ] : [
+    ['Pay Basis', payBasis.replace(/_/g, ' ').toUpperCase()],
+    ...(payBasis === 'weekly_salary' ? [['Weekly Rate', config.weekly_salary]] : []),
+    ...(['daily_wage', 'daily_weekly_payroll', 'daily_monthly_payroll'].includes(payBasis) ? [['Daily Rate', config.daily_rate]] : []),
+    ...(['hourly_wage', 'hourly_weekly_payroll', 'hourly_monthly_payroll'].includes(payBasis) ? [['Hourly Rate', config.hourly_rate]] : []),
+    ...(payBasis === 'half_day_rate' ? [['Half-Day Rate', config.half_day_rate]] : []),
+    ...(payBasis === 'custom' ? [['Custom Rate', config.custom_rate]] : []),
+  ];
 
   return (
     <div className="space-y-4">
@@ -1547,21 +1929,12 @@ export function SalaryStructureDetailView({ config }: { config: Record<string, a
       <div>
         <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Earnings Breakdown</p>
         <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
-          {[
-            ['Basic', calc.basic],
-            ['HRA', calc.hra],
-            ...(calc.da > 0 ? [['DA', calc.da]] : []),
-            ['Conveyance', calc.conveyance],
-            ['Medical', calc.medical],
-            ...(calc.food > 0 ? [['Food Allowance', calc.food]] : []),
-            ...(calc.travel > 0 ? [['Travel Allowance', calc.travel]] : []),
-            ...(calc.shift > 0 ? [['Shift Allowance', calc.shift]] : []),
-            ...(calc.bonus > 0 ? [['Bonus (monthly)', calc.bonus]] : []),
-            ...(calc.special > 0 ? [['Special Allowance', calc.special]] : []),
-          ].map(([label, val]) => (
+          {earningsItems.map(([label, val]) => (
             <div key={label as string} className="flex items-center justify-between px-3 py-2">
               <span className="text-xs text-slate-600">{label}</span>
-              <span className="text-xs font-semibold text-slate-800">{inr(val as number)}</span>
+              <span className="text-xs font-semibold text-slate-800">
+                {typeof val === 'number' ? inr(val) : String(val)}
+              </span>
             </div>
           ))}
           <div className="flex items-center justify-between px-3 py-2 bg-violet-50">
@@ -1570,6 +1943,7 @@ export function SalaryStructureDetailView({ config }: { config: Record<string, a
           </div>
         </div>
       </div>
+
 
       {/* Deductions breakdown */}
       <div>

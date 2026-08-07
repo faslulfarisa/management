@@ -1,8 +1,10 @@
 import { Injectable, UnauthorizedException, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { DatabaseService } from '../../shared/database.service';
+import { SchedulerControlService } from '../../shared/scheduler-control.service';
+import { CredentialEncryptionService } from '../../shared/crypto/credential-encryption.service';
 import { EmailService } from './email.service';
 import { AuditLogService } from '../platform/services/audit-log.service';
 import { NotificationEmitterService } from '../notifications/services/notification-emitter.service';
@@ -10,6 +12,7 @@ import { AccountLockedException } from './exceptions/account-locked.exception';
 import { AccountDeactivatedException } from './exceptions/account-deactivated.exception';
 import { MfaLockedException } from './exceptions/mfa-locked.exception';
 import { validatePasswordPolicy } from '../../shared/credential-generator.util';
+import { normalizeStoredUserType } from '../../shared/user-hierarchy.constants';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import * as speakeasy from 'speakeasy';
@@ -21,6 +24,7 @@ const MFA_LOGIN_SESSION_TTL_SECONDS = 300;
 const MFA_MAX_FAILED_ATTEMPTS = 5;
 const PASSWORD_CHANGE_SESSION_TTL_SECONDS = 900;
 const RECOVERY_CODE_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous 0/O/1/I
+const ORG_ADMIN_NORMAL_LOGIN_MESSAGE = 'Organization Administrators must sign in through the Admin Portal.';
 
 @Injectable()
 export class AuthService {
@@ -31,79 +35,173 @@ export class AuthService {
     private emailService: EmailService,
     private auditLog: AuditLogService,
     private notificationEmitter: NotificationEmitterService,
+    private cryptoService: CredentialEncryptionService = new CredentialEncryptionService(),
+    private schedulerControl: SchedulerControlService = new SchedulerControlService(),
   ) {}
 
-  // ── Login flow (global email lookup, no tenant_id) ──────────────
+  // ── Login flow (customer email lookup; platform email/username lookup) ──
 
-  async validateUser(email: string, password: string, ipAddress?: string, userAgent?: string) {
+  async validateUser(identifier: string, password: string, ipAddress?: string, userAgent?: string, portal?: 'platform' | 'customer') {
+    const loginIdentifier = String(identifier || '').trim();
     const { rows } = await this.db.query(
-      'SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL',
-      [email],
+      portal === 'platform'
+        ? `SELECT *
+           FROM users
+           WHERE deleted_at IS NULL
+             AND is_internal_staff = true
+             AND (LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1))
+           ORDER BY CASE WHEN LOWER(email) = LOWER($1) THEN 0 ELSE 1 END
+           LIMIT 1`
+        : `SELECT *
+           FROM users
+           WHERE deleted_at IS NULL
+             AND is_internal_staff = false
+             AND (LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1))
+           ORDER BY CASE WHEN LOWER(email) = LOWER($1) THEN 0 ELSE 1 END, created_at ASC
+           LIMIT 1`,
+      [loginIdentifier],
     );
 
     const user = rows[0];
     if (!user) {
-      await this.recordLoginAttempt({ tenantId: null, userId: null, email, success: false, failureReason: 'user_not_found', ip: ipAddress, userAgent });
+      await this.recordLoginAttempt({ tenantId: null, userId: null, email: loginIdentifier, success: false, failureReason: 'user_not_found', ip: ipAddress, userAgent });
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    const tenantId = await this.assertPasswordLoginAllowed(user, loginIdentifier, password, ipAddress, userAgent, undefined, false);
+
+    if (portal === 'customer' && await this.userHasOrgAdminMembership(user.id)) {
+      await this.recordLoginAttempt({
+        tenantId,
+        userId: user.id,
+        email: loginIdentifier,
+        success: false,
+        failureReason: 'org_admin_wrong_portal',
+        ip: ipAddress,
+        userAgent,
+      });
+      throw new ForbiddenException(ORG_ADMIN_NORMAL_LOGIN_MESSAGE);
+    }
+
+    await this.markSuccessfulPasswordLogin(user, loginIdentifier, tenantId, ipAddress, userAgent);
+
+    return user;
+  }
+
+  async validateAdminUser(companyCode: string, identifier: string, password: string, ipAddress?: string, userAgent?: string) {
+    const loginIdentifier = String(identifier || '').trim();
+    const normalizedCompanyCode = String(companyCode || '').trim();
+
+    const { rows: tenantRows } = await this.db.query(
+      `SELECT id, name, status, lifecycle_stage, approval_status, rejection_reason
+       FROM tenants
+       WHERE deleted_at IS NULL
+         AND company_code IS NOT NULL
+         AND LOWER(company_code) = LOWER($1)
+       LIMIT 1`,
+      [normalizedCompanyCode],
+    );
+
+    const tenant = tenantRows[0];
+    if (!tenant) {
+      await this.recordLoginAttempt({ tenantId: null, userId: null, email: loginIdentifier, success: false, failureReason: 'organization_not_found', ip: ipAddress, userAgent });
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const { rows } = await this.db.query(
+      `SELECT u.*, ut.user_type, ut.is_org_admin, t.id AS preferred_tenant_id
+       FROM user_tenants ut
+       JOIN users u ON u.id = ut.user_id
+       JOIN tenants t ON t.id = ut.tenant_id
+       WHERE ut.tenant_id = $1
+         AND u.deleted_at IS NULL
+         AND u.is_internal_staff = false
+         AND (LOWER(u.email) = LOWER($2) OR LOWER(u.username) = LOWER($2))
+       ORDER BY CASE WHEN LOWER(u.email) = LOWER($2) THEN 0 ELSE 1 END, u.created_at ASC
+       LIMIT 1`,
+      [tenant.id, loginIdentifier],
+    );
+
+    const user = rows[0];
+    if (!user) {
+      await this.recordLoginAttempt({ tenantId: tenant.id, userId: null, email: loginIdentifier, success: false, failureReason: 'user_not_found', ip: ipAddress, userAgent });
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (!(user.is_org_admin === true || normalizeStoredUserType(user.user_type) === 'org_admin')) {
+      await this.recordLoginAttempt({ tenantId: tenant.id, userId: user.id, email: loginIdentifier, success: false, failureReason: 'not_org_admin', ip: ipAddress, userAgent });
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    await this.assertPasswordLoginAllowed(user, loginIdentifier, password, ipAddress, userAgent, tenant.id, tenant.status === 'active');
+
+    if (tenant.status !== 'active') {
+      await this.recordLoginAttempt({
+        tenantId: tenant.id,
+        userId: user.id,
+        email: loginIdentifier,
+        success: false,
+        failureReason: 'organization_inactive',
+        ip: ipAddress,
+        userAgent,
+      });
+      return {
+        ...user,
+        preferred_tenant_id: tenant.id,
+        pendingOrganization: {
+          id: tenant.id,
+          name: tenant.name,
+          approvalStatus: this.getBlockedOrganizationStatus(tenant),
+          rejectionReason: tenant.rejection_reason,
+        },
+      };
+    }
+
+    return { ...user, preferred_tenant_id: tenant.id };
+  }
+
+  // ── Account lockout helpers ─────────────────────────────────────
+
+  private async assertPasswordLoginAllowed(
+    user: any,
+    loginIdentifier: string,
+    password: string,
+    ipAddress?: string,
+    userAgent?: string,
+    tenantIdOverride?: string | null,
+    recordSuccess = true,
+  ): Promise<string | null> {
+    const tenantId = tenantIdOverride ?? (await this.getPrimaryTenantId(user.id));
+
     // Lock status is checked before any authentication outcome is revealed.
     if (user.is_locked) {
-      await this.recordLoginAttempt({ tenantId: null, userId: user.id, email, success: false, failureReason: 'account_locked', ip: ipAddress, userAgent });
+      await this.recordLoginAttempt({ tenantId, userId: user.id, email: loginIdentifier, success: false, failureReason: 'account_locked', ip: ipAddress, userAgent });
       throw new AccountLockedException();
     }
 
     if (user.status !== 'active' || !user.is_active) {
       const message = await this.getDeactivationMessage(user);
-      await this.recordLoginAttempt({ tenantId: null, userId: user.id, email, success: false, failureReason: 'account_deactivated', ip: ipAddress, userAgent });
+      await this.recordLoginAttempt({ tenantId, userId: user.id, email: loginIdentifier, success: false, failureReason: 'account_deactivated', ip: ipAddress, userAgent });
       throw new AccountDeactivatedException(message, user.status);
     }
+
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
+      await this.recordLoginAttempt({ tenantId, userId: user.id, email: loginIdentifier, success: false, failureReason: 'account_locked', ip: ipAddress, userAgent });
       throw new UnauthorizedException('Account is locked. Try again later');
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     if (!isPasswordValid) {
-      await this.recordLoginAttempt({ tenantId: null, userId: user.id, email, success: false, failureReason: 'invalid_password', ip: ipAddress, userAgent });
-
-      // Super Admin / Org Admin accounts are never auto-locked.
-      if (await this.isLockoutExempt(user)) {
-        throw new UnauthorizedException('Invalid credentials');
-      }
-
-      const newCount = (user.failed_login_count || 0) + 1;
-      const tenantId = await this.getPrimaryTenantId(user.id);
-      const threshold = await this.getLockoutThreshold(tenantId);
-
-      await this.db.query(
-        `UPDATE users
-         SET failed_login_count = $1, last_failed_login_at = now(), last_failed_login_ip = $2, last_failed_login_device = $3
-         WHERE id = $4`,
-        [newCount, ipAddress || null, userAgent || null, user.id],
-      );
-
-      if (newCount >= threshold) {
-        await this.lockAccount(user, tenantId, newCount, threshold, ipAddress, userAgent);
-        throw new AccountLockedException();
-      }
-
-      if (newCount > 1 && tenantId) {
-        await this.auditLog.log({
-          tenantId,
-          userId: user.id,
-          entityType: 'user',
-          entityId: user.id,
-          action: 'repeated_failed_login',
-          newValues: { failedCount: newCount, threshold },
-          ipAddress,
-          userAgent,
-        });
-      }
-
-      throw new UnauthorizedException('Invalid credentials');
+      await this.handleInvalidPassword(user, loginIdentifier, tenantId, ipAddress, userAgent);
     }
 
-    await this.recordLoginAttempt({ tenantId: null, userId: user.id, email, success: true, ip: ipAddress, userAgent });
+    if (!recordSuccess) return tenantId;
+    await this.markSuccessfulPasswordLogin(user, loginIdentifier, tenantId, ipAddress, userAgent);
+    return tenantId;
+  }
+
+  private async markSuccessfulPasswordLogin(user: any, loginIdentifier: string, tenantId: string | null, ipAddress?: string, userAgent?: string) {
+    await this.recordLoginAttempt({ tenantId, userId: user.id, email: loginIdentifier, success: true, ip: ipAddress, userAgent });
 
     await this.db.query(
       `UPDATE users
@@ -111,11 +209,58 @@ export class AuthService {
        WHERE id = $1`,
       [user.id],
     );
-
-    return user;
   }
 
-  // ── Account lockout helpers ─────────────────────────────────────
+  private async handleInvalidPassword(user: any, loginIdentifier: string, tenantId: string | null, ipAddress?: string, userAgent?: string): Promise<never> {
+    await this.recordLoginAttempt({ tenantId, userId: user.id, email: loginIdentifier, success: false, failureReason: 'invalid_password', ip: ipAddress, userAgent });
+
+    // Super Admin / Org Admin accounts are never auto-locked.
+    if (await this.isLockoutExempt(user)) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const newCount = (user.failed_login_count || 0) + 1;
+    const threshold = await this.getLockoutThreshold(tenantId);
+
+    await this.db.query(
+      `UPDATE users
+       SET failed_login_count = $1, last_failed_login_at = now(), last_failed_login_ip = $2, last_failed_login_device = $3
+       WHERE id = $4`,
+      [newCount, ipAddress || null, userAgent || null, user.id],
+    );
+
+    if (newCount >= threshold) {
+      await this.lockAccount(user, tenantId, newCount, threshold, ipAddress, userAgent);
+      throw new AccountLockedException();
+    }
+
+    if (newCount > 1 && tenantId) {
+      await this.auditLog.log({
+        tenantId,
+        userId: user.id,
+        entityType: 'user',
+        entityId: user.id,
+        action: 'repeated_failed_login',
+        newValues: { failedCount: newCount, threshold },
+        ipAddress,
+        userAgent,
+      });
+    }
+
+    throw new UnauthorizedException('Invalid credentials');
+  }
+
+  private async userHasOrgAdminMembership(userId: string): Promise<boolean> {
+    const { rows } = await this.db.query(
+      `SELECT 1
+       FROM user_tenants
+       WHERE user_id = $1
+         AND (is_org_admin = true OR user_type = 'org_admin')
+       LIMIT 1`,
+      [userId],
+    );
+    return rows.length > 0;
+  }
 
   private async isLockoutExempt(user: any): Promise<boolean> {
     if (user.is_super_admin) return true;
@@ -178,7 +323,15 @@ export class AuthService {
     await this.db.query(
       `INSERT INTO login_attempts (tenant_id, user_id, email, success, failure_reason, ip_address, user_agent)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [data.tenantId, data.userId, data.email, data.success, data.failureReason || null, data.ip || null, data.userAgent || null],
+      [
+        data.tenantId,
+        data.userId,
+        this.cryptoService.encrypt(data.email),
+        data.success,
+        data.failureReason || null,
+        data.ip || null,
+        data.userAgent || null,
+      ],
     );
   }
 
@@ -319,14 +472,26 @@ export class AuthService {
       throw new MfaLockedException();
     }
 
+    if (user.pendingOrganization) {
+      return {
+        email: user.email,
+        isSuperAdmin: false,
+        isInternalStaff: false,
+        internalRole: null,
+        tenants: [],
+        selectedTenantId: null,
+        pendingOrganization: user.pendingOrganization,
+      };
+    }
+
     // Bulk-imported (or otherwise flagged) accounts must rotate their password
     // before reaching MFA/dashboard — no JWT is issued until that happens.
     if (user.must_change_password) {
       const { rows } = await this.db.query(
-        `INSERT INTO password_change_sessions (user_id, ip_address, user_agent, expires_at)
-         VALUES ($1, $2, $3, now() + interval '15 minutes')
+        `INSERT INTO password_change_sessions (user_id, tenant_id, ip_address, user_agent, expires_at)
+         VALUES ($1, $2, $3, $4, now() + interval '15 minutes')
          RETURNING id`,
-        [user.id, ipAddress || null, deviceInfo || null],
+        [user.id, user.preferred_tenant_id || null, ipAddress || null, deviceInfo || null],
       );
 
       return {
@@ -374,13 +539,19 @@ export class AuthService {
       userAgent,
     });
 
-    return this.proceedPastPassword({ ...user, password_hash: newHash, must_change_password: false }, ipAddress, userAgent);
+    return this.proceedPastPassword(
+      { ...user, password_hash: newHash, must_change_password: false, preferred_tenant_id: session.tenant_id || user.preferred_tenant_id },
+      ipAddress,
+      userAgent,
+    );
   }
 
   /** Deletes expired forced-password-change sessions. Mirrors the MFA login-session sweep below. */
-  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'password-change-session-sweep' })
+  @Cron('7 */5 * * * *', { name: 'password-change-session-sweep' })
   async sweepExpiredPasswordChangeSessions() {
-    await this.db.query('DELETE FROM password_change_sessions WHERE expires_at < now()');
+    await this.schedulerControl.run('password-change-session-sweep', async () => {
+      await this.db.query('DELETE FROM password_change_sessions WHERE expires_at < now()');
+    });
   }
 
   private async proceedPastPassword(user: any, ipAddress: string, deviceInfo: string, trustedDeviceToken?: string) {
@@ -392,10 +563,10 @@ export class AuthService {
       }
 
       const { rows } = await this.db.query(
-        `INSERT INTO mfa_login_sessions (user_id, ip_address, user_agent, expires_at)
-         VALUES ($1, $2, $3, now() + interval '5 minutes')
+        `INSERT INTO mfa_login_sessions (user_id, tenant_id, ip_address, user_agent, expires_at)
+         VALUES ($1, $2, $3, $4, now() + interval '5 minutes')
          RETURNING id`,
-        [user.id, ipAddress || null, deviceInfo || null],
+        [user.id, user.preferred_tenant_id || null, ipAddress || null, deviceInfo || null],
       );
 
       return {
@@ -422,7 +593,7 @@ export class AuthService {
     if (new Date(session.expires_at) < new Date()) throw new UnauthorizedException('Login session has expired. Please log in again.');
 
     const { rows: userRows } = await this.db.query('SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL', [session.user_id]);
-    const user = userRows[0];
+    const user = userRows[0] ? { ...userRows[0], preferred_tenant_id: session.tenant_id || null } : null;
     if (!user) throw new UnauthorizedException('Invalid login session');
 
     if (user.mfa_locked_until && new Date(user.mfa_locked_until) > new Date()) {
@@ -432,7 +603,7 @@ export class AuthService {
     const usedRecoveryCode = !!body.recoveryCode;
     const verified = usedRecoveryCode
       ? await this.consumeRecoveryCode(user.id, body.recoveryCode!)
-      : !!body.token && !!user.mfa_secret && speakeasy.totp.verify({ secret: user.mfa_secret, encoding: 'base32', token: body.token, window: 2 });
+      : !!body.token && !!user.mfa_secret && speakeasy.totp.verify({ secret: this.decryptMfaSecret(user.mfa_secret), encoding: 'base32', token: body.token, window: 2 });
 
     if (!verified) {
       await this.recordMfaLoginFailure(session, user, ipAddress, userAgent);
@@ -474,6 +645,7 @@ export class AuthService {
     }
 
     const tokens = await this.issueTokensForUser(user, ipAddress, userAgent);
+    if (!tokens.refreshToken) return tokens;
 
     let trustedDeviceToken: string | undefined;
     if (body.trustDevice) {
@@ -622,10 +794,16 @@ export class AuthService {
     return false;
   }
 
+  private decryptMfaSecret(value: string): string {
+    return this.cryptoService.decrypt(value);
+  }
+
   /** Deletes expired MFA login sessions. Mirrors the stale-sweep cron pattern used elsewhere (e.g. biometric-device.service.ts). */
-  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'mfa-login-session-sweep' })
+  @Cron('17 */5 * * * *', { name: 'mfa-login-session-sweep' })
   async sweepExpiredMfaLoginSessions() {
-    await this.db.query('DELETE FROM mfa_login_sessions WHERE expires_at < now()');
+    await this.schedulerControl.run('mfa-login-session-sweep', async () => {
+      await this.db.query('DELETE FROM mfa_login_sessions WHERE expires_at < now()');
+    });
   }
 
   private async issueTokensForUser(user: any, ipAddress: string, deviceInfo: string) {
@@ -656,6 +834,7 @@ export class AuthService {
       return {
         accessToken,
         refreshToken: refreshTokenValue,
+        email: user.email,
         isSuperAdmin: false,
         isInternalStaff: true,
         internalRole: user.internal_role,
@@ -675,23 +854,30 @@ export class AuthService {
       [user.id],
     );
 
-    const tenants = tenantRows.map(t => ({
-      id: t.id,
-      name: t.name,
-      slug: t.slug,
-      logoUrl: t.logo_url,
-      status: t.status,
-      isOrgAdmin: t.is_org_admin,
-      userType: user.is_super_admin ? 'super_admin' : (t.user_type || 'employee'),
-    }));
+    const hasCustomerTenantMembership = tenantRows.length > 0;
+    const isGlobalSuperAdmin = user.is_super_admin && !hasCustomerTenantMembership;
+
+    const tenants = tenantRows.map(t => {
+      const rawUserType = normalizeStoredUserType(t.user_type);
+      const isOrgAdmin = t.is_org_admin === true || rawUserType === 'org_admin';
+      return {
+        id: t.id,
+        name: t.name,
+        slug: t.slug,
+        logoUrl: t.logo_url,
+        status: t.status,
+        isOrgAdmin,
+        userType: isOrgAdmin ? 'org_admin' : rawUserType,
+      };
+    });
 
     // If the user has no active tenant (e.g. their only organization is
     // still pending Super Admin approval), surface that explicitly so the
     // login page can show a status screen instead of an empty dashboard.
     let pendingOrganization: { id: string; name: string; approvalStatus: string; rejectionReason: string | null } | null = null;
-    if (!tenants.length && !user.is_super_admin) {
+    if (!tenants.length && !isGlobalSuperAdmin) {
       const { rows: pendingRows } = await this.db.query(
-        `SELECT t.id, t.name, t.approval_status, t.rejection_reason
+        `SELECT t.id, t.name, t.status, t.lifecycle_stage, t.approval_status, t.rejection_reason
          FROM user_tenants ut
          JOIN tenants t ON ut.tenant_id = t.id
          WHERE ut.user_id = $1 AND t.deleted_at IS NULL
@@ -702,20 +888,36 @@ export class AuthService {
         pendingOrganization = {
           id: pendingRows[0].id,
           name: pendingRows[0].name,
-          approvalStatus: pendingRows[0].approval_status,
+          approvalStatus: this.getBlockedOrganizationStatus(pendingRows[0]),
           rejectionReason: pendingRows[0].rejection_reason,
         };
       }
     }
 
-    // If only one tenant, auto-select it in the JWT
-    const autoTenantId = tenants.length === 1 ? tenants[0].id : null;
+    if (!tenants.length && pendingOrganization) {
+      return {
+        email: user.email,
+        isSuperAdmin: false,
+        isInternalStaff: false,
+        internalRole: null,
+        tenants: [],
+        selectedTenantId: null,
+        pendingOrganization,
+      };
+    }
+
+    const preferredTenantId = user.preferred_tenant_id && tenants.some(t => t.id === user.preferred_tenant_id)
+      ? user.preferred_tenant_id
+      : null;
+    // If only one tenant, auto-select it in the JWT. Admin login can set a
+    // preferred tenant from company_code even when the user has multiple orgs.
+    const autoTenantId = preferredTenantId || (tenants.length === 1 ? tenants[0].id : null);
 
     const payload = {
       sub: user.id,
       email: user.email,
       employee_id: user.employee_id,
-      is_super_admin: user.is_super_admin,
+      is_super_admin: isGlobalSuperAdmin,
       tenant_id: autoTenantId,
     };
 
@@ -732,7 +934,8 @@ export class AuthService {
     return {
       accessToken,
       refreshToken: refreshTokenValue,
-      isSuperAdmin: user.is_super_admin,
+      email: user.email,
+      isSuperAdmin: isGlobalSuperAdmin,
       isInternalStaff: false,
       internalRole: null,
       tenants,
@@ -742,6 +945,16 @@ export class AuthService {
   }
 
   // ── Select tenant (org switch) ──────────────────────────────────
+
+  private getBlockedOrganizationStatus(tenant: any): string {
+    if (tenant.status !== 'active' && tenant.lifecycle_stage && tenant.lifecycle_stage !== 'active') {
+      return tenant.lifecycle_stage;
+    }
+    if (tenant.approval_status && tenant.approval_status !== 'approved') {
+      return tenant.approval_status;
+    }
+    return tenant.status === 'active' ? 'approved' : 'pending_review';
+  }
 
   async selectTenant(userId: string, tenantId: string, ipAddress?: string, userAgent?: string) {
     // Verify user has membership in this tenant
@@ -800,11 +1013,12 @@ export class AuthService {
     }
 
     const user = membership[0];
+    const userType = user.is_org_admin ? 'org_admin' : normalizeStoredUserType(user.user_type);
     const payload = {
       sub: userId,
       email: user.email,
       employee_id: user.employee_id,
-      is_super_admin: user.is_super_admin,
+      is_super_admin: false,
       tenant_id: tenantId,
     };
 
@@ -813,8 +1027,6 @@ export class AuthService {
       'UPDATE refresh_tokens SET tenant_id = $1 WHERE user_id = $2 AND revoked_at IS NULL AND expires_at > now()',
       [tenantId, userId],
     );
-
-    const userType = user.is_super_admin ? 'super_admin' : (user.user_type || 'employee');
 
     await this.auditLog.log({
       tenantId,
@@ -834,9 +1046,11 @@ export class AuthService {
 
   async refreshTokens(refreshToken: string) {
     const { rows } = await this.db.query(
-      `SELECT rt.*, rt.tenant_id AS rt_tenant_id, u.email, u.employee_id, u.is_super_admin, u.is_active, u.deleted_at
+      `SELECT rt.*, rt.tenant_id AS rt_tenant_id, u.email, u.employee_id, u.is_super_admin, u.is_internal_staff,
+              u.is_active, u.deleted_at, ut.user_type
        FROM refresh_tokens rt
        JOIN users u ON rt.user_id = u.id
+       LEFT JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = rt.tenant_id
        WHERE rt.revoked_at IS NULL AND rt.expires_at > now()`,
     );
 
@@ -850,13 +1064,14 @@ export class AuthService {
     if (matchingToken.deleted_at || !matchingToken.is_active) throw new UnauthorizedException('User account is inactive');
 
     await this.db.query('UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1', [matchingToken.id]);
+    const isGlobalSuperAdmin = matchingToken.is_super_admin && !matchingToken.is_internal_staff && !matchingToken.user_type;
 
     const payload = {
       sub: matchingToken.user_id,
       tenant_id: matchingToken.rt_tenant_id,
       email: matchingToken.email,
       employee_id: matchingToken.employee_id,
-      is_super_admin: matchingToken.is_super_admin,
+      is_super_admin: isGlobalSuperAdmin,
     };
 
     const accessToken = this.jwtService.sign(payload);
@@ -942,7 +1157,7 @@ export class AuthService {
 
     const secret = speakeasy.generateSecret({ name: `Ai-HRMS (${rows[0].email})`, issuer: 'Ai-HRMS' });
 
-    await this.db.query('UPDATE users SET mfa_secret = $1 WHERE id = $2', [secret.base32, userId]);
+    await this.db.query('UPDATE users SET mfa_secret = $1 WHERE id = $2', [this.cryptoService.encrypt(secret.base32), userId]);
 
     const qrCode = await qrcode.toDataURL(secret.otpauth_url || '');
     return { secret: secret.base32, qrCode };
@@ -952,7 +1167,7 @@ export class AuthService {
     const { rows } = await this.db.query('SELECT mfa_secret, tenant_id, email FROM users WHERE id = $1', [userId]);
     if (!rows.length || !rows[0].mfa_secret) throw new BadRequestException('MFA not initialized');
 
-    const verified = speakeasy.totp.verify({ secret: rows[0].mfa_secret, encoding: 'base32', token, window: 2 });
+    const verified = speakeasy.totp.verify({ secret: this.decryptMfaSecret(rows[0].mfa_secret), encoding: 'base32', token, window: 2 });
     if (!verified) throw new UnauthorizedException('Invalid MFA code');
 
     await this.db.query('UPDATE users SET mfa_enabled = true, mfa_enabled_at = now() WHERE id = $1', [userId]);
@@ -992,7 +1207,7 @@ export class AuthService {
     const { rows } = await this.db.query('SELECT mfa_secret, tenant_id, email FROM users WHERE id = $1', [userId]);
     if (!rows.length) throw new BadRequestException('User not found');
 
-    const verified = speakeasy.totp.verify({ secret: rows[0].mfa_secret, encoding: 'base32', token, window: 2 });
+    const verified = speakeasy.totp.verify({ secret: this.decryptMfaSecret(rows[0].mfa_secret), encoding: 'base32', token, window: 2 });
     if (!verified) throw new UnauthorizedException('Invalid MFA code');
 
     await this.db.query(

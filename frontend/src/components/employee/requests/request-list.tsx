@@ -25,6 +25,7 @@ const typeLabel: Record<string, string> = {
   leave_request:       'Leave',
   attendance_correction: 'Attendance Fix',
   shift_change:        'Shift Change',
+  shift_override:      'Shift Override',
   overtime:            'Overtime',
   expense:             'Expense',
   fine_appeal:         'Fine Appeal',

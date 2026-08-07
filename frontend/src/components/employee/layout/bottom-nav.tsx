@@ -1,30 +1,25 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { Home, CalendarCheck, ClipboardList, Bell, User } from 'lucide-react';
+import { usePathname, useRouter } from 'next/navigation';
+import { Home, CalendarCheck, Inbox, CreditCard, User, Building2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
-import { employeeApi } from '@/lib/employee-api';
 import { approvalsApi } from '@/lib/approvals-api';
+import { useAdminSection } from '@/hooks/use-admin-section';
 
 const tabs = [
   { href: '/home',          label: 'Home',       Icon: Home },
   { href: '/attendance',    label: 'Attendance', Icon: CalendarCheck },
-  { href: '/requests',      label: 'Requests',   Icon: ClipboardList },
-  { href: '/notifications', label: 'Alerts',     Icon: Bell },
+  { href: '/requests',      label: 'Requests',   Icon: Inbox },
+  { href: '/payslips',      label: 'Payroll',    Icon: CreditCard },
   { href: '/profile',       label: 'Profile',    Icon: User },
 ];
 
 export function BottomNav() {
   const pathname = usePathname();
-
-  const { data: notifData } = useQuery({
-    queryKey: ['notifications'],
-    queryFn: () => employeeApi.getNotifications(),
-    staleTime: 60_000,
-    retry: false,
-  });
+  const router = useRouter();
+  const { isAdminDualContext, setSection } = useAdminSection();
 
   const { data: pendingData } = useQuery({
     queryKey: ['employee-pending-requests'],
@@ -33,13 +28,16 @@ export function BottomNav() {
     retry: false,
   });
 
-  const unreadAlerts = notifData?.unread_count ?? 0;
   const pendingRequests = pendingData?.total ?? 0;
 
   const badgeFor = (href: string) => {
-    if (href === '/notifications') return unreadAlerts;
-    if (href === '/requests') return pendingRequests;
+    if (href === '/requests' || href === '/profile') return pendingRequests;
     return 0;
+  };
+
+  const handleSwitchToBranch = () => {
+    setSection('branch');
+    router.push('/branch-admin');
   };
 
   return (

@@ -76,6 +76,94 @@ export interface QueueHealthSnapshot {
   timestamp: string;
 }
 
+export interface QueueSnapshot {
+  waiting: number;
+  active: number;
+  failed: number;
+  delayed: number;
+  completed: number;
+  paused: boolean;
+  workers: number;
+  depth: number;
+}
+
+export interface OfflineBufferSummary {
+  total: number;
+  [key: string]: unknown;
+}
+
+export interface SyncFailureSummary {
+  id: string;
+  tenant_id?: string;
+  provider_name?: string;
+  cursor_type?: string;
+  status: 'failed' | 'partial' | string;
+  error_summary?: string | null;
+  started_at?: string;
+  completed_at?: string | null;
+  records_fetched?: number;
+  records_synced?: number;
+  records_failed?: number;
+}
+
+export interface QueueDiagnostics {
+  status: 'healthy' | 'degraded' | 'critical';
+  queues: {
+    punchIngestion: QueueSnapshot;
+    biometricSync: QueueSnapshot;
+  };
+  offlineBuffer: OfflineBufferSummary;
+  recentSyncFailures: SyncFailureSummary[];
+  timestamp: string;
+}
+
+export interface BiometricsOperationsSummary {
+  status: 'healthy' | 'needs_review' | 'action_required';
+  generatedAt: string;
+  platform: {
+    integrations: number;
+    activeIntegrations: number;
+    providerTypes: number;
+    queueDepth: number;
+    failedQueueItems: number;
+    protectedSubmissions24h: number;
+    replayAttacksBlocked24h: number;
+  };
+  tenant: {
+    unknownEmployees: number;
+    rejectedPunches: number;
+    recoveredPunches: number;
+    affectedEmployees: number;
+  };
+  system: {
+    failedSyncs: number;
+    failedSyncRecords: number;
+    syncedRecords24h: number;
+    lastSuccessfulSyncAt?: string | null;
+    retryQueueDepth: number;
+    deadLetterQueueDepth: number;
+    offlineBufferDepth: number;
+  };
+  devices: {
+    totalDevices: number;
+    onlineDevices: number;
+    offlineDevices: number;
+    staleHeartbeats: number;
+    lastHeartbeatAt?: string | null;
+  };
+  terminals: {
+    totalTerminals: number;
+    onlineTerminals: number;
+    offlineTerminals: number;
+    lastHeartbeatAt?: string | null;
+  };
+  history: {
+    sync: Array<Record<string, unknown>>;
+    commands: Array<Record<string, unknown>>;
+    punches: Array<Record<string, unknown>>;
+  };
+}
+
 export interface BiometricsAlert {
   id: string;
   level: 'info' | 'warn' | 'error';
@@ -120,6 +208,29 @@ export interface BiometricDevice {
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DeviceCommand {
+  id: string;
+  tenant_id: string;
+  integration_id?: string | null;
+  biometric_device_id?: string | null;
+  provider_name: string;
+  device_serial_number: string;
+  command_key: string;
+  command_type: string;
+  command_payload?: Record<string, unknown> | null;
+  priority: number;
+  status: 'pending' | 'sent' | 'acknowledged' | 'succeeded' | 'failed' | 'expired' | string;
+  queued_at?: string;
+  sent_at?: string | null;
+  acknowledged_at?: string | null;
+  result_code?: string | null;
+  return_code?: string | null;
+  result_message?: string | null;
+  result_payload?: Record<string, unknown> | null;
+  expires_at?: string | null;
+  created_by?: string | null;
 }
 
 export interface DeviceStats {

@@ -60,10 +60,12 @@ export const TOP_LEVEL_ROUTES: ReadonlySet<string> = new Set([
 
   // Templates
   '/dashboard/templates/attendance-policy',
+  '/dashboard/templates/break-policy',
   '/dashboard/templates/leave-policy',
   '/dashboard/templates/salary-structure',
   '/dashboard/templates/overtime-policy',
   '/dashboard/templates/shifts',
+  '/dashboard/templates/holiday-policy',
 
   // Schedules
   '/dashboard/schedules/overview',
@@ -95,9 +97,9 @@ export const TOP_LEVEL_ROUTES: ReadonlySet<string> = new Set([
   '/dashboard/system/settings',
   '/dashboard/settings/company-profile',
 
-  // Approvals / Automation
+  // Approvals / Notifications
   '/dashboard/approvals',
-  '/dashboard/automation',
+  '/dashboard/notifications',
 ]);
 
 /**

@@ -26,9 +26,17 @@ export class LeaveReportsService {
         d.name                              AS department,
         lt.name                             AS leave_type,
         lb.year,
-        lb.allocated,
-        lb.used,
-        lb.available,
+        lb.allocated                        AS entitled_days,
+        lb.used                             AS days_taken,
+        COALESCE((
+          SELECT SUM(lr.days)
+          FROM leave_requests lr
+          WHERE lr.tenant_id = lb.tenant_id
+            AND lr.employee_id = lb.employee_id
+            AND lr.leave_type_id = lb.leave_type_id
+            AND lr.status = 'pending'
+        ), 0)                               AS pending_days,
+        lb.available                        AS balance_days,
         ROUND(lb.used * 100.0 / NULLIF(lb.allocated, 0)::numeric, 1) AS utilization_pct,
         COUNT(*) OVER()                     AS full_count
       FROM leave_balances lb
@@ -93,25 +101,28 @@ export class LeaveReportsService {
     const { rows } = await this.db.query(`
       SELECT
         lr.id,
-        lr.created_at::date                  AS applied_on,
+        lr.created_at                        AS created_at,
         e.employee_code,
         e.first_name || ' ' || e.last_name   AS employee_name,
         b.name                               AS branch,
         d.name                               AS department,
         lt.name                              AS leave_type,
-        lr.start_date,
-        lr.end_date,
-        lr.days,
+        lr.start_date                        AS from_date,
+        lr.end_date                          AS to_date,
+        lr.days                              AS total_days,
         lr.reason,
         lr.status,
         lr.approved_at,
         lr.rejection_reason,
+        COALESCE(re.first_name || ' ' || re.last_name, ru.email, '—') AS reviewed_by,
         COUNT(*) OVER()                      AS full_count
       FROM leave_requests lr
       JOIN employees e        ON lr.employee_id = e.id
       JOIN leave_types lt     ON lr.leave_type_id = lt.id
       LEFT JOIN branches b    ON e.branch_id = b.id
       LEFT JOIN departments d ON e.department_id = d.id
+      LEFT JOIN users ru      ON lr.approved_by = ru.id
+      LEFT JOIN employees re  ON ru.employee_id = re.id
       WHERE lr.tenant_id = $1 ${where}
       ORDER BY lr.created_at DESC
       LIMIT $${idx} OFFSET $${idx + 1}
@@ -139,9 +150,10 @@ export class LeaveReportsService {
         b.name                               AS branch,
         d.name                               AS department,
         lt.name                              AS leave_type,
-        lr.start_date,
-        lr.end_date,
-        lr.days,
+        lr.start_date                        AS from_date,
+        lr.end_date                          AS to_date,
+        lr.days                              AS total_days,
+        lr.status,
         COUNT(*) OVER()                      AS full_count
       FROM leave_requests lr
       JOIN employees e        ON lr.employee_id = e.id

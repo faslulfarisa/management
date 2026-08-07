@@ -11,6 +11,7 @@ import { MobileHeader } from '@/components/employee/layout/mobile-header';
 import { EmptyState } from '@/components/employee/shared/empty-state';
 import { SkeletonRow } from '@/components/employee/shared/skeleton-card';
 import { cn } from '@/lib/utils';
+import { useNotificationAction } from '@/lib/notification-action-registry';
 
 const typeConfig: Record<string, { icon: React.ElementType; bg: string; color: string }> = {
   leave:    { icon: FileText,    bg: 'bg-blue-100',   color: 'text-blue-600'   },
@@ -38,6 +39,9 @@ export default function NotificationsPage() {
 
 function MobileNotificationsContent() {
   const queryClient = useQueryClient();
+  const openNotification = useNotificationAction({
+    onNavigated: () => queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+  });
 
   const { data, isLoading } = useQuery({
     queryKey: ['notifications'],
@@ -81,7 +85,15 @@ function MobileNotificationsContent() {
               const cfg = typeConfig[n.type] ?? typeConfig.default;
               const Icon = cfg.icon;
               return (
-                <div key={n.id} className={cn('flex items-start gap-3 px-4 py-4', !n.read && 'bg-primary/5')}>
+                <button
+                  key={n.id}
+                  onClick={() => openNotification({
+                    ...n,
+                    action_url: n.action_url ?? n.href ?? null,
+                    source_module: n.source_module ?? n.type,
+                  })}
+                  className={cn('flex w-full items-start gap-3 px-4 py-4 text-left hover:bg-muted/50', !n.read && 'bg-primary/5')}
+                >
                   <div className={cn('flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl', cfg.bg)}>
                     <Icon className={cn('h-4 w-4', cfg.color)} />
                   </div>
@@ -97,7 +109,7 @@ function MobileNotificationsContent() {
                       {formatDistanceToNow(new Date(n.time), { addSuffix: true })}
                     </p>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>

@@ -4,11 +4,11 @@ import { DatabaseService } from '../../../shared/database.service';
 /**
  * Historical imports are tenant-sensitive migration data. Access is limited to:
  * - organization super admins (`user_type = org_admin`)
- * - users explicitly granted `historical_attendance_import:manage` through a
- *   role or position
+ * - users explicitly granted `historical_attendance_import:manage` through
+ *   their assigned Position
  *
- * This deliberately avoids AuthorizationService's admin-tier wildcard because
- * branch admins and generic admins must never inherit this capability.
+ * Branch admins and generic admins must never inherit this capability from
+ * role identity alone.
  */
 @Injectable()
 export class HistoricalAttendanceImportGuard implements CanActivate {
@@ -29,23 +29,13 @@ export class HistoricalAttendanceImportGuard implements CanActivate {
 
     const { rows } = await this.db.query(
       `SELECT 1
-       FROM (
-         SELECT p.module, p.action
-         FROM user_roles ur
-         JOIN role_permissions rp ON rp.role_id = ur.role_id AND rp.tenant_id = ur.tenant_id
-         JOIN permissions p ON p.id = rp.permission_id
-         WHERE ur.user_id = $1 AND ur.tenant_id = $2
-
-         UNION
-
-         SELECT p.module, p.action
-         FROM user_positions up
-         JOIN position_permissions pp ON pp.position_id = up.position_id AND pp.tenant_id = up.tenant_id
-         JOIN permissions p ON p.id = pp.permission_id
-         WHERE up.user_id = $1 AND up.tenant_id = $2
-       ) granted
-       WHERE granted.module = 'historical_attendance_import'
-         AND granted.action = 'manage'
+       FROM user_positions up
+       JOIN position_permissions pp ON pp.position_id = up.position_id AND pp.tenant_id = up.tenant_id
+       JOIN permissions p ON p.id = pp.permission_id
+       WHERE up.user_id = $1
+         AND up.tenant_id = $2
+         AND p.module = 'historical_attendance_import'
+         AND p.action = 'manage'
        LIMIT 1`,
       [user.sub, tenantId],
     );

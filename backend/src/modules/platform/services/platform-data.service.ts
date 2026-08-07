@@ -4,12 +4,20 @@ import { ATTENDANCE_WORKFORCE_STATUS_SQL, EMPLOYEE_STATUSES } from '../../../sha
 import { mapAttendanceStatus } from '../../../shared/attendance-status.util';
 import { attendanceFilterSql } from '../../../shared/attendance-filter.util';
 import { AuditLogService } from './audit-log.service';
+import {
+  AttendanceSource,
+  PunchDirection,
+  PunchEventDto,
+  VerifyMethod,
+} from '../../biometrics/dto/punch-event.dto';
+import { AttendanceEngineService } from '../../biometrics/engine/attendance-engine.service';
 
 @Injectable()
 export class PlatformDataService {
   constructor(
     private db: DatabaseService,
     private auditLogService: AuditLogService,
+    private attendanceEngine: AttendanceEngineService,
   ) {}
 
   async getAllOrgsStats(orgIds?: string[]) {
@@ -440,12 +448,35 @@ export class PlatformDataService {
   }
 
   async approveOrgAttendanceRequest(orgId: string, requestId: string, approvedById: string) {
-    const { rows } = await this.db.query(
-      `UPDATE attendance_requests SET status = 'approved', approved_by = $2, approved_at = now(), updated_at = now()
-        WHERE id = $1 AND tenant_id = $3 RETURNING *`,
-      [requestId, approvedById, orgId],
-    );
-    if (!rows.length) throw new NotFoundException('Request not found');
+    const request = await this.db.transaction(async (client) => {
+      const { rows: requestRows } = await client.query(
+        `SELECT ar.*, e.branch_id
+         FROM attendance_requests ar
+         JOIN employees e ON e.id = ar.employee_id AND e.tenant_id = ar.tenant_id
+         WHERE ar.id = $1 AND ar.tenant_id = $2
+         FOR UPDATE`,
+        [requestId, orgId],
+      );
+      const row = requestRows[0];
+      if (!row) throw new NotFoundException('Request not found');
+      if (row.status !== 'pending') {
+        throw new BadRequestException(`Cannot approve a request with status '${row.status}'`);
+      }
+
+      const applied = await this.applyApprovedAttendanceCorrection(client, row);
+      const { rows } = await client.query(
+        `UPDATE attendance_requests
+         SET status = 'approved',
+             approved_by = $2,
+             approved_at = now(),
+             applied_at = CASE WHEN $4::boolean THEN now() ELSE applied_at END,
+             updated_at = now()
+         WHERE id = $1 AND tenant_id = $3
+         RETURNING *`,
+        [requestId, approvedById, orgId, applied],
+      );
+      return rows[0];
+    });
 
     await this.auditLogService.log({
       tenantId: orgId,
@@ -455,7 +486,7 @@ export class PlatformDataService {
       action: 'attendance_request_approved',
     });
 
-    return rows[0];
+    return request;
   }
 
   async rejectOrgAttendanceRequest(orgId: string, requestId: string, rejectedById: string, reason?: string) {
@@ -493,6 +524,61 @@ export class PlatformDataService {
 
     const { rows } = await this.db.query(query, params);
     return rows;
+  }
+
+  private async applyApprovedAttendanceCorrection(client: any, request: any): Promise<boolean> {
+    if (request.request_type !== 'correction') return false;
+    if (!request.requested_clock_in && !request.requested_clock_out) return false;
+
+    const { rows } = await client.query(
+      `SELECT employee_code
+       FROM employees
+       WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+      [request.employee_id, request.tenant_id],
+    );
+    const employeeCode = rows[0]?.employee_code;
+    if (!employeeCode) throw new NotFoundException('Employee not found');
+
+    const events: PunchEventDto[] = [];
+    const baseDate = request.date instanceof Date
+      ? request.date.toISOString().split('T')[0]
+      : String(request.date).split('T')[0];
+    if (request.requested_clock_in) {
+      events.push(this.buildCorrectionPunchEvent(request, employeeCode, baseDate, request.requested_clock_in, PunchDirection.IN));
+    }
+    if (request.requested_clock_out) {
+      events.push(this.buildCorrectionPunchEvent(request, employeeCode, baseDate, request.requested_clock_out, PunchDirection.OUT));
+    }
+
+    if (events.length > 0) {
+      await this.attendanceEngine.processPunchEvents(request.tenant_id, null, events);
+    }
+    return true;
+  }
+
+  private buildCorrectionPunchEvent(
+    request: any,
+    employeeCode: string,
+    date: string,
+    time: string,
+    punchType: PunchDirection,
+  ): PunchEventDto {
+    return {
+      tenantId: request.tenant_id,
+      integrationId: null,
+      employeeCode,
+      timestamp: new Date(`${date}T${time}`),
+      punchType,
+      verifyMethod: VerifyMethod.OTHER,
+      providerName: 'manual',
+      attendanceSource: AttendanceSource.MANUAL_ATTENDANCE,
+      punchState: punchType,
+      rawPayload: {
+        attendance_request_id: request.id,
+        requested_time: time,
+        reason: request.reason ?? null,
+      },
+    };
   }
 
   async getOrgDepartments(orgId: string) {

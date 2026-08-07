@@ -4,11 +4,15 @@ via the existing REST API endpoint.
 """
 
 import logging
+import json
+import hashlib
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
 
 from app.config import get_settings
+from app.security import signed_headers
 from app.utils.exceptions import HMSCallbackError
 
 logger = logging.getLogger(__name__)
@@ -27,12 +31,19 @@ class HMSCallbackClient:
         self.enabled = settings.hms_callback_enabled
         self.timeout = httpx.Timeout(30.0, connect=10.0)
 
-    def _get_headers(self) -> Dict[str, str]:
+    def _get_headers(self, path: str, body: bytes = b"", nonce: Optional[str] = None) -> Dict[str, str]:
         """Build request headers with API key authentication."""
         return {
             "Content-Type": "application/json",
-            "X-API-Key": self.api_key,
             "X-Service": "biometric-attendance-service",
+            **signed_headers(
+                api_key=self.api_key,
+                secret=settings.effective_signature_secret,
+                method="POST",
+                path=path,
+                body=body,
+                nonce=nonce,
+            ),
         }
 
     async def push_attendance(
@@ -59,13 +70,18 @@ class HMSCallbackClient:
             "deviceSn": device_sn,
             "punches": punches,
         }
+        nonce = hashlib.sha256(f"{device_sn}:{datetime.now(timezone.utc).timestamp()}".encode()).hexdigest()
+        payload["nonce"] = nonce
+        payload["requestTimestamp"] = datetime.now(timezone.utc).isoformat()
+        path = "/api/integrations/zkteco/punch"
+        body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     url,
-                    json=payload,
-                    headers=self._get_headers(),
+                    content=body,
+                    headers=self._get_headers(path, body, nonce),
                 )
 
                 if response.status_code == 200:
@@ -149,7 +165,7 @@ class HMSCallbackClient:
             async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
                 response = await client.get(
                     f"{self.base_url}/../health",
-                    headers=self._get_headers(),
+                    headers={"x-api-key": self.api_key, "x-service": "biometric-attendance-service"},
                 )
                 return response.status_code == 200
         except Exception:
